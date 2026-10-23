@@ -18,3 +18,36 @@
 .capacity-background{fill:#fff5df;stroke:#100b17;stroke-width:.8}.capacity-fill{fill:#e3b65e;opacity:.95}.hex .cube-count{font:800 8px 'DM Sans',sans-serif;fill:#17111b;letter-spacing:-.3px}
 .hex .start-label{font:700 6px 'DM Sans',sans-serif;fill:#f5e8d0;letter-spacing:1px}.cube-owner text{font:800 3.5px 'DM Sans',sans-serif;fill:#100d14}.cube-owner circle{stroke:#100d14;stroke-width:.4}.room-detail{overflow-wrap:anywhere}
 @media(min-width:1100px){.prepared{grid-template-columns:repeat(4,minmax(0,1fr))}}@media(max-width:950px){main{grid-template-columns:minmax(0,1fr) 250px;padding:20px 16px;gap:16px}section{padding:18px}.header-meta{gap:12px}.preparation-order{grid-template-columns:repeat(2,1fr)}.phase-track{padding:0 16px}.phase-track>div{font-size:10px;gap:5px}.section-heading{flex-wrap:wrap}}@media(max-width:720px){main{display:flex;flex-direction:column;padding:16px 12px}.game-column{display:contents}aside{display:contents}.players-panel{order:-2}.players-panel .player{display:inline-block;width:50%;vertical-align:top;padding:16px 8px;border:0}.players-panel>.eyebrow{display:block}.actions-panel{order:-1}.phase-track small{display:none}.phase-track>div{justify-content:center;padding:15px 2px;font-size:9px}.brand>span{font-size:15px;letter-spacing:1px}.brand small{font-size:7px;letter-spacing:2px}.brand{font-size:28px;gap:6px}.header-meta{font-size:10px;gap:8px}.header-meta .badge{display:none}header{height:70px;padding:0 16px}.lobby-seats{grid-template-columns:1fr}.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.spell{min-height:225px}.spell strong{font-size:21px}.entry{padding:20px}.entry-card{padding:28px}.entry h1{font-size:54px}.phase-panel h2{font-size:27px}.schools{grid-template-columns:repeat(2,1fr)}}@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+
+/* Cube meters fill with received damage, never remaining HP. */
+.health.damage-bar{display:flex;height:9px;margin:14px 0 7px;border-radius:3px;overflow:hidden;background:#0d0b10;box-shadow:inset 0 0 0 1px #ffffff20}
+.damage-bar .damage-segment{flex-shrink:0;height:100%;transition:width .15s}
+.damage-bar .unattributed{background-image:repeating-linear-gradient(135deg,transparent 0 3px,#39323f 3px 5px)}
+.damage-count{font-size:11px;line-height:1.5;color:#e5e0da;margin:0 0 8px}
+.damage-contributions{gap:5px;margin-bottom:12px;font-size:10px}
+.cube-warning{color:#edc998}
+.powerful-panel .spell:disabled{opacity:.85;cursor:default}
+.history-panel{order:-4;border-color:#65543e}
+.history-panel .button-row{margin-top:12px;flex-wrap:wrap}
+.history-panel .button-row button{font-size:12px;min-width:90px}
+.actions-panel,.evocation-controls{order:-3}
+.evocations-panel{order:0}
+.black-rose-score{border-top:1px solid #5b4b60;padding:18px 0;color:#d4cedd}
+.black-rose-score .player-heading>span{border-left-color:#d4cedd}
+.black-rose-score>small{display:block;color:#aaa2b1;margin:7px 0}
+.first-player{display:inline-block;color:var(--gold);margin-left:3px}
+.player-actions .mini-toggle{white-space:normal;text-align:left}
+.evocation-card,.evocation-card.active-model{background:color-mix(in srgb,var(--mage-color) 12%,#19171d);border-left:3px solid var(--mage-color)}
+.evocation-number{color:var(--mage-color)}
+.evocation-card .model-stats{flex-wrap:wrap;font-size:11px}
+/* One owner-colored circle per model; a 6 × 2 local grid fits even 12 models. */
+.hex .evocation-marker circle{fill:var(--mage-color);stroke:#100c16;stroke-width:.4}
+.hex .evocation-marker text{fill:#100c16;stroke:none;font:800 3.5px 'DM Sans',sans-serif}
+/* Retain the 36 × 12 local badge: no CSS transform or viewport-origin scaling. */
+.capacity-background{fill:#29232e}
+.capacity-fill{opacity:1}
+.hex .cube-count{fill:#fff;stroke:#17111b;stroke-width:1.4px;stroke-linejoin:round;paint-order:stroke}
+.rebuilt-badge rect{fill:#24473a;stroke:#8cd5ac;stroke-width:.6}
+.rebuilt-badge.used rect{fill:#302b35;stroke:#9b8ca7}
+.hex .rebuilt-badge text{font:800 7px 'DM Sans',sans-serif;fill:#e4f5e9;letter-spacing:.2px}
+@media(max-width:720px){.actions-panel,.evocation-controls{order:-3}.history-panel{order:-4}.evocations-panel{order:0}.damage-contributions{font-size:9px}}

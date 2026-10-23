@@ -8,6 +8,7 @@
   ],
   "scripts": {
     "test": "npm run test -w @brw/game-engine",
+    "test:history": "vitest run apps/server/test",
     "test:network": "node --import tsx scripts/multiplayer-smoke.ts",
     "test:lobby": "node --import tsx scripts/lobby-smoke.ts",
     "test:browser": "playwright test",

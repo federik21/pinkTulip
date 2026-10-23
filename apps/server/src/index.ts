@@ -1,34 +1,18 @@
 import { WebSocketServer, WebSocket } from 'ws';
-import { addPlayerToLobby, applyAction, canStartGame, createGame, GameRuleError, GameState, PlayerId, Card, MAX_MAGES } from '@brw/game-engine';
+import { addPlayerToLobby, createGame, GameRuleError, GameState, PlayerId, MAX_MAGES } from '@brw/game-engine';
+import { ActionHistory } from './action-history';
+import { publicState } from './public-state';
 
 type Client = { ws: WebSocket; playerId: PlayerId | null; roomId: string | null };
-type Room = { id: string; game: GameState; clients: Set<Client> };
+type Room = { id: string; game: GameState; clients: Set<Client>; history: ActionHistory };
 const rooms = new Map<string,Room>();
 const clients = new Set<Client>();
-const hiddenCard = (index: number): Card => ({ id:`hidden-${index}`, name:'Hidden spell', kind:'SPELL', damage:0, instability:0, range:0, target:'MODEL' });
-
-function publicState(game: GameState, viewer: PlayerId | null) {
- const copy=structuredClone(game);
- // Never expose future draws, even to the owning player.
- copy.eventDeck=[]; copy.questDeck=[];
- copy.powerfulDeck=copy.powerfulDeck.map((_,i)=>hiddenCard(i));
- for(const deck of copy.library) deck.cards=deck.cards.map((_,i)=>hiddenCard(i));
- for(const p of copy.players) {
-  p.personalDeck=p.personalDeck.map((_,i)=>hiddenCard(i));
-  if(p.id===viewer) continue;
-  p.hand=p.hand.map((_,i)=>hiddenCard(i)); p.quest=null;p.additionalQuests=[];
-  for(const key of ['rapid','slot1','slot2','slot3'] as const) {
-   if(p.prepared[key]) p.prepared[key]={card:hiddenCard(0),used:p.prepared[key]!.used};
-  }
- }
- return copy;
-}
 function send(c: Client, message: unknown) { if(c.ws.readyState===WebSocket.OPEN)c.ws.send(JSON.stringify(message)); }
 function roomList() {
  return [...rooms.values()].map(r=>({id:r.id,players:r.game.players.length,capacity:MAX_MAGES,status:r.game.phase==='LOBBY'?'waiting':'playing'}));
 }
 function broadcastRoomList() { for(const c of clients)send(c,{type:'ROOM_LIST',rooms:roomList()}); }
-function broadcast(room: Room) { for(const c of room.clients)send(c,{type:'STATE',state:publicState(room.game,c.playerId)}); }
+function broadcast(room: Room) { for(const c of room.clients)send(c,{type:'STATE',state:publicState(room.game,c.playerId,room.history)}); }
 
 function joinRoom(c: Client, roomId: string, name: string, create: boolean) {
  if(c.roomId) throw new GameRuleError('Already in a room. Reload to join another.');
@@ -36,7 +20,7 @@ function joinRoom(c: Client, roomId: string, name: string, create: boolean) {
  let room=rooms.get(roomId);
  if(create) {
   if(room)throw new GameRuleError('Room already exists. Join it instead.');
-  room={id:roomId,game:createGame(1),clients:new Set()}; rooms.set(roomId,room);
+  room={id:roomId,game:createGame(1),clients:new Set(),history:new ActionHistory()}; rooms.set(roomId,room);
  }
  if(!room)throw new GameRuleError('Room not found. Create it first.');
  let seat=room.game.players.find(p=>!p.connected);
@@ -46,6 +30,7 @@ function joinRoom(c: Client, roomId: string, name: string, create: boolean) {
   room.game=addPlayerToLobby(room.game);
   seat=room.game.players.find(p=>!p.connected)!;
  }
+ room.history.clear();
  seat.connected=true;
  if(room.game.phase==='LOBBY')seat.ready=false;
  seat.name=name.trim().slice(0,32)||seat.name;
@@ -74,21 +59,20 @@ wss.on('connection',ws=>{
     joinRoom(c,String(msg.roomId??'').trim(),String(msg.playerName??''),msg.type==='CREATE_ROOM');return;
    }
    if(!c.roomId||!c.playerId)throw new GameRuleError('Join a room first');
-  const room=rooms.get(c.roomId);
-  if(!room || !room.clients.has(c) || !room.game.players.some(p=>p.id===c.playerId&&p.connected))throw new GameRuleError('Join a room first');
+   const room=rooms.get(c.roomId);
+   if(!room || !room.clients.has(c) || !room.game.players.some(p=>p.id===c.playerId&&p.connected))throw new GameRuleError('Join a room first');
    if(!msg.action || typeof msg.action.type!=='string')throw new GameRuleError('Missing action');
    if(msg.action.playerId!==c.playerId)throw new GameRuleError('You cannot act for another player');
-  if(room.game.phase!=='LOBBY' && !room.game.players.every(p=>p.connected))throw new GameRuleError('Game paused: waiting for the other mages to reconnect');
-   let game=applyAction(room.game,msg.action);
-   if(msg.action.type==='SET_READY' && canStartGame(game))game=applyAction(game,{type:'START_GAME',playerId:game.hostId});
-   room.game=game;broadcast(room);broadcastRoomList();
-  if(requestId)send(c,{type:'ACTION_APPLIED',requestId});
+   if(room.game.phase!=='LOBBY' && !room.game.players.every(p=>p.connected))throw new GameRuleError('Game paused: waiting for the other mages to reconnect');
+   room.game=room.history.apply(room.game,msg.action,c.playerId);broadcast(room);broadcastRoomList();
+   if(requestId)send(c,{type:'ACTION_APPLIED',requestId});
   } catch(error) { send(c,{type:'ERROR',requestId,message:error instanceof Error?error.message:'Invalid action'}); }
  });
  ws.on('close',()=>{
   clients.delete(c);
   if(!c.roomId)return;
   const room=rooms.get(c.roomId);if(!room)return;
+  room.history.clear();
   room.clients.delete(c);
   const p=room.game.players.find(p=>p.id===c.playerId);
   if(p) {

@@ -159,15 +159,14 @@ describe('strict Action-phase exhaustion',()=>{
   expect(g.phase).toBe('CLEANUP');expect(player(g).passed).toBe(false);expect(canPassActionPhase(g,player(g))).toBe(true);expectCardsConserved(g);
  });
 
- it('requires a held power to be cast after spending both tokens, even when only a dummy target exists',()=>{
+ it('ignores held powers after spending both tokens and retains them for later preparation',()=>{
   let g=actionFixture();const power=holdPower(g);player(g,'p2').wizard.position={q:-3,r:2};
   g=explore(g);g=explore(g);expect(g.currentPlayerId).toBe('p2');expect(player(g).actionTokens).toBe(0);
-  expect(canPassActionPhase(g,player(g))).toBe(false);expect(player(g).hand).toEqual([power]);
+  expect(canPassActionPhase(g,player(g))).toBe(true);expect(player(g).hand).toEqual([power]);
   g=explore(g,'p2');g=applyAction(g,{type:'END_ACTIVATION',playerId:'p2'});
-  expect(canPassActionPhase(g,player(g))).toBe(false);expectRejected(g,{type:'PASS_ROUND',playerId:'p1'},/no unused spells/);
-  g=applyAction(g,{type:'CAST_POWERFUL_SPELL',playerId:'p1',cardId:power.id,dummy:true,roomId:'room-0,0'});
-  expect(g.removedCards).toEqual([power]);expect(player(g).hand).toEqual([]);expect(g.currentPlayerId).toBe('p2');
-  expect(player(g).passed).toBe(false);expect(canPassActionPhase(g,player(g))).toBe(true);expectCardsConserved(g);
+  expect(g.currentPlayerId).toBe('p2');expect(canPassActionPhase(g,player(g))).toBe(true);
+  g=explore(g,'p2');expect(g.phase).toBe('CLEANUP');expect(g.removedCards).toEqual([]);expect(player(g).hand).toEqual([power]);
+  expect(player(g).passed).toBe(false);expectCardsConserved(g);
  });
 });
 
@@ -176,7 +175,7 @@ describe('Cadavers and token activations',()=>{
   let {g}=greyFixture();const before=structuredClone(g);
   g=applyAction(g,{type:'EXPLORE',playerId:'p1',activateRoomAtStart:true});
   const summoned=g.evocations[0];expect(g.evocations).toHaveLength(1);expect(g.evocations[0].id).toBeTruthy();
-  expect(summoned).toEqual(cadaver(summoned.id,'p1',player(g).wizard.position));
+  expect(summoned).toMatchObject(cadaver(summoned.id,'p1',player(g).wizard.position));expect(summoned.number).toBe(1);
   expect(player(g).actionTokens).toBe(1);expect(g.activation?.actionsUsed).toBe(1);expect(g.evocationActivation).toBeNull();
   expect(g.activation?.roomEffectUsed).toBe(true);expect(before.evocations).toEqual([]);
   g=applyAction(g,{type:'END_EXPLORE',playerId:'p1'});
@@ -286,7 +285,7 @@ describe('Grey room summoning regressions',()=>{
    let g=structuredClone(initial);player(g).wizard.position={...source.tiles[0]};const before=structuredClone(g);
    expect(source.effect).toBe('SUMMON_CADAVER');
    g=applyAction(g,{type:'EXPLORE',playerId:'p1',activateRoomAtStart:true});
-   expect(g.evocations).toHaveLength(1);expect(g.evocations[0]).toEqual(cadaver(g.evocations[0].id,'p1',source.tiles[0]));
+  expect(g.evocations).toHaveLength(1);expect(g.evocations[0]).toMatchObject(cadaver(g.evocations[0].id,'p1',source.tiles[0]));
    expect(g.library).toEqual(before.library);expect(player(g).hand).toEqual(before.players[0].hand);
    expect(player(g).actionTokens).toBe(1);expect(g.activation?.actionsUsed).toBe(1);expectCardsConserved(g);expectCubesConserved(g);
   }
@@ -304,7 +303,7 @@ describe('Grey room summoning regressions',()=>{
   }
   g=applyAction(g,{type:'EXPLORE_STEP',playerId:'p1',destination:source.tiles[0],activateRoomAtEnd:!finishEarly});
   if(finishEarly){expect(g.evocations).toEqual([]);g=applyAction(g,{type:'END_EXPLORE',playerId:'p1',activateRoomAtEnd:true});}
-  expect(g.evocations).toHaveLength(1);expect(g.evocations[0]).toEqual(cadaver(g.evocations[0].id,'p1',source.tiles[0]));
+  expect(g.evocations).toHaveLength(1);expect(g.evocations[0]).toMatchObject(cadaver(g.evocations[0].id,'p1',source.tiles[0]));
   expect(player(g).wizard.position).toEqual(source.tiles[0]);expect(player(g).actionTokens).toBe(1);
   expect(g.activation).toMatchObject({actionsUsed:1,exploring:0,roomEffectUsed:true});expect(g.evocationActivation).toBeNull();expectCardsConserved(g);
  });
@@ -312,7 +311,7 @@ describe('Grey room summoning regressions',()=>{
  it.each(['START','END'] as const)('summons for free around a Punch at %s while retaining the ordinary punch damage',roomEffect=>{
   let {g,source}=greyFixture();const before=structuredClone(g);
   g=applyAction(g,{type:'PUNCH',playerId:'p1',targetId:'p2',roomEffect});
-  expect(g.evocations).toHaveLength(1);expect(g.evocations[0]).toEqual(cadaver(g.evocations[0].id,'p1',source.tiles[0]));
+  expect(g.evocations).toHaveLength(1);expect(g.evocations[0]).toMatchObject(cadaver(g.evocations[0].id,'p1',source.tiles[0]));
   expect(player(g,'p2').wizard.damageCubes).toBe(2);expect(player(g,'p2').wizard.damageByPlayer).toEqual({p1:2});
   expect(player(g).cubes).toEqual({available:23,onBoard:0,onWizard:2,onEvocations:0});
   expect(player(g).actionTokens).toBe(1);expect(g.activation?.actionsUsed).toBe(1);expect(g.activation?.roomEffectUsed).toBe(true);
@@ -345,7 +344,7 @@ describe('Grey room summoning regressions',()=>{
   let {g,source}=greyFixture();
   for(const owner of ['p1','p2'])for(let i=0;i<2;i++) {
    g=applyAction(g,{type:'EXPLORE',playerId:owner,activateRoomAtStart:true});
-   const summoned=g.evocations.at(-1)!;expect(summoned).toEqual(cadaver(summoned.id,owner,source.tiles[0]));
+  const summoned=g.evocations.at(-1)!;expect(summoned).toMatchObject(cadaver(summoned.id,owner,source.tiles[0]));expect(summoned.number).toBe(i+1);
    g=applyAction(g,{type:'END_EXPLORE',playerId:owner});
   }
   expect(g.evocations).toHaveLength(4);expect(g.evocations.filter(e=>e.playerId==='p1')).toHaveLength(2);expect(g.evocations.filter(e=>e.playerId==='p2')).toHaveLength(2);
@@ -355,7 +354,7 @@ describe('Grey room summoning regressions',()=>{
  it('doubles a reconstructed Grey reward to two and locks that room globally for the Action phase',()=>{
   let {g,source}=greyFixture(true);
   g=applyAction(g,{type:'EXPLORE',playerId:'p1',activateRoomAtStart:true});expect(g.evocations).toHaveLength(2);
-  for(const e of g.evocations)expect(e).toEqual(cadaver(e.id,'p1',source.tiles[0]));
+  for(const e of g.evocations)expect(e).toMatchObject(cadaver(e.id,'p1',source.tiles[0]));
   expect(room(g,source.id).specialUsed).toBe(true);expect(player(g).actionTokens).toBe(1);expect(g.activation?.actionsUsed).toBe(1);
   g=applyAction(g,{type:'END_EXPLORE',playerId:'p1'});
   expectRejected(g,{type:'EXPLORE',playerId:'p1',activateRoomAtStart:true},/special already used/);
@@ -371,7 +370,7 @@ describe('Grey room summoning regressions',()=>{
   g=applyAction(g,{type:'END_EXPLORE',playerId:'p1',activateRoomAtEnd:true});
   expect(g.evocations).toHaveLength(3);expect(g.evocations.slice(0,2)).toEqual(existing);
   expect(existing.every(e=>hexDistance(e.position,source.tiles[0])===0)).toBe(true);
-  expect(g.evocations[2]).toEqual(cadaver(g.evocations[2].id,'p1',destination.tiles[0]));
+  expect(g.evocations[2]).toMatchObject(cadaver(g.evocations[2].id,'p1',destination.tiles[0]));expect(g.evocations[2].number).toBe(3);
   expect(new Set(g.evocations.map(e=>e.id)).size).toBe(3);expect(room(g,destination.id).specialUsed).toBe(true);
   expect(g.currentPlayerId).toBe('p2');expect(player(g).actionTokens).toBe(0);expectCardsConserved(g);expectCubesConserved(g);
  });
@@ -398,7 +397,7 @@ describe('Grey room summoning regressions',()=>{
   expect(g.evocations).toHaveLength(2);expect(g.evocations.some(e=>e.id===victim.id)).toBe(false);expect(player(g,'p2').cubes.onEvocations).toBe(0);
   g=applyAction(g,{type:'END_ACTIVATION',playerId:'p2'});
   g=applyAction(g,{type:'EXPLORE',playerId:'p1',activateRoomAtStart:true});
-  expect(g.evocations).toHaveLength(3);expect(g.evocations.at(-1)).toEqual(cadaver(g.evocations.at(-1)!.id,'p1',player(g).wizard.position));
+  expect(g.evocations).toHaveLength(3);expect(g.evocations.at(-1)).toMatchObject(cadaver(g.evocations.at(-1)!.id,'p1',player(g).wizard.position));expect(g.evocations.at(-1)!.number).toBe(victim.number);
   expect(player(g).actionTokens).toBe(0);expect(g.activation?.actionsUsed).toBe(1);expectCardsConserved(g);expectCubesConserved(g);
  });
 
@@ -505,9 +504,10 @@ describe('all-model targeting and physical damage cubes',()=>{
   expect(player(g).cubes).toEqual({available:23,onWizard:0,onBoard:1,onEvocations:1});expectCubesConserved(g);expectCardsConserved(g);
  });
 
- it('held powerful MODEL spells target evocations, exile once and place instability in the destroyed model room',()=>{
+ it('prepared powerful MODEL spells target evocations, exile once and place instability in the destroyed model room',()=>{
   let g=actionFixture();g.evocations=[cadaver('enemy','p2',{q:1,r:0}),cadaver('friendly')];const power=holdPower(g);
-  const cast={type:'CAST_POWERFUL_SPELL' as const,playerId:'p1',cardId:power.id,targetEvocationId:'enemy'};
+  player(g).hand.splice(player(g).hand.indexOf(power),1);player(g).prepared.rapid={card:power,used:false};
+  const cast={type:'CAST_SPELL' as const,playerId:'p1',slot:'rapid' as const,targetEvocationId:'enemy'};
   expectRejected(g,{...cast,targetPlayerId:'p2'},/Select another mage or evocation/);
   expectRejected(g,{...cast,targetEvocationId:'friendly'},/own models/);
   expectRejected(g,{...cast,dummy:true,roomId:'room-0,0'},/either/);
@@ -524,7 +524,8 @@ describe('all-model targeting and physical damage cubes',()=>{
    let damage:number;
    if(powerful) {
     const power=holdPower(g,'ROOM');damage=power.damage;
-    g=applyAction(g,{type:'CAST_POWERFUL_SPELL',playerId:'p1',cardId:power.id,roomId:'room-0,0'});expect(g.removedCards).toEqual([power]);
+    player(g).hand.splice(player(g).hand.indexOf(power),1);player(g).prepared.rapid={card:power,used:false};
+    g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:'room-0,0'});expect(g.removedCards).toEqual([power]);
    } else {
     damage=1;prepare(g,'rapid',{damage,instability:0});g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:'room-0,0'});
    }
@@ -651,7 +652,7 @@ describe('reconstructed room specials',()=>{
      case 'INSTABILITY':expect(room(g,adjacent.id).cubesByPlayer).toEqual({p1:reward});expect(room(g,source.id).instability).toBe(0);break;
      case 'DRAW_QUEST':expect([player(g).quest,...player(g).additionalQuests]).toEqual(before.questDeck.slice(0,reward));expect(g.questDeck).toEqual(before.questDeck.slice(reward));break;
      case 'DRAW_GRIMOIRE':expect(player(g).hand).toEqual(before.players[0].personalDeck.slice(0,reward));expect(player(g).personalDeck).toEqual(before.players[0].personalDeck.slice(reward));break;
-    case 'SUMMON_CADAVER':expect(g.evocations).toHaveLength(reward);for(const e of g.evocations)expect(e).toEqual(cadaver(e.id,'p1',source.tiles[0]));expect(player(g).hand).toEqual(before.players[0].hand);expect(g.library).toEqual(before.library);break;
+    case 'SUMMON_CADAVER':expect(g.evocations).toHaveLength(reward);for(const e of g.evocations)expect(e).toMatchObject(cadaver(e.id,'p1',source.tiles[0]));expect(player(g).hand).toEqual(before.players[0].hand);expect(g.library).toEqual(before.library);break;
      case 'DRAW_POWERFUL':expect(player(g).hand).toEqual(before.powerfulDeck.slice(0,reward));expect(g.powerfulDeck).toEqual(before.powerfulDeck.slice(reward));break;
     }
     expectCubesConserved(g);expectCardsConserved(g);
@@ -672,19 +673,19 @@ describe('reconstructed room specials',()=>{
   expect(sources.slice(0,2).map(r=>room(g,r.id).specialUsed)).toEqual([true,true]);expect(room(g,sources[2].id).specialUsed).toBe(false);
  });
 
- it('refreshes special locks at real cleanup, and a room rebuilt mid-Action gains an immediately unused special',()=>{
+ it('keeps filled rooms ordinary until Cleanup, then unlocks and refreshes the upgraded special',()=>{
   let g=actionFixture();const emerald=g.board.rooms.find(r=>r.effect==='INSTABILITY')!;
   player(g).wizard.position={...emerald.tiles[0]};emerald.instability=emerald.instabilityLimit-2;emerald.cubesByPlayer={'black-rose':emerald.instability};
   const adjacent=g.board.rooms.find(r=>!r.startingFor&&hexDistance(r.tiles[0],emerald.tiles[0])===1)!;
-  // First use is an ordinary room effect; rebuilding later in the same phase must unlock the special.
+  // Filling later in this phase must not unlock the upgraded effect yet.
   g=applyAction(g,{type:'EXPLORE',playerId:'p1',activateRoomAtStart:true});g=applyAction(g,{type:'END_EXPLORE',playerId:'p1'});
   expect(room(g,emerald.id).reconstructed).toBe(false);expect(room(g,emerald.id).specialUsed).toBe(false);
   prepare(g,'rapid',{instability:1});g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:emerald.id});
-  expect(room(g,emerald.id).reconstructed).toBe(true);expect(room(g,emerald.id).specialUsed).toBe(false);
+  expect(room(g,emerald.id).instability).toBe(emerald.instabilityLimit);expect(room(g,emerald.id).reconstructed).toBe(false);expect(room(g,emerald.id).specialUsed).toBe(false);
   expect(g.currentPlayerId).toBe('p2');g=explore(g,'p2');g=applyAction(g,{type:'END_ACTIVATION',playerId:'p2'});
   g=applyAction(g,{type:'EXPLORE',playerId:'p1',activateRoomAtStart:true,roomTargetId:adjacent.id});g=applyAction(g,{type:'END_EXPLORE',playerId:'p1'});
-  expect(room(g,adjacent.id).cubesByPlayer).toEqual({p1:2});expect(room(g,emerald.id).specialUsed).toBe(true);
-  g=explore(g,'p2');expect(g.phase).toBe('CLEANUP');expect(room(g,emerald.id).specialUsed).toBe(false);expect(room(g,emerald.id).scored).toBe(true);
+  expect(room(g,adjacent.id).cubesByPlayer).toEqual({p1:1});expect(room(g,emerald.id).specialUsed).toBe(false);
+  g=explore(g,'p2');expect(g.phase).toBe('CLEANUP');expect(room(g,emerald.id).reconstructed).toBe(true);expect(room(g,emerald.id).specialUsed).toBe(false);expect(room(g,emerald.id).scored).toBe(true);
   g.eventDeck=[{id:'quiet',name:'Quiet',description:'Quiet',kind:'INSTABILITY',amount:0,rooms:0}];g=advance(g);g=advance(g);
   for(const id of ['p1','p2']) {
    g=applyAction(g,{type:'DRAW_STUDY',playerId:id,deckId:'school-1'});
@@ -694,7 +695,7 @@ describe('reconstructed room specials',()=>{
    const cards=player(g,id).hand.slice(0,4);g=applyAction(g,{type:'PREPARE_CARDS',playerId:id,preparedCardIds:cards.slice(0,3).map(c=>c.id),rapidCardId:cards[3].id});
   }
   g=applyAction(g,{type:'EXPLORE',playerId:'p1',activateRoomAtStart:true,roomTargetId:adjacent.id});
-  expect(room(g,emerald.id).specialUsed).toBe(true);expect(room(g,adjacent.id).cubesByPlayer).toEqual({p1:4});expectCubesConserved(g);expectCardsConserved(g);
+  expect(room(g,emerald.id).specialUsed).toBe(true);expect(room(g,adjacent.id).cubesByPlayer).toEqual({p1:3});expectCubesConserved(g);expectCardsConserved(g);
  });
 
  it('never doubles up room effects at both Explore ends, even when moving between different reconstructed rooms',()=>{

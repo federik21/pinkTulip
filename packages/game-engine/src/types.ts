@@ -14,6 +14,8 @@ export type PreparedCards = { rapid: PreparedCard | null; slot1: PreparedCard | 
 export type Wizard = { id: string; playerId: PlayerId; health: number; attack: number; movement: number; damageCubes: number; blackDamage: number; damageByPlayer: Record<PlayerId, number>; position: Hex; startingRoomId: RoomId; alive: boolean };
 export type Evocation = {
  id: string; playerId: PlayerId; name: string; archetype: 'UNDEAD'; movement: number; attack: number; health: number;
+ // Owner-local model slot, stable for its lifetime; optional for legacy states.
+ number?: number;
  passive: 'WOUNDED_FURY'; position: Hex; damageCubes: number; damageByPlayer: Record<PlayerId, number>; activated: boolean;
 };
 export type EvocationActivation = { evocationId: string; playerId: PlayerId; movesRemaining: number; returnToAction: boolean };
@@ -26,8 +28,10 @@ export type Player = {
 };
 export type Room = {
  id: RoomId; name: string; tiles: Hex[]; instability: number; instabilityLimit: number;
+ // Full rooms reject new cubes immediately; reconstructed/scored change only at
+ // Cleanup. After scoring, cubesByPlayer is history, not cubes still on the board.
  cubesByPlayer: Record<PlayerId, number>; reconstructed: boolean; scored: boolean;
- rewards: [number, number]; startingFor?: PlayerId;
+ rewards: [number, number, number]; startingFor?: PlayerId;
  color: RoomColor | null; effect: RoomEffect | null; specialUsed: boolean;
 };
 export type Board = { tiles: Hex[]; rooms: Room[] };
@@ -36,6 +40,10 @@ export type PhysicalAction = { kind: 'EXPLORE' | 'ATTACK'; mainEffectUsed: boole
 export type Activation = { playerId: PlayerId; actionsUsed: number; exploring: number; sequencedSpellUsed: boolean; spellsCast: number; discardedExit: boolean; roomEffectUsed: boolean; physicalAction?: PhysicalAction | null };
 export type GameState = {
  gameId: string; hostId: PlayerId; round: number; phase: Phase; players: Player[]; board: Board;
+ blackRose: { victoryPoints: number; kills: number }; firstPlayerId: PlayerId | null; endgameScored: boolean;
+ // Server-owned, per-viewer metadata only. Undo/redo snapshots are private to the
+ // server and must never be added to this shared/wire schema.
+ history?: { canUndo: boolean; canRedo: boolean; undoLabel?: string; redoLabel?: string };
  library: LibraryDeck[]; eventDeck: EventCard[]; eventDiscard: EventCard[]; questDeck: Quest[]; questDiscard: Quest[];
  powerfulDeck: Card[]; removedCards: Card[];
  evocations: Evocation[]; evocationActivation: EvocationActivation | null;
@@ -43,6 +51,9 @@ export type GameState = {
  usedEvent: EventCard | null; blackRoseResolved: boolean;
 };
 export type GameAction =
+ // Transport commands: intercepted by the server, never resolved by the engine.
+ | { type: 'UNDO_ACTION'; playerId: PlayerId }
+ | { type: 'REDO_ACTION'; playerId: PlayerId }
  | { type: 'SET_READY'; playerId: PlayerId; ready: boolean }
  | { type: 'START_GAME'; playerId: PlayerId }
  | { type: 'ADVANCE_PHASE'; playerId: PlayerId; expectedPhase: Phase; expectedRound: number }
@@ -68,4 +79,5 @@ export type GameAction =
  | { type: 'DISCARD_EXIT'; playerId: PlayerId; cardId: string; destination: Hex }
  | { type: 'PUNCH'; playerId: PlayerId; targetId: PlayerId; roomEffect?: 'START' | 'END'; roomTargetId?: RoomId }
  | { type: 'CAST_SPELL'; playerId: PlayerId; slot: 'rapid' | 'slot1' | 'slot2' | 'slot3'; targetPlayerId?: PlayerId; targetEvocationId?: string; roomId?: RoomId; dummy?: boolean }
+ // Legacy wire compatibility only: powers must be prepared and use CAST_SPELL.
  | { type: 'CAST_POWERFUL_SPELL'; playerId: PlayerId; cardId: string; targetPlayerId?: PlayerId; targetEvocationId?: string; roomId?: RoomId; dummy?: boolean };

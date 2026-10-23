@@ -6,6 +6,17 @@ export const PHYSICAL_TOKENS_PER_ROUND = 2;
 export const ACTIONS_PER_TURN = 2;
 export const MIN_MAGES = 2;
 export const MAX_MAGES = 4;
+export const BLACK_ROSE_ID = 'black-rose';
+export const ENDGAME_REWARDS = [4,2,1] as const;
+export function getRoomRewards(capacity:number):Room['rewards'] {
+ switch(capacity) {
+  case 4:return [2,1,0];
+  case 5:return [4,2,1];
+  case 6:return [5,3,1];
+  case 10:return [6,3,1];
+  default:throw new GameRuleError(`Unsupported room capacity: ${capacity}`);
+ }
+}
 export const MAGE_COLORS: Record<string,string> = {p1:'#fb7185',p2:'#60a5fa',p3:'#fbbf24',p4:'#34d399'};
 export const evocationAttack = (e:Evocation) => e.attack+(e.passive==='WOUNDED_FURY'?e.damageCubes:0);
 export const hexKey = (h: Hex) => `${h.q},${h.r}`;
@@ -41,7 +52,7 @@ export const ROOM_EFFECT_LABELS: Record<RoomEffect,string> = {
  ROOM_DAMAGE:'Deal 1 damage to every enemy in this room', DRAW_DISCARD:'Retrieve 1 random spell from your personal discard',
  INSTABILITY:'Place 1 instability in a room within distance 1', DRAW_QUEST:'Draw 1 additional quest',
  DRAW_GRIMOIRE:'Draw 1 grimoire spell', SUMMON_CADAVER:'Summon 1 Cadaver in this room (maximum 3 evocations)',
- DRAW_POWERFUL:'Gain 1 powerful spell; keep until used, then remove from the game',
+ DRAW_POWERFUL:'Gain 1 powerful spell; prepare in a later Preparation phase, then remove from the game when cast',
 };
 const effects: RoomEffect[] = ['ROOM_DAMAGE','DRAW_DISCARD','INSTABILITY','DRAW_QUEST','DRAW_GRIMOIRE','SUMMON_CADAVER'];
 export const isInStartingRoom = (s:GameState,p:Player) => s.board.rooms.some(r=>!!r.startingFor && inRoom(p,r));
@@ -73,10 +84,12 @@ export function createDemoBoard(): Board {
  const rooms: Room[] = tiles.map(h => {
   const regular=hexDistance(h,{q:0,r:0})>0 && hexDistance(h,{q:0,r:0})<=2;
   const index=regular?colorIndex++%6:-1;
+  // Three repeats: twelve capacity-5 rooms, three capacity-4 and three capacity-6.
+  const capacity=h.q===0 && h.r===0?10:index===4?4:index===5?6:5;
   return {
   id: `room-${h.q},${h.r}`, name: h.q===0 && h.r===0 ? 'Black Rose Chamber' : names.pop()!,
-  tiles: [h], instability: 0, instabilityLimit: h.q===0 && h.r===0 ? 10 : 5,
-  rewards: h.q===0 && h.r===0 ? [6,3] : [3,1], cubesByPlayer: {}, reconstructed: false, scored: false,
+  tiles: [h], instability: 0, instabilityLimit: capacity,
+  rewards: getRoomRewards(capacity), cubesByPlayer: {}, reconstructed: false, scored: false,
   color:index<0?null:ROOM_COLORS[index], effect:index<0?(h.q===0&&h.r===0?'DRAW_POWERFUL':null):effects[index], specialUsed:false,
  }; });
  for(const start of startingRooms)rooms.find(r=>r.id===`room-${hexKey(start.position)}`)!.startingFor=start.playerId;
@@ -114,6 +127,7 @@ export function createGame(playerCount=2): GameState {
  const players=['p1','p2','p3','p4'].slice(0,playerCount).map(id=>createMage(board,id));
  return {
   gameId:crypto.randomUUID(), hostId:'p1', round:0, phase:'LOBBY', players, board, library:createLibrary(),
+  blackRose:{victoryPoints:0,kills:0}, firstPlayerId:null, endgameScored:false,
   eventDeck:createEvents(), eventDiscard:[], questDeck:createQuests(), questDiscard:[],
   powerfulDeck:createPowerfulDeck(), removedCards:[],
   evocations:[], evocationActivation:null,
@@ -122,21 +136,28 @@ export function createGame(playerCount=2): GameState {
 }
 
 export function getRoomMajorityWinners(room: Pick<Room,'cubesByPlayer'>): PlayerId[] {
- const entries=Object.entries(room.cubesByPlayer).filter(([id,n])=>id!=='black-rose' && n>0);
+ const entries=Object.entries(room.cubesByPlayer).filter(([,n])=>n>0);
  const max=Math.max(0,...entries.map(([,n])=>n));
  return entries.filter(([,n])=>n===max).map(([id])=>id);
 }
 
 // Dense ranks: tied leaders do not consume the next distinct contribution rank.
-// Every tied contributor loses exactly one point, never dropping below one.
+// Every tied contributor loses one point (minimum one for a nonzero prize).
+// Explicit zero prizes and ranks beyond the table remain zero.
 export function getContributionAwards(cubes:Record<PlayerId,number>,rewards:readonly number[]) {
- const entries=Object.entries(cubes).filter(([id,n])=>id!=='black-rose'&&n>0);
+ const entries=Object.entries(cubes).filter(([,n])=>n>0);
  const totals=[...new Set(entries.map(([,n])=>n))].sort((a,b)=>b-a);
  return entries.map(([playerId,cubes])=>{
   const rank=totals.indexOf(cubes);
   const tied=entries.filter(([,n])=>n===cubes).length>1;
-  return {playerId,cubes,rank:rank+1,tied,points:Math.max(1,(rewards[rank]??1)-(tied?1:0))};
+  const reward=rewards[rank]??0;
+  return {playerId,cubes,rank:rank+1,tied,points:reward>0?Math.max(1,reward-(tied?1:0)):0};
  });
+}
+
+function awardVictoryPoints(s:GameState,id:PlayerId,points:number):string {
+ if(id===BLACK_ROSE_ID){s.blackRose.victoryPoints+=points;return 'Black Rose';}
+ const p=getPlayer(s,id);p.victoryPoints+=points;return p.name;
 }
 
 function completeQuest(s: GameState, p: Player, kind: NonNullable<Player['quest']>['kind'], amount=1) {
@@ -174,20 +195,28 @@ function damage(s: GameState, target: Player, amount: number, source?: Player) {
  s.log.push(`${target.name} suffers ${inflicted} ${source ? 'damage' : 'black damage'}.`);
  if(target.wizard.damageCubes<target.wizard.health) return;
  s.log.push(`${target.name} is defeated and returns to their starting room.`);
- const contributions=Object.entries(target.wizard.damageByPlayer).filter(([id,n])=>id!==target.id && n>0);
- for(const {playerId,cubes,rank,tied,points} of getContributionAwards(Object.fromEntries(contributions),[4,2,1])) {
-  const contributor=getPlayer(s,playerId);
-  contributor.victoryPoints+=points;
-  contributor.cubes.available+=cubes;
-  contributor.cubes.onWizard-=cubes;
-  s.log.push(`${contributor.name}: +${points} VP for ${cubes} damage cubes on ${target.name} (rank ${rank}${tied?', tied −1 VP':''}); ${cubes} cubes returned.`);
+ const contributions=Object.fromEntries(Object.entries(target.wizard.damageByPlayer).filter(([id,n])=>id!==target.id && n>0));
+ contributions[BLACK_ROSE_ID]=(contributions[BLACK_ROSE_ID]??0)+target.wizard.blackDamage;
+ for(const {playerId,cubes,rank,tied,points} of getContributionAwards(contributions,[4,2,1])) {
+  const name=awardVictoryPoints(s,playerId,points);
+  s.log.push(`${name}: +${points} VP for ${cubes} ${playerId===BLACK_ROSE_ID?'black damage':'damage cubes'} on ${target.name} (rank ${rank}${tied&&points>0?', tied −1 VP':''}).`);
  }
- if(contributions.length===1 && target.wizard.blackDamage===0 && contributions[0][1]===target.wizard.damageCubes) {
-  const owner=getPlayer(s,contributions[0][0]);owner.victoryPoints++;
+ // Only actual player-owned cubes return; Black Rose damage has no physical supply.
+ for(const owner of s.players) {
+  const cubes=target.wizard.damageByPlayer[owner.id]??0;
+  if(cubes>0) {
+   owner.cubes.available+=cubes;owner.cubes.onWizard-=cubes;
+   s.log.push(`${owner.name}: ${cubes} damage cubes returned from defeated ${target.name}.`);
+  }
+ }
+ const colored=Object.entries(contributions).filter(([,n])=>n>0);
+ if(colored.length===1 && colored[0][0]!==BLACK_ROSE_ID && colored[0][1]===target.wizard.damageCubes) {
+  const owner=getPlayer(s,colored[0][0]);owner.victoryPoints++;
   s.log.push(`${owner.name}: +1 VP exclusive-color bonus on defeated ${target.name}.`);
  }
  // The final hitter still receives quest/kill credit, but no separate flat VP bonus.
  if(source) { source.kills++; completeQuest(s,source,'KILL'); }
+ else {s.blackRose.kills++;s.log.push(`Black Rose receives kill credit for defeating ${target.name}.`);}
  target.wizard.damageCubes=0;
  target.wizard.blackDamage=0;
  target.wizard.damageByPlayer={};
@@ -232,17 +261,16 @@ function mageAttackTarget(s:GameState,p:Player,id:string) {
 }
 
 function placeInstability(s: GameState, room: Room, amount: number, source?: Player) {
- if(room.reconstructed || room.startingFor) return 0;
+ if(room.reconstructed || room.startingFor || room.instability>=room.instabilityLimit) return 0;
  const actual=Math.min(amount,room.instabilityLimit-room.instability,source?.cubes.available ?? amount);
  if(actual<=0) return 0;
- const owner=source?.id ?? 'black-rose';
+ const owner=source?.id ?? BLACK_ROSE_ID;
  room.instability+=actual;
  room.cubesByPlayer[owner]=(room.cubesByPlayer[owner]??0)+actual;
  if(source) { source.cubes.available-=actual; source.cubes.onBoard+=actual; completeQuest(s,source,'INSTABILITY',actual); }
  s.log.push(`${source?.name ?? 'Black Rose'} places ${actual} instability in ${room.name} (${room.instability}/${room.instabilityLimit}).`);
  if(room.instability===room.instabilityLimit) {
-  room.reconstructed=true;
-  s.log.push(`${room.name} is rebuilt and cannot accept more instability.`);
+  s.log.push(`${room.name} is full and cannot accept more instability; rebuilding, room VP and upgraded actions wait until Cleanup.`);
   if(source && room.cubesByPlayer[source.id]===room.instability) {
    source.victoryPoints++;
    s.log.push(`${source.name}: +1 VP for completing ${room.name} entirely in their color.`);
@@ -270,7 +298,7 @@ function startBlackRose(s: GameState) {
  s.log.push(`Round ${s.round} · BLACK ROSE — ${event.name}.`);
  if(event.kind==='BLACK_DAMAGE') for(const p of s.players) damage(s,p,event.amount);
  else {
-  const candidates=shuffle(s.board.rooms.filter(r=>!r.startingFor && !r.reconstructed));
+  const candidates=shuffle(s.board.rooms.filter(r=>!r.startingFor && !r.reconstructed && r.instability<r.instabilityLimit));
   for(const room of candidates.slice(0,event.rooms)) placeInstability(s,room,event.amount);
  }
 }
@@ -343,7 +371,9 @@ function activateRoom(s:GameState,p:Player,targetRoomId?:string) {
   case 'SUMMON_CADAVER': {
    const count=Math.min(reward,3-s.evocations.filter(e=>e.playerId===p.id).length);
    for(let i=0;i<count;i++) {
-    s.evocations.push({id:crypto.randomUUID(),playerId:p.id,name:'Cadaver',archetype:'UNDEAD',movement:2,attack:2,health:2,passive:'WOUNDED_FURY',position:{...p.wizard.position},damageCubes:0,damageByPlayer:{},activated:false});
+    const owned=s.evocations.filter(e=>e.playerId===p.id);
+    const number=[1,2,3].find(n=>!owned.some(e=>e.number===n))!;
+    s.evocations.push({id:crypto.randomUUID(),playerId:p.id,number,name:'Cadaver',archetype:'UNDEAD',movement:2,attack:2,health:2,passive:'WOUNDED_FURY',position:{...p.wizard.position},damageCubes:0,damageByPlayer:{},activated:false});
     s.log.push(`${p.name} summons a Cadaver from the Grey room (Undead · move 2 · attack 2 · health 2).`);
    }
    if(count===0)s.log.push(`${p.name} already controls 3 evocations; no Cadaver summoned.`);
@@ -419,7 +449,7 @@ export function canPlayerAct(s: GameState, p: Player): boolean {
  if(p.actionTokens>0)return true;
  if(isInStartingRoom(s,p))return !a?.discardedExit && (p.hand.some(c=>!c.powerful) || Object.values(p.prepared).some(c=>c&&!c.used&&!c.card.powerful));
  const next=slots.find(slot=>p.prepared[slot] && !p.prepared[slot]!.used);
- const spells=[p.prepared.rapid,next&&!a?.sequencedSpellUsed?p.prepared[next]:null,...p.hand.filter(c=>c.powerful).map(card=>({card,used:false}))];
+ const spells=[p.prepared.rapid,next&&!a?.sequencedSpellUsed?p.prepared[next]:null];
  return spells.some(prepared=>{
   if(!prepared || prepared.used)return false;
   const card=prepared.card;
@@ -431,7 +461,7 @@ export function canPlayerAct(s: GameState, p: Player): boolean {
 export function canPassActionPhase(s:GameState,p:Player):boolean {
  const a=s.activation?.playerId===p.id?s.activation:null;
  if(a?.physicalAction || a?.exploring || s.evocationActivation?.playerId===p.id)return false;
- return p.actionTokens===0 && !Object.values(p.prepared).some(c=>c&&!c.used) && !p.hand.some(c=>c.powerful);
+ return p.actionTokens===0 && !Object.values(p.prepared).some(c=>c&&!c.used);
 }
 
 function startActivation(s: GameState, p: Player) {
@@ -441,22 +471,48 @@ function startActivation(s: GameState, p: Player) {
 
 function cleanup(s: GameState) {
  s.phase='CLEANUP'; s.activation=null; s.currentPlayerId=null;s.evocationActivation=null;
- s.log.push('CLEANUP — score rebuilt rooms.');
+ s.log.push('CLEANUP — rebuild completed rooms, score contributions and return physical cubes.');
  for(const room of s.board.rooms) {
   room.specialUsed=false;
-  if(!room.reconstructed || room.scored) continue;
+  // Legacy reconstructed-but-unscored fixtures also settle here.
+  if(room.startingFor || room.scored || (!room.reconstructed && room.instability<room.instabilityLimit)) continue;
+  room.reconstructed=true;
+  s.log.push(`${room.name} is rebuilt; its upgraded room action is now unlocked.`);
   for(const {playerId,rank,tied,points} of getContributionAwards(room.cubesByPlayer,room.rewards)) {
-   getPlayer(s,playerId).victoryPoints+=points;
-   s.log.push(`${getPlayer(s,playerId).name}: +${points} VP for ${room.name} (rank ${rank}${tied?', tied −1 VP':''}).`);
+  const name=awardVictoryPoints(s,playerId,points);
+  s.log.push(`${name}: +${points} VP for ${room.name} (rank ${rank}${tied&&points>0?', tied −1 VP':''}).`);
   }
   // Return physical cubes, but retain contributions and the locked rebuilt room.
   for(const p of s.players) { const n=room.cubesByPlayer[p.id]??0; p.cubes.available+=n; p.cubes.onBoard-=n; }
   room.scored=true;
  }
- const leaders=[...s.players].sort((a,b)=>b.victoryPoints-a.victoryPoints);
- if(leaders[0].victoryPoints>=30) {
-  s.phase='GAME_OVER'; s.winner=leaders[0].id;
+ if(s.round>=3 || s.blackRose.victoryPoints>=30 || s.players.some(p=>p.victoryPoints>=30)) {
+  s.log.push(`Endgame triggered after Cleanup: ${s.round>=3?'round limit reached':'a competitor reached 30 VP'}.`);
+  scoreEndgame(s);
+  // Stable player seating order wins equal final scores; Black Rose follows mages.
+  const leaders=[...s.players,{id:BLACK_ROSE_ID,name:'Black Rose',victoryPoints:s.blackRose.victoryPoints}].sort((a,b)=>b.victoryPoints-a.victoryPoints);
+  s.phase='GAME_OVER';s.winner=leaders[0].id;
   s.log.push(`${leaders[0].name} wins with ${leaders[0].victoryPoints} VP!`);
+ }
+}
+
+function scoreEndgame(s:GameState) {
+ if(s.endgameScored)return;
+ s.endgameScored=true;
+ const categories=[
+  {label:'kills majority',counts:{...Object.fromEntries(s.players.map(p=>[p.id,p.kills])),[BLACK_ROSE_ID]:s.blackRose.kills}},
+  {label:'completed quests majority',counts:Object.fromEntries(s.players.map(p=>[p.id,p.questsCompleted]))},
+ ];
+ for(const {label,counts} of categories) {
+  for(const {playerId,cubes:count,rank,tied,points} of getContributionAwards(counts,ENDGAME_REWARDS)) {
+   if(points===0)continue;
+   const name=awardVictoryPoints(s,playerId,points);
+   s.log.push(`${name}: +${points} VP for endgame ${label} (${count}, rank ${rank}${tied?', tied −1 VP':''}).`);
+  }
+ }
+ if(s.firstPlayerId!==null) {
+  const name=awardVictoryPoints(s,s.firstPlayerId,1);
+  s.log.push(`${name}: +1 VP for holding the first-player token at endgame.`);
  }
 }
 
@@ -509,10 +565,11 @@ function castSpell(s: GameState, p: Player, action: Extract<GameAction,{type:'CA
  requireNoPendingPhysical(a);
  requireTurnAction(a);
  assert(!isInStartingRoom(s,p),'Leave the starting room before casting spells');
- const prepared=action.type==='CAST_SPELL'?p.prepared[action.slot]:null;
- const card=action.type==='CAST_SPELL'?(prepared&&!prepared.used?prepared.card:undefined):p.hand.find(c=>c.id===action.cardId && c.powerful);
+ if(action.type==='CAST_POWERFUL_SPELL')throw new GameRuleError('Powerful spells cannot be cast from hand; prepare them in a later Preparation phase and use CAST_SPELL');
+ const prepared=p.prepared[action.slot];
+ const card=prepared&&!prepared.used?prepared.card:undefined;
  assert(card,'Spell unavailable');
- if(action.type==='CAST_SPELL' && action.slot!=='rapid') {
+ if(action.slot!=='rapid') {
   assert(!a.sequencedSpellUsed,'Only one sequenced spell per turn');
   assert(slots.find(slot=>p.prepared[slot] && !p.prepared[slot]!.used)===action.slot,'Cast numbered spells in order 1 → 2 → 3');
  }
@@ -536,12 +593,11 @@ function castSpell(s: GameState, p: Player, action: Extract<GameAction,{type:'CA
  // Resolve instability before damage so a defeated target's respawn never moves the room effect.
  if(room && spell.instability>0) placeInstability(s,room,spell.instability,p);
  for(const id of targets)damageModel(s,id,spell.damage,p);
- if(prepared)prepared.used=true;
- else p.hand.splice(p.hand.findIndex(c=>c.id===spell.id),1);
+ prepared!.used=true;
  if(spell.powerful){s.removedCards.push(spell);s.log.push(`${spell.name} is removed from the game after use.`);}
  else discardCard(s,p,spell);
  a.spellsCast++;a.actionsUsed++;
- if(action.type==='CAST_SPELL' && action.slot!=='rapid')a.sequencedSpellUsed=true;
+ if(action.slot!=='rapid')a.sequencedSpellUsed=true;
  s.log.push(`${p.name} casts ${spell.name}${action.dummy?' on a dummy (no damage)':''} for 1 action (no physical token).`); afterAction(s);
 }
 
@@ -550,10 +606,11 @@ export function applyAction(state: GameState, action: GameAction): GameState {
  assert(s.phase!=='GAME_OVER','The game is over');
  const p=getPlayer(s,action.playerId);
  switch(action.type) {
+  case 'UNDO_ACTION': case 'REDO_ACTION': throw new GameRuleError('History commands must be intercepted by the server; the engine does not process undo/redo');
   case 'SET_READY': requirePhase(s,'LOBBY'); assert(p.connected,'Join the room first'); p.ready=action.ready; break;
   case 'START_GAME':
    requirePhase(s,'LOBBY'); assert(p.id===s.hostId,'Only the creator can start');
-    assert(canStartGame(s),'At least 2 mages must join and everyone must be ready'); startBlackRose(s); break;
+    assert(canStartGame(s),'At least 2 mages must join and everyone must be ready');s.firstPlayerId=s.players[0].id;startBlackRose(s);break;
   case 'ADVANCE_PHASE':
    assert(p.id===s.hostId,'Only the creator can continue the phase');
     assert(action.expectedPhase===s.phase && action.expectedRound===s.round,'Stale phase command; wait for the current phase');

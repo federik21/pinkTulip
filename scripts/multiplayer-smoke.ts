@@ -28,7 +28,8 @@ const roomAt = (s: GameState, position: Hex) => {
 // Compare public epochs, not just phases/log lengths (movement need not log).
 // Private cards/quests differ between viewers; their identities never enter this key.
 function epochKey(s: GameState) {
- return JSON.stringify({ ...s, players: s.players.map(p => {
+ const { history, ...shared } = s;
+ return JSON.stringify({ ...shared, players: s.players.map(p => {
   const { hand, personalDeck, prepared, quest, additionalQuests, ...publicPlayer } = p;
   return { ...publicPlayer, hand: hand.length, personalDeck: personalDeck.length,
    prepared: slots.map(slot => prepared[slot] ? { used: prepared[slot]!.used } : null) };
@@ -96,7 +97,7 @@ function checkCubes(s: GameState) {
  assert.equal(typeof s.blackRoseResolved, 'boolean');
  for (const p of s.players) {
   assert.deepEqual([p.wizard.health, p.wizard.attack, p.wizard.movement, p.cardLimit, p.questLimit], [10, 2, 2, 7, 2]);
-  assert.equal(p.wizard.damageCubes, p.wizard.blackDamage + Object.values(p.wizard.damageByPlayer).reduce((a, b) => a + b, 0));
+  assert.ok(p.wizard.damageCubes >= p.wizard.blackDamage + Object.values(p.wizard.damageByPlayer).reduce((a, b) => a + b, 0), 'Unattributed wounds need not consume physical cubes');
   assert.ok(p.wizard.damageCubes < p.wizard.health, 'health is maximum HP, not remaining HP');
   assert.equal(p.cubes.available + p.cubes.onWizard + p.cubes.onEvocations + p.cubes.onBoard, 25);
   assert.equal(p.cubes.onWizard, s.players.reduce((n, victim) => n + (victim.wizard.damageByPlayer[p.id] ?? 0), 0));
@@ -107,6 +108,60 @@ function checkCubes(s: GameState) {
  for (const e of s.evocations) {
   assert.ok(!s.board.rooms.some(r => r.startingFor && r.tiles.some(h => sameHex(h, e.position))));
  }
+ for (const room of s.board.rooms) {
+  const capacity = room.id === 'room-0,0' ? 10 : room.color === 'violet' ? 4 : room.color === 'grey' ? 6 : 5;
+  assert.equal(room.instabilityLimit, capacity);
+  assert.deepEqual(room.rewards, ({ 4: [2, 1, 0], 5: [4, 2, 1], 6: [5, 3, 1], 10: [6, 3, 1] })[capacity]);
+  if (room.reconstructed) assert.equal(room.scored, true, 'Real rooms only rebuild and score together in Cleanup');
+ }
+}
+
+// Independent integration oracle: positive dense ranks, including neutral cubes,
+// with a one-point tie deduction only for nonzero prizes.
+function awards(counts: Record<string, number>, prizes: readonly number[]) {
+ const entries = Object.entries(counts).filter(([, count]) => count > 0);
+ const ranks = [...new Set(entries.map(([, count]) => count))].sort((a, b) => b - a);
+ return entries.map(([id, count]) => {
+  const prize = prizes[ranks.indexOf(count)] ?? 0;
+  return { id, points: prize > 0 ? Math.max(1, prize - Number(entries.filter(([, n]) => n === count).length > 1)) : 0 };
+ });
+}
+
+function checkSettlement(before: GameState, after: GameState) {
+ const scores = Object.fromEntries([...before.players.map(p => [p.id, p.victoryPoints]), ['black-rose', before.blackRose.victoryPoints]]);
+ // The final cast can place cubes or complete quests before automatically
+ // entering Cleanup in the same ACK. Separate those ordinary action rewards
+ // from the independent room/endgame score oracle at the logged phase boundary.
+ const appended = after.log.slice(before.log.length);
+ const cleanupIndex = appended.findIndex(line => line.startsWith('CLEANUP —'));
+ assert.ok(cleanupIndex >= 0);
+ for (const line of appended.slice(0, cleanupIndex)) {
+  for (const competitor of [...before.players, { id: 'black-rose', name: 'Black Rose' }]) {
+   if (!line.startsWith(`${competitor.name}: +`) && !line.startsWith(`${competitor.name} completes `)) continue;
+   const reward = line.match(/\+(\d+) VP/);
+   if (reward) scores[competitor.id] += Number(reward[1]);
+  }
+ }
+ for (const settled of after.board.rooms) {
+  const room = before.board.rooms.find(r => r.id === settled.id)!;
+  if (room.startingFor || room.scored || settled.instability < settled.instabilityLimit) continue;
+  assert.equal(room.reconstructed, false, 'Full rooms remain ordinary until Cleanup');
+  assert.equal(settled.reconstructed, true); assert.equal(settled.scored, true);
+  if (room.instability === room.instabilityLimit) assert.deepEqual(settled.cubesByPlayer, room.cubesByPlayer, 'Historical contributions survive cube returns');
+  for (const { id, points } of awards(settled.cubesByPlayer, room.rewards)) scores[id] += points;
+ }
+ assert.ok(after.board.rooms.every(room => !room.specialUsed));
+ if (after.phase === 'GAME_OVER') {
+  assert.equal(after.round, 3); assert.equal(after.endgameScored, true);
+  for (const counts of [
+   { ...Object.fromEntries(before.players.map(p => [p.id, p.kills])), 'black-rose': before.blackRose.kills },
+   Object.fromEntries(before.players.map(p => [p.id, p.questsCompleted])),
+  ]) for (const { id, points } of awards(counts, [4, 2, 1])) scores[id] += points;
+  assert.ok(before.firstPlayerId); scores[before.firstPlayerId]++;
+  const winner = [...before.players.map(p => p.id), 'black-rose'].sort((a, b) => scores[b] - scores[a])[0];
+  assert.equal(after.winner, winner, 'Final standings include Black Rose and stable seating-order ties');
+ } else assert.equal(after.endgameScored, false);
+ assert.deepEqual(Object.fromEntries([...after.players.map(p => [p.id, p.victoryPoints]), ['black-rose', after.blackRose.victoryPoints]]), scores);
 }
 
 async function main() {
@@ -133,7 +188,7 @@ async function main() {
    emptyHandLimits: 0, emptyQuestLimits: 0, freeEvocations: 0, once: 0, ownerSkips: 0, destroyed: 0,
     futurePass: 0, automaticSkips: 0, legacy: 0, offAxisPrepared: 0, offAxisPowerful: 0,
     cappedHandoffs: 0, pendingAtCap: 0, thirdRejected: 0, retainedTokens: 0, retainedSpells: 0,
-    numbered: 0, flexible: 0, discardExits: 0, yields: 0 };
+    numbered: 0, flexible: 0, discardExits: 0, yields: 0, heldPowerRejections: 0, settlements: 0, drawBarriers: 0 };
     const preparedByRound = [0, 0, 0];
     const actionCosts = new Set(['BEGIN_PHYSICAL_ACTION', 'EXPLORE', 'PUNCH', 'ACTIVATE_EVOCATION',
     'CAST_SPELL', 'CAST_POWERFUL_SPELL', 'DISCARD_EXIT']);
@@ -148,6 +203,8 @@ async function main() {
     if (!connected) continue;
     const own = await client(id).sync(epoch);
     assert.equal(epochKey(own), epochKey(epoch));
+    assert.ok(own.history && typeof own.history.canUndo === 'boolean' && typeof own.history.canRedo === 'boolean');
+    assert.ok(Object.keys(own.history).every(key => ['canUndo', 'canRedo', 'undoLabel', 'redoLabel'].includes(key)), 'History exposes availability only, never snapshots');
     for (const other of own.players.filter(p => p.id !== id)) {
      assert.equal(other.quest, null); assert.deepEqual(other.additionalQuests, []);
      assert.ok(other.hand.every(c => c.name === 'Hidden spell' && !c.schoolId && !c.powerful));
@@ -162,6 +219,15 @@ async function main() {
   const command = async (mage: Mage, action: WireAction, error?: RegExp): Promise<GameState> => {
     await mage.sync(epoch); const before = epoch;
     epoch = await mage.send(action, error); checkCubes(epoch); await privacy();
+    if (!error && before.phase !== epoch.phase && (epoch.phase === 'CLEANUP' || epoch.phase === 'GAME_OVER')) {
+     checkSettlement(before, epoch); coverage.settlements++;
+    } else if (!error) {
+     for (const room of epoch.board.rooms) {
+      const previous = before.board.rooms.find(r => r.id === room.id)!;
+      assert.deepEqual([room.reconstructed, room.scored], [previous.reconstructed, previous.scored], 'Room rebuilds, VP settlement and upgraded effects must wait for Cleanup');
+     }
+     assert.equal(epoch.endgameScored, before.endgameScored);
+    }
     if (!error && before.phase === 'ACTION' && before.activation?.playerId === action.playerId &&
      (actionCosts.has(action.type) || physicalEffects.has(action.type))) {
      const used = before.activation.actionsUsed + Number(actionCosts.has(action.type));
@@ -261,6 +327,11 @@ async function main() {
    const count = before.evocations.filter(e => e.playerId === id).length;
    await act({ type: 'ACTIVATE_ROOM', playerId: id });
    assert.equal(player(epoch, id).actionTokens, p.actionTokens);
+  if (['DRAW_POWERFUL', 'DRAW_GRIMOIRE', 'DRAW_DISCARD', 'DRAW_QUEST'].includes(room.effect ?? '')) {
+   assert.deepEqual(epoch.history, { canUndo: false, canRedo: false }, 'Drawing rooms are history barriers, including empty sources');
+   await act({ type: 'UNDO_ACTION', playerId: id }, /No action available to undo/);
+   coverage.drawBarriers++;
+  }
   if (sameTurn(before, id)) assert.equal(epoch.activation!.actionsUsed, before.activation!.actionsUsed);
    assert.equal(epoch.board.rooms.find(r => r.id === room.id)!.specialUsed, room.reconstructed);
    if (room.color === 'grey') {
@@ -339,13 +410,17 @@ async function main() {
    }
    for (const id of ids) {
     let own = player(await client(id).sync(epoch), id);
-    const prepare = (): GameAction => ({ type: 'PREPARE_CARDS', playerId: id,
-     preparedCardIds: own.hand.slice(0, 3).map(c => c.id), rapidCardId: own.hand[3].id });
+     const prepare = (): GameAction => {
+      const power = own.hand.find(c => c.powerful);
+      const ordinary = own.hand.filter(c => !c.powerful);
+      return { type: 'PREPARE_CARDS', playerId: id,
+       preparedCardIds: ordinary.slice(0, 3).map(c => c.id), rapidCardId: (power ?? ordinary[3]).id };
+     };
     const overflow = own.hand.length - own.cardLimit;
     if (overflow > 0) {
      await act(prepare(), /hand limit/);
      await act({ type: 'DISCARD_HAND_LIMIT', playerId: id, cardIds: [] }, /Discard exactly/);
-     const selected = [...own.hand].sort((a, b) => Number(!!b.schoolId) - Number(!!a.schoolId)).slice(0, overflow);
+    const selected = [...own.hand].sort((a, b) => Number(!!a.powerful) - Number(!!b.powerful) || Number(!!b.schoolId) - Number(!!a.schoolId)).slice(0, overflow);
      await act({ type: 'DISCARD_HAND_LIMIT', playerId: id, cardIds: [...selected.slice(0, -1).map(c => c.id), 'not-owned'] }, /not in hand/);
      if (overflow > 1) await act({ type: 'DISCARD_HAND_LIMIT', playerId: id, cardIds: Array(overflow).fill(selected[0].id) }, /different spells/);
      const library = epoch.library, removed = epoch.removedCards;
@@ -377,38 +452,33 @@ async function main() {
    if (epoch.phase !== 'ACTION' || epoch.currentPlayerId !== id) return false;
    const p = player(epoch, id), next = slots.slice(0, 3).find(slot => p.prepared[slot] && !p.prepared[slot]!.used);
    const slot = !epoch.activation!.sequencedSpellUsed && next ? next : !numberedOnly && p.prepared.rapid && !p.prepared.rapid.used ? 'rapid' : null;
-  const power = numberedOnly ? undefined : p.hand.find(c => c.powerful);
-   if (!slot && !power) return false;
-   const card = slot ? p.prepared[slot]!.card : power!, before = epoch;
-  const rangeCoverage = slot ? 'offAxisPrepared' : 'offAxisPowerful';
+    if (!slot) return false;
+    const card = p.prepared[slot]!.card, before = epoch;
+    const rangeCoverage = card.powerful ? 'offAxisPowerful' : 'offAxisPrepared';
   if (!coverage[rangeCoverage]) {
    const origin = p.wizard.position;
    const offLine = epoch.board.rooms.find(r => !r.startingFor && r.tiles.some(h =>
     distance(origin, h) <= card.range && h.q !== origin.q && h.r !== origin.r && h.q + h.r !== origin.q + origin.r));
    if (offLine) {
     const targeting = { roomId: offLine.id, ...(card.target === 'MODEL' ? { dummy: true } : {}) };
-    await act(slot ? { type: 'CAST_SPELL', playerId: id, slot, ...targeting }
-    : { type: 'CAST_POWERFUL_SPELL', playerId: id, cardId: card.id, ...targeting }, /Room out of range/);
+    await act({ type: 'CAST_SPELL', playerId: id, slot, ...targeting }, /Room out of range/);
     assert.deepEqual(epoch, before, 'Rejected off-axis spells must preserve the entire authoritative state');
     coverage[rangeCoverage]++;
    }
   }
-   await act(slot ? { type: 'CAST_SPELL', playerId: id, slot, ...spellTarget(id, card) }
-    : { type: 'CAST_POWERFUL_SPELL', playerId: id, cardId: card.id, ...spellTarget(id, card) });
+  await act({ type: 'CAST_SPELL', playerId: id, slot, ...spellTarget(id, card) });
    assert.equal(player(epoch, id).actionTokens, p.actionTokens);
    assert.deepEqual(epoch.players.map(p => p.wizard), before.players.map(p => p.wizard));
    assert.deepEqual(epoch.evocations.map(({ activated, ...e }) => e), before.evocations.map(({ activated, ...e }) => e));
-  if (slot) {
    coverage.prepared++; preparedByRound[before.round - 1]++;
    if (slot === 'rapid') coverage.flexible++; else coverage.numbered++;
    assert.equal(player(epoch, id).prepared[slot]!.used, true);
-  }
-   else {
+    if (card.powerful) {
     coverage.powerful++; assert.ok(epoch.removedCards.some(c => c.id === card.id));
     assert.ok(!player(epoch, id).discard.some(c => c.id === card.id));
     assert.ok(!epoch.library.some(d => d.discard.some(c => c.id === card.id)));
     if (sameTurn(before, id))
-     await act({ type: 'CAST_POWERFUL_SPELL', playerId: id, cardId: card.id, ...spellTarget(id, card) }, /Spell unavailable/);
+    await act({ type: 'CAST_SPELL', playerId: id, slot, ...spellTarget(id, card) }, /Spell unavailable/);
    }
    if (sameTurn(before, id) && player(epoch, id).actionTokens === 0 && epoch.activation!.sequencedSpellUsed &&
    slots.slice(0, 3).some(key => player(epoch, id).prepared[key] && !player(epoch, id).prepared[key]!.used)) {
@@ -447,7 +517,7 @@ async function main() {
     await act({ type: 'PASS_ROUND', playerId: id }, /no physical tokens and no unused spells/); coverage.futurePass++;
     await handTurn(id);
    }
-   assert.equal(epoch.phase, epoch.evocations.length ? 'EVOCATION' : 'CLEANUP');
+  assert.equal(epoch.phase, epoch.evocations.length ? 'EVOCATION' : epoch.round === 3 ? 'GAME_OVER' : 'CLEANUP');
    assert.ok(epoch.players.every(p => p.actionTokens === 0 && !p.passed && Object.values(p.prepared).every(c => !c || c.used)));
    assert.ok(epoch.evocations.every(e => !e.activated));
   }
@@ -485,9 +555,9 @@ async function main() {
     assert.equal(epoch.evocationActivation, null);
     const next = [other, id].find(owner => epoch.evocations.some(e => e.playerId === owner && !e.activated));
     if (next) { assert.equal(epoch.phase, 'EVOCATION'); assert.equal(epoch.currentPlayerId, next); if (next === id) coverage.ownerSkips++; }
-    else assert.equal(epoch.phase, 'CLEANUP');
+    else assert.equal(epoch.phase, round === 3 ? 'GAME_OVER' : 'CLEANUP');
    }
-   assert.equal(epoch.phase, 'CLEANUP'); assert.ok(epoch.evocations.every(e => e.activated));
+     assert.equal(epoch.phase, round === 3 ? 'GAME_OVER' : 'CLEANUP'); assert.ok(epoch.evocations.every(e => e.activated));
   }
 
   // Round 1: discard exit + Explore use the first two-action turn. The
@@ -517,8 +587,13 @@ async function main() {
   await begin('p1'); await activateRoom('p1'); await movement('p1', []);
   assert.equal(player(await a.sync(epoch), 'p1').hand.length, 2);
   await waitTurn('p2');
-  await begin('p2'); await activateRoom('p2'); await skip('p2');
+  await begin('p2'); await movement('p2', [{ q: -1, r: 1 }, { q: 0, r: 0 }]); await activateRoom('p2');
+  const heldPower = player(await b.sync(epoch), 'p2').hand.find(c => c.powerful)!;
+  assert.ok(heldPower, 'A central-room gift is held, not prepared');
+  await act({ type: 'CAST_POWERFUL_SPELL', playerId: 'p2', cardId: heldPower.id, ...spellTarget('p2', heldPower) }, /cannot be cast from hand/);
+  coverage.heldPowerRejections++;
   await legacy('p2'); await drainAction(); await freePhase(1);
+  assert.ok(player(await b.sync(epoch), 'p2').hand.some(c => c.id === heldPower.id), 'Held powers survive automatic Action exhaustion and Cleanup');
 
   await advance();
   await act({ type: 'ADVANCE_PHASE', playerId: 'p1', expectedPhase: 'CLEANUP', expectedRound: 1 }, /Stale phase command/);
@@ -531,28 +606,30 @@ async function main() {
   assert.equal(epoch.activation!.exploring, 1); await locks('p1'); await skip('p1');
   assert.deepEqual(player(epoch, 'p1').wizard.position, { q: 0, r: 0 }, 'Mid-movement skip preserves the completed step');
   assert.equal(epoch.currentPlayerId, 'p2', 'Finishing the second physical action must hand off despite unused spells');
-  await begin('p2'); await activateRoom('p2'); await movement('p2', [{ q: -1, r: 1 }, { q: 0, r: 0 }]);
+  await begin('p2'); await activateRoom('p2'); await skip('p2');
   await begin('p2'); await movement('p2', [{ q: 1, r: -1 }]);
   assert.equal(epoch.evocations.length, 0, 'Entering Grey alone never summons');
   await activateRoom('p2'); await legacy('p2'); await drainAction(); await freePhase(2);
 
   await advance(); await studyAndPrepare();
-  // Spend preparations safely before the mages meet on Grey. Reserve p2's
-  // flexible spell for a legal one-spell yield after p1's center/power turn.
+  // Spend numbered preparations safely before the mages meet on Grey. Reserve
+  // both flexible spells for legal yields; a newly drawn power cannot be cast.
   const plannedPreparationsRemain = () => epoch.players.some(p =>
-   (p.id === 'p1' ? slots : slots.slice(0, 3)).some(slot => p.prepared[slot] && !p.prepared[slot]!.used));
+   slots.slice(0, 3).some(slot => p.prepared[slot] && !p.prepared[slot]!.used));
   for (let guard = 0; plannedPreparationsRemain(); guard++) {
    assert.ok(guard < 12); const id: string = epoch.currentPlayerId!;
    const before = epoch;
-   assert.ok(await castAvailable(id, id === 'p2'));
-   if (sameTurn(before, id) && id === 'p1') await castAvailable(id);
+  assert.ok(await castAvailable(id, true));
    if (sameTurn(before, id)) await handTurn(id);
   }
   assert.equal(epoch.currentPlayerId, 'p1');
   await begin('p1'); await activateRoom('p1'); await movement('p1', []);
-  assert.ok(player(await a.sync(epoch), 'p1').hand.some(c => c.powerful));
+  const latePower = player(await a.sync(epoch), 'p1').hand.find(c => c.powerful)!;
+  assert.ok(latePower);
+  await act({ type: 'CAST_POWERFUL_SPELL', playerId: 'p1', cardId: latePower.id, ...spellTarget('p1', latePower) }, /cannot be cast from hand/);
+  coverage.heldPowerRejections++;
   assert.ok(await castAvailable('p1'));
-  assert.equal(epoch.currentPlayerId, 'p2', 'Explore + powerful spell must consume both actions, retaining one physical token');
+  assert.equal(epoch.currentPlayerId, 'p2', 'Explore + prepared flexible spell must consume both actions, retaining one physical token');
   assert.equal(player(epoch, 'p1').actionTokens, 1);
   await waitTurn('p1');
   await begin('p1'); await locks('p1'); await movement('p1', [{ q: 1, r: -1 }]); await activateRoom('p1');
@@ -581,20 +658,25 @@ async function main() {
   }
   await attack(false); await attack(true);
   assert.equal(epoch.phase, 'EVOCATION'); await freePhase(3);
+  assert.equal(epoch.phase, 'GAME_OVER'); assert.equal(epoch.endgameScored, true);
+  assert.ok(player(await a.sync(epoch), 'p1').hand.some(c => c.id === latePower.id), 'A newly held power neither casts nor prevents final Action exhaustion');
+  assert.equal(coverage.settlements, 3, 'Each real round settles once; round three ends rather than starting round four');
+  await advance(/The game is over/);
+  await privacy();
   assert.equal(epoch.round, 3); assert.equal(coverage.prepared, 23, 'One deliberate prepared discard exit replaces a cast');
   assert.deepEqual(preparedByRound, [7, 8, 8], 'Legal yields must neither lose nor duplicate planned casts');
   assert.deepEqual([coverage.numbered, coverage.flexible, coverage.discardExits], [18, 5, 1]);
   assert.equal(coverage.begins, 12, 'Both round tokens per mage must still resolve as meaningful physical actions');
   assert.ok(coverage.cappedHandoffs > 0 && coverage.pendingAtCap > 0 && coverage.thirdRejected > 0);
   assert.ok(coverage.retainedTokens > 0 && coverage.retainedSpells > 0 && coverage.yields > 0);
-  assert.ok(coverage.powerful > 0 && coverage.handDiscards > 0 && coverage.schoolExceptions > 0);
+  assert.ok(coverage.powerful > 0 && coverage.heldPowerRejections === 2 && coverage.drawBarriers > 0 && coverage.handDiscards > 0 && coverage.schoolExceptions > 0);
   assert.ok(coverage.grey >= 2 && coverage.attacks === 2 && coverage.locks > 30);
   assert.ok(coverage.emptyHandLimits > 0 && coverage.freeEvocations > 0 && coverage.destroyed > 0);
   assert.ok(coverage.futurePass > 0 && coverage.automaticSkips > 0 && coverage.skips >= 2);
   assert.ok(coverage.offAxisPrepared > 0 && coverage.offAxisPowerful > 0, 'Both prepared and powerful off-axis casts must be rejected over the real socket');
   console.log(`PASS: joined-only lobby grows from 1 to 2 mages and auto-starts on final readiness; 3 real two-client rounds; wizard max HP/attack/movement 10/2/2, limits 7/2, exactly 2 physical tokens/round. ` +
-   `2 TOTAL actions/turn: ${coverage.prepared} prepared casts (${coverage.numbered} numbered/${coverage.flexible} flexible; rounds ${preparedByRound.join('/')}) + ` +
-   `${coverage.powerful} permanently removed powerful casts + ${coverage.discardExits} discard exit, each 1 action/no physical token. ` +
+    `2 TOTAL actions/turn: ${coverage.prepared} prepared casts (${coverage.numbered} numbered/${coverage.flexible} flexible; rounds ${preparedByRound.join('/')}) ` +
+  `including ${coverage.powerful} permanently removed prepared powers; ${coverage.heldPowerRejections} direct held-power rejections, ${coverage.drawBarriers} no-undo draw barriers + ${coverage.discardExits} discard exit, each 1 action/no physical token. ` +
    `${coverage.cappedHandoffs} automatic two-action handoffs, ${coverage.pendingAtCap} pending-effect checks at the cap, ` +
    `${coverage.thirdRejected} post-handoff action rejections; handoffs retain tokens/spells ${coverage.retainedTokens}/${coverage.retainedSpells}. ` +
    `${coverage.begins} new physical menus, ${coverage.locks} mage-lock rejections, ${coverage.skips} skips, ${coverage.attacks} distance-0 mage attacks. ` +
@@ -602,11 +684,15 @@ async function main() {
    `quest overflow: ${coverage.questDiscards}; empty-limit checks: ${coverage.emptyHandLimits}/${coverage.emptyQuestLimits}. ` +
    `Grey: ${coverage.grey} effects (${coverage.greyRebuilt} rebuilt, ${coverage.greyCap} cap no-ops); ` +
    `${coverage.freeEvocations} free model activations, ${coverage.ownerSkips} owner skips, ${coverage.destroyed} no-score destructions. ` +
-  `Off-axis prepared/powerful casts rejected: ${coverage.offAxisPrepared}/${coverage.offAxisPowerful}. Privacy/cube ledgers verified after every command.\n` +
+  `Off-axis ordinary/prepared-power casts rejected: ${coverage.offAxisPrepared}/${coverage.offAxisPowerful}. Round 3 GAME_OVER: ${epoch.winner}; independent room/final majority scoring, first-player bonus, privacy/cube ledgers verified.\n` +
    `GAPS: quest overflow depends on random completions; powerful overflow, paid activations, Wounded Fury bonus and remaining combat/menu permutations stay in deterministic engine coverage. Rebuilt Grey may prevent one or both Attack room effects. Browser validation is separate.`);
  } finally {
   for (const ws of sockets) ws.terminate();
-  server.kill('SIGTERM');
+  if (server.exitCode === null && server.signalCode === null) {
+   const exited = once(server, 'exit'); server.kill('SIGTERM');
+   const timer = setTimeout(() => server.kill('SIGKILL'), 3000);
+   try { await exited; } finally { clearTimeout(timer); }
+  }
  }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });
