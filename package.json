@@ -1,0 +1,24 @@
+{
+  "name": "black-rose-wars-prototype",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*",
+    "apps/server"
+  ],
+  "scripts": {
+    "test": "npm run test -w @brw/game-engine",
+    "test:network": "node --import tsx scripts/multiplayer-smoke.ts",
+    "test:browser": "playwright test",
+    "typecheck": "tsc --noEmit -p packages/game-engine/tsconfig.json && tsc --noEmit -p apps/server/tsconfig.json && tsc --noEmit -p apps/client/tsconfig.json",
+    "dev": "npm run dev -w @brw/client",
+    "build": "npm run build -w @brw/client"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  }
+}

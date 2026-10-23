@@ -1,0 +1,1 @@
+{"name":"@brw/server","private":true,"type":"module","scripts":{"dev":"tsx watch src/index.ts","start":"tsx src/index.ts"},"dependencies":{"@brw/game-engine":"*","ws":"^8.18.0"},"devDependencies":{"tsx":"^4.19.2","@types/ws":"^8.5.12"}}
