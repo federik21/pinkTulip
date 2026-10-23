@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
-import { isWithinSpellRange } from '../packages/game-engine/src/engine';
+import { areInSameRoom, isWithinSpellRange } from '../packages/game-engine/src/engine';
 import type { Card, GameAction, GameState, Hex, Player } from '../packages/game-engine/src/types';
 
 // Real isolated server/clients: no engine fixtures, state mutation or test-only actions.
@@ -185,7 +185,8 @@ async function main() {
   let epoch = await a.join('smoke', true, 'Ember');
   const coverage = { prepared: 0, powerful: 0, begins: 0, locks: 0, skips: 0, grey: 0, greyCap: 0,
    greyRebuilt: 0, attacks: 0, questDiscards: 0, handDiscards: 0, schoolExceptions: 0, powerExceptions: 0,
-   emptyHandLimits: 0, emptyQuestLimits: 0, freeEvocations: 0, once: 0, ownerSkips: 0, destroyed: 0,
+    emptyHandLimits: 0, emptyQuestLimits: 0, freeEvocations: 0, once: 0, ownerSkips: 0, destroyed: 0,
+    evocationRangeRejections: 0, evocationCombatSteps: 0,
     futurePass: 0, automaticSkips: 0, legacy: 0, offAxisPrepared: 0, offAxisPowerful: 0,
     cappedHandoffs: 0, pendingAtCap: 0, thirdRejected: 0, retainedTokens: 0, retainedSpells: 0,
     numbered: 0, flexible: 0, discardExits: 0, yields: 0, heldPowerRejections: 0, settlements: 0, drawBarriers: 0 };
@@ -521,6 +522,20 @@ async function main() {
    assert.ok(epoch.players.every(p => p.actionTokens === 0 && !p.passed && Object.values(p.prepared).every(c => !c || c.used)));
    assert.ok(epoch.evocations.every(e => !e.activated));
   }
+  function pathIntoRoom(source: Hex, target: Hex, moves: number): Hex[] | undefined {
+   const frontier = [{ position: source, path: [] as Hex[] }], seen = new Set<string>();
+   for (let i = 0; i < frontier.length; i++) {
+    const { position, path } = frontier[i];
+    if (areInSameRoom(epoch, position, target)) return path;
+    if (path.length === moves) continue;
+    for (const tile of epoch.board.tiles) {
+     const key = `${tile.q},${tile.r}`;
+     if (distance(position, tile) !== 1 || seen.has(key) || roomAt(epoch, tile).startingFor) continue;
+     seen.add(key); frontier.push({ position: tile, path: [...path, tile] });
+    }
+   }
+   return undefined;
+  }
   async function freePhase(round: number) {
    const used = new Set<string>();
    for (let guard = 0; epoch.phase === 'EVOCATION'; guard++) {
@@ -537,6 +552,14 @@ async function main() {
     await act({ type: 'ACTIVATE_EVOCATION', playerId: id, evocationId: e.id }, /Finish the active evocation/);
     await act({ type: 'EVOCATION_ATTACK', playerId: id, targetId: id }, /friendly evocations/);
     await act({ type: 'EVOCATION_ATTACK', playerId: id, targetId: e.id }, /friendly evocations/);
+    const outOfRoom = [
+     ...epoch.players.filter(p => p.id !== id).map(p => ({ id: p.id, position: p.wizard.position })),
+     ...epoch.evocations.filter(t => t.playerId !== id),
+    ].find(t => !roomAt(epoch, t.position).startingFor && !areInSameRoom(epoch, e.position, t.position));
+    if (outOfRoom) {
+     await act({ type: 'EVOCATION_ATTACK', playerId: id, targetId: outOfRoom.id }, /^Target must be in the same room$/);
+     coverage.evocationRangeRejections++;
+    }
     const start = epoch.board.rooms.find(r => r.startingFor && distance(r.tiles[0], e.position) === 1);
     if (start) await act({ type: 'EVOCATION_STEP', playerId: id, destination: start.tiles[0] }, /cannot enter starting rooms/);
     if (round === 2) {
@@ -544,8 +567,20 @@ async function main() {
      await act({ type: 'EVOCATION_STEP', playerId: id, destination: { q: 1, r: -1 } });
      await act({ type: 'EVOCATION_STEP', playerId: id, destination: { q: 0, r: 0 } }, /No evocation movement/);
     }
-    const target = round === 3 && id === 'p1' ? epoch.evocations.find(t => t.playerId !== id && distance(t.position, e.position) <= 1) : undefined;
+    // Use the current model position and its actual remaining allowance. A
+    // neighboring room is not attack range: first follow legal adjacent steps
+    // into that room, rather than silently dropping all summon combat coverage.
+    const active = epoch.evocations.find(t => t.id === e.id)!;
+    const reachable = round === 3 && id === 'p1' ? epoch.evocations.filter(t => t.playerId !== id)
+     .map(target => ({ target, path: pathIntoRoom(active.position, target.position, epoch.evocationActivation!.movesRemaining) }))
+     .filter((choice): choice is { target: typeof active; path: Hex[] } => choice.path !== undefined)
+     .sort((a, b) => a.path.length - b.path.length) : [];
+    const choice = reachable[0], target = choice?.target;
     if (target) {
+     for (const destination of choice.path) {
+      await act({ type: 'EVOCATION_STEP', playerId: id, destination }); coverage.evocationCombatSteps++;
+     }
+     assert.ok(areInSameRoom(epoch, epoch.evocations.find(t => t.id === e.id)!.position, target.position));
      const before = player(epoch, id);
      await act({ type: 'EVOCATION_ATTACK', playerId: id, targetId: target.id });
      assert.ok(!epoch.evocations.some(t => t.id === target.id)); coverage.destroyed++;
@@ -672,6 +707,7 @@ async function main() {
   assert.ok(coverage.powerful > 0 && coverage.heldPowerRejections === 2 && coverage.drawBarriers > 0 && coverage.handDiscards > 0 && coverage.schoolExceptions > 0);
   assert.ok(coverage.grey >= 2 && coverage.attacks === 2 && coverage.locks > 30);
   assert.ok(coverage.emptyHandLimits > 0 && coverage.freeEvocations > 0 && coverage.destroyed > 0);
+  assert.ok(coverage.evocationRangeRejections > 0, 'Different-room attacks must be rejected over the real socket');
   assert.ok(coverage.futurePass > 0 && coverage.automaticSkips > 0 && coverage.skips >= 2);
   assert.ok(coverage.offAxisPrepared > 0 && coverage.offAxisPowerful > 0, 'Both prepared and powerful off-axis casts must be rejected over the real socket');
   console.log(`PASS: joined-only lobby grows from 1 to 2 mages and auto-starts on final readiness; 3 real two-client rounds; wizard max HP/attack/movement 10/2/2, limits 7/2, exactly 2 physical tokens/round. ` +
@@ -683,7 +719,8 @@ async function main() {
    `Hand overflow: ${coverage.handDiscards} to PERSONAL discard (${coverage.schoolExceptions} school, ${coverage.powerExceptions} powerful); ` +
    `quest overflow: ${coverage.questDiscards}; empty-limit checks: ${coverage.emptyHandLimits}/${coverage.emptyQuestLimits}. ` +
    `Grey: ${coverage.grey} effects (${coverage.greyRebuilt} rebuilt, ${coverage.greyCap} cap no-ops); ` +
-   `${coverage.freeEvocations} free model activations, ${coverage.ownerSkips} owner skips, ${coverage.destroyed} no-score destructions. ` +
+  `${coverage.freeEvocations} free model activations, ${coverage.ownerSkips} owner skips, ${coverage.destroyed} same-room no-score destructions; ` +
+  `${coverage.evocationRangeRejections} different-room attack rejections, ${coverage.evocationCombatSteps} legal steps into enemy rooms. ` +
   `Off-axis ordinary/prepared-power casts rejected: ${coverage.offAxisPrepared}/${coverage.offAxisPowerful}. Round 3 GAME_OVER: ${epoch.winner}; independent room/final majority scoring, first-player bonus, privacy/cube ledgers verified.\n` +
    `GAPS: quest overflow depends on random completions; powerful overflow, paid activations, Wounded Fury bonus and remaining combat/menu permutations stay in deterministic engine coverage. Rebuilt Grey may prevent one or both Attack room effects. Browser validation is separate.`);
  } finally {

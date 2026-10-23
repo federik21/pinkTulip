@@ -40,13 +40,25 @@ async function openRetinue(page: Page, ownerId: string) {
 }
 
 async function expectEvocationTokens(page: Page, coordinates: string, owners: [string, number][]) {
-  const markers = hex(page, coordinates).locator('.evocation-marker');
+  const room = hex(page, coordinates);
+  const markers = room.locator('.evocation-marker');
   await expect(markers).toHaveCount(owners.length);
+  const discs = room.locator('.mage-token-disc');
+  const radius = Number(await discs.first().getAttribute('r'));
+  expect(radius).toBeGreaterThan(0);
+  if (await discs.count() <= 4) expect(radius).toBe(5);
+  else expect(radius).toBeLessThan(5);
+  for (const disc of await discs.all()) await expect(disc).toHaveAttribute('r', String(radius));
   for (const [index, [id, number]] of owners.entries()) {
     const marker = markers.nth(index);
     await expect(marker).toHaveAttribute('data-owner-id', id);
+    await expect(marker.locator('text')).toHaveCount(1);
     await expect(marker.locator('text')).toHaveText(String(number));
-    await expect(marker.locator('circle')).toHaveCSS('fill', mageColors[Number(id.slice(1)) - 1]);
+    await expect(marker.locator('circle')).toHaveCount(1);
+    const disc = marker.locator('circle.mage-token-disc.evocation-token-disc');
+    await expect(disc).toHaveCSS('fill', 'rgb(24, 18, 31)');
+    await expect(disc).toHaveCSS('stroke', mageColors[Number(id.slice(1)) - 1]);
+    await expect(disc).toHaveAttribute('r', String(radius));
     await expect(marker.locator('title')).toContainText(`Cadaver #${number}`);
   }
 }
@@ -143,8 +155,9 @@ async function expectAttributes(pages: Page[], count = pages.length) {
     for (let index = 0; index < count; index++) {
       const id = `p${index + 1}`;
       const stats = page.locator(`.player[data-player-id="${id}"] dl.mage-attributes`);
-      await expect(stats.locator('dt')).toHaveText(['Max HP', 'Attack', 'Movement', 'Card limit', 'Quest limit']);
-      await expect(stats.locator('dd')).toHaveText(['10', '2', '2', '7', '2']);
+      await expect(stats.locator('dt')).toHaveText(['Max HP', 'Attack', 'Movement', 'Cards', 'Quest limit']);
+      await expect(stats.locator('div').filter({ hasNot: page.locator('dt', { hasText: /^Cards$/ }) }).locator('dd')).toHaveText(['10', '2', '2', '2']);
+      await expect(stats.locator('dd').nth(3)).toHaveText(/^\d+\/7$/);
       const meter = page.locator(`.player[data-player-id="${id}"] .health`);
       await expect(meter).toHaveAttribute('aria-valuemax', '10');
       const damage = Number(await meter.getAttribute('aria-valuenow'));
@@ -338,7 +351,7 @@ async function expectGreySummon(mage: Mage, pages: Page[], total: number, handed
   return id!;
 }
 
-async function extraEvocationActivation(mage: Mage, pages: Page[], id: string, total: number, next?: Mage) {
+async function extraEvocationActivation(mage: Mage, pages: Page[], id: string, total: number, next?: Mage, path: string[] = []) {
   const own = mage.page.locator(`.evocation-card[data-evocation-id="${id}"]`);
   const activate = own.getByRole('button', { name: /^Activate Cadaver\b/ });
   await expect(activate.locator('small')).toHaveText('1 token · extra activation');
@@ -357,13 +370,24 @@ async function extraEvocationActivation(mage: Mage, pages: Page[], id: string, t
     await expectEvocationLocation(page, id, mage);
   }
   await expect(activate).toBeDisabled();
-  // Spend the extra activation without moving or attacking; it must not summon another model.
+  // Optional adjacent steps spend only this model's movement, never another token or summon.
+  for (const [index, coordinates] of path.entries()) {
+    await hex(mage.page, coordinates, true).click();
+    await expect(mage.page.locator('.evocation-controls')).toContainText(`${1 - index} movement remaining.`);
+    for (const page of pages) {
+      await expectEvocationLocation(page, id, mage, coordinates);
+      await expectEvocationTokens(page, coordinates, [[mage.id, 1]]);
+      await expectMageAt([page], mage, mage.coordinates);
+      await expectTokens(page, mage.name, 0);
+    }
+  }
   await mage.page.getByRole('button', { name: 'Finish evocation', exact: true }).click();
   await expectActing(pages, next ?? mage);
   for (const page of pages) {
     await expect(page.locator('.evocation-controls')).toHaveCount(0);
     await expect(page.locator('.evocation-card')).toHaveCount(total);
-    await expectEvocationLocation(page, id, mage);
+    await expectEvocationLocation(page, id, mage, path.at(-1) ?? mage.coordinates);
+    await expectEvocationTokens(page, path.at(-1) ?? mage.coordinates, [[mage.id, 1]]);
     await expect(page.locator('.log > div').filter({ hasText: `${mage.name} summons a Cadaver from the Grey room` })).toHaveCount(1);
     await expectTokens(page, mage.name, 0);
   }
@@ -576,7 +600,8 @@ test('two browsers exhaust two round tokens, spend turn actions on spells, and r
       await expectActing(pages, ember);
       // Discard-exit consumed Ember's first action, so the paid activation now
       // belongs to a new turn rather than following a forbidden third action.
-      await extraEvocationActivation(ember, pages, emberId, 2);
+      // Reposition once now: Moon's room is three steps from the Grey summon room.
+      await extraEvocationActivation(ember, pages, emberId, 2, undefined, ['0,0']);
       await endTurn(ember, [ember, moon]);
       await castPrepared(moon, pages, b.locator('.prepared .spell').filter({ hasText: /^Spell 1 ·/ }));
       await endTurn(moon, [ember, moon]);
@@ -592,12 +617,14 @@ test('two browsers exhaust two round tokens, spend turn actions on spells, and r
         await expect(page.locator('.evocations-panel .evocation-card')).toHaveCount(2);
         await expect(page.locator('.evocations-panel .model-stats > span')).toHaveText(['↝ 2 movement', '⚔ 2 attack', '↝ 2 movement', '⚔ 2 attack']);
         await expect(page.locator('.evocations-panel [role="meter"]')).toHaveCount(2);
-        await expectEvocationTokens(page, ember.coordinates, [[ember.id, 1]]);
+        await expectEvocationLocation(page, emberId, ember, '0,0');
+        await expectEvocationTokens(page, '0,0', [[ember.id, 1]]);
+        await expectEvocationTokens(page, ember.coordinates, []);
         await expectEvocationTokens(page, moon.coordinates, [[moon.id, 1]]);
       }
     });
 
-    await test.step('Activate sequentially, move two adjacent spaces, attack only enemies, and destroy a rival summon', async () => {
+    await test.step('Activate sequentially, move two adjacent spaces, attack only same-room enemies, and destroy a rival summon', async () => {
       const activateA = a.locator('.evocation-card[data-owned="true"]').getByRole('button', { name: /^Activate Cadaver\b/ });
       const activateB = b.locator('.evocation-card[data-owned="true"]').getByRole('button', { name: /^Activate Cadaver\b/ });
       await expect(activateA.locator('small')).toHaveText('Free · once this phase');
@@ -613,20 +640,34 @@ test('two browsers exhaust two round tokens, spend turn actions on spells, and r
       await expect(b.getByRole('button', { name: 'Finish evocation', exact: true })).toHaveCount(0);
       await expect(b.locator('g.hex.reachable')).toHaveCount(0);
       await expect(a.locator('g.hex.start-room.reachable')).toHaveCount(0);
-      await hex(a, '0,0', true).click();
-      await expect(a.locator('.evocation-controls')).toContainText('1 movement remaining.');
-      await expectEvocationTokens(a, '0,0', [[ember.id, 1]]);
+      const attackMage = a.getByRole('button', { name: /^Cadaver attack Moon Browser\b/ });
+      const attackMoonModel = a.getByRole('button', { name: /^Cadaver attack Cadaver #\d+ \(Moon Browser\)/ });
+      await expect(attackMage).toHaveCount(0);
+      await expect(attackMoonModel).toHaveCount(0);
       await hex(a, '-1,1', true).click();
+      await expect(a.locator('.evocation-controls')).toContainText('1 movement remaining.');
+      for (const page of pages) {
+        await expectEvocationLocation(page, emberId, ember, '-1,1');
+        await expectEvocationTokens(page, '-1,1', [[ember.id, 1]]);
+      }
+      // Adjacent rooms allow a movement step, but never an evocation attack.
+      await expect(attackMage).toHaveCount(0);
+      await expect(attackMoonModel).toHaveCount(0);
+      await expect(a.locator('.evocation-controls')).toContainText('No enemy models in this room.');
+      await hex(a, '-2,1', true).click();
       await expect(a.locator('.evocation-controls')).toContainText('0 movement remaining.');
       await expect(a.locator('g.hex.reachable')).toHaveCount(0);
-      await expectEvocationLocation(a, emberId, ember, '-1,1');
+      for (const page of pages) {
+        await expectEvocationLocation(page, emberId, ember, moon.coordinates);
+        await expectEvocationTokens(page, moon.coordinates, [[ember.id, 1], [moon.id, 1]]);
+      }
       await expect(hex(a, ember.coordinates)).toHaveAttribute('aria-label', new RegExp(ember.name));
       await expect(hex(a, ember.coordinates).locator('.evocation-marker')).toHaveCount(0);
       await expect(a.getByRole('button', { name: /^Cadaver attack Ember Browser\b/ })).toHaveCount(0);
       await expect(a.getByRole('button', { name: /^Cadaver attack Cadaver #\d+ \(Ember Browser\)/ })).toHaveCount(0);
-      const attackMage = a.getByRole('button', { name: /^Cadaver attack Moon Browser\b/ });
       await expect(attackMage.locator('small')).toHaveText('2 damage');
-      await expect(a.getByRole('button', { name: /^Cadaver attack Cadaver #\d+ \(Moon Browser\)/ })).toBeEnabled();
+      await expect(attackMage).toBeEnabled();
+      await expect(attackMoonModel).toBeEnabled();
       await attackMage.click();
       await expectActing(pages, moon, 'Choosing an evocation');
       await expect(activateB).toBeEnabled();
@@ -643,23 +684,56 @@ test('two browsers exhaust two round tokens, spend turn actions on spells, and r
       await expectActing(pages, moon, 'Controlling an evocation');
       for (const page of pages) await expectTokens(page, moon.name, 0);
       await expect(b.locator('.evocation-controls')).toContainText('2 movement remaining.');
+      const attackModel = b.getByRole('button', { name: /^Cadaver attack Cadaver #\d+ \(Ember Browser\)/ });
+      await expect(attackModel).toBeEnabled();
       await hex(b, '-1,1', true).click();
       await expect(b.locator('.evocation-controls')).toContainText('1 movement remaining.');
-      await expectEvocationTokens(b, '-1,1', [[ember.id, 1], [moon.id, 1]]);
+      for (const page of pages) {
+        await expectEvocationLocation(page, moonId, moon, '-1,1');
+        await expectEvocationTokens(page, '-1,1', [[moon.id, 1]]);
+        await expectEvocationTokens(page, moon.coordinates, [[ember.id, 1]]);
+      }
+      await expect(attackModel).toHaveCount(0);
+      await expect(b.locator('.evocation-controls').getByRole('button', { name: /^Cadaver attack / })).toHaveCount(0);
+      await expect(b.locator('.evocation-controls')).toContainText('No enemy models in this room.');
+      await hex(b, moon.coordinates, true).click();
+      await expect(b.locator('.evocation-controls')).toContainText('0 movement remaining.');
+      await expect(b.locator('g.hex.reachable')).toHaveCount(0);
+      for (const page of pages) {
+        await expectEvocationLocation(page, moonId, moon);
+        await expectEvocationTokens(page, moon.coordinates, [[ember.id, 1], [moon.id, 1]]);
+        await expectTokens(page, moon.name, 0);
+      }
       await expect(b.getByRole('button', { name: /^Cadaver attack Moon Browser\b/ })).toHaveCount(0);
       await expect(b.getByRole('button', { name: /^Cadaver attack Cadaver #\d+ \(Moon Browser\)/ })).toHaveCount(0);
+      await expect(b.getByRole('button', { name: /^Cadaver attack Ember Browser\b/ })).toHaveCount(0);
       const availableBefore = await player(b, moon.name).locator('[title="Available cubes"]').innerText();
-      const attackModel = b.getByRole('button', { name: /^Cadaver attack Cadaver #\d+ \(Ember Browser\)/ });
+      await expect(attackModel).toBeEnabled();
       await expect(attackModel.locator('small')).toHaveText('2 damage');
+      const scoreNames = [ember.name, moon.name, 'Black Rose'];
+      const scoresBefore = (await b.locator('.player-heading > b').allTextContents()).map(text => Number(text.match(/\d+/)![0]));
+      const questProgressBefore = await Promise.all(pages.map(page => page.locator('.quest-panel > .hint').first().textContent()));
       await attackModel.click();
       await expectPhase(pages, 'Cleanup');
       await expectNoActingMage(pages);
+      // Destruction grants no VP or mage-kill/quest credit. Only the room awards
+      // after the Cleanup boundary may change scores in this final activation.
+      const log = await b.locator('.log > div').allTextContents();
+      const cleanupBoundary = log.findIndex(entry => entry.includes('CLEANUP —'));
+      expect(cleanupBoundary).toBeGreaterThanOrEqual(0);
+      const expectedScores = scoreNames.map((name, index) => scoresBefore[index] + log.slice(0, cleanupBoundary)
+        .filter(entry => entry.includes(`${name}: +`))
+        .reduce((total, entry) => total + Number(entry.match(/: \+(\d+) VP for .* \(rank /)![1]), 0));
       for (const page of pages) {
+        await expect(page.locator('.player-heading > b')).toHaveText(expectedScores.map(score => `${score} VP`));
+        await expect(page.locator('.quest-panel > .hint').first()).toHaveText(questProgressBefore[pages.indexOf(page)]!);
         await expect(page.getByRole('heading', { name: '❖ The lodge settles', exact: true })).toBeVisible();
         await expect(page.locator(`[data-evocation-id="${emberId}"]`)).toHaveCount(0);
         await expect(page.locator(`.evocation-card[data-evocation-id="${moonId}"]`)).toHaveCount(1);
         await expect(page.locator('.evocation-controls')).toHaveCount(0);
-        await expectEvocationTokens(page, '-1,1', [[moon.id, 1]]);
+        await expectEvocationLocation(page, moonId, moon);
+        await expectEvocationTokens(page, moon.coordinates, [[moon.id, 1]]);
+        await expect(hex(page, '-1,1').locator('.evocation-marker')).toHaveCount(0);
         await expect(page.locator('.log').getByText(/Cadaver is destroyed; its damage cubes return to their owners/)).toBeVisible();
         await expect(player(page, moon.name).locator('.cube-pool')).toContainText('On evocations: 0');
       }
@@ -678,11 +752,11 @@ test('two browsers exhaust two round tokens, spend turn actions on spells, and r
         for (const mage of [ember, moon]) await expectTokens(page, mage.name, 2);
         const survivor = page.locator(`.evocation-card[data-evocation-id="${moonId}"]`);
         await expect(survivor).toHaveCount(1);
-        await expectEvocationLocation(page, moonId, moon, '-1,1');
+        await expectEvocationLocation(page, moonId, moon);
         await expect(survivor.locator('.model-stats > span')).toHaveText(['↝ 2 movement', '⚔ 2 attack']);
         await expect(survivor.getByRole('meter')).toHaveAttribute('aria-valuetext', '0 damage cubes / 2 capacity');
         await page.setViewportSize({ width: 390, height: 844 });
-        await expectEvocationTokens(page, '-1,1', [[moon.id, 1]]);
+        await expectEvocationTokens(page, moon.coordinates, [[moon.id, 1]]);
         await survivor.scrollIntoViewIfNeeded();
         await expect(survivor).toBeVisible();
         await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),

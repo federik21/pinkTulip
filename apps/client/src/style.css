@@ -40,9 +40,11 @@
 .evocation-card,.evocation-card.active-model{background:color-mix(in srgb,var(--mage-color) 12%,#19171d);border-left:3px solid var(--mage-color)}
 .evocation-number{color:var(--mage-color)}
 .evocation-card .model-stats{flex-wrap:wrap;font-size:11px}
-/* One owner-colored circle per model; a 6 × 2 local grid fits even 12 models. */
-.hex .evocation-marker circle{fill:var(--mage-color);stroke:#100c16;stroke-width:.4}
-.hex .evocation-marker text{fill:#100c16;stroke:none;font:800 3.5px 'DM Sans',sans-serif}
+/* Shared mage-style circles; the local grid scales all models in crowded rooms. */
+.hex .evocation-marker .evocation-token-disc{fill:#18121f;stroke:var(--mage-color);stroke-width:1.3}
+.hex .evocation-marker text{fill:var(--mage-color);stroke:none;font-family:'DM Sans',sans-serif;font-weight:800}
+.evocation-card>.evocation-heading,.evocation-controls h2{display:flex;align-items:center;gap:9px}
+.evocation-portrait{display:inline-flex;align-items:center;justify-content:center;flex:0 0 30px;width:30px;height:30px;border:2px solid var(--mage-color);border-radius:50%;background:#18121f;color:var(--mage-color);font:18px 'DM Sans',sans-serif}
 /* Retain the 36 × 12 local badge: no CSS transform or viewport-origin scaling. */
 .capacity-background{fill:#29232e}
 .capacity-fill{opacity:1}

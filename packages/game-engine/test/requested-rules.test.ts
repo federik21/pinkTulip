@@ -464,14 +464,16 @@ describe('all-model targeting and physical damage cubes',()=>{
   }
  });
 
- it('evocations attack enemy models only in the same/adjacent room and attacking finishes the activation',()=>{
+ it('evocations attack enemy models only in the same room and attacking finishes the activation',()=>{
   for(const targetId of ['p2','enemy']) {
    let g=actionFixture();g.evocations=[cadaver('attacker'),cadaver('friendly'),cadaver('enemy','p2',{q:1,r:0})];
    g=applyAction(g,{type:'ACTIVATE_EVOCATION',playerId:'p1',evocationId:'attacker'});
    for(const friendly of ['p1','friendly','attacker'])expectRejected(g,{type:'EVOCATION_ATTACK',playerId:'p1',targetId:friendly},/friendly/);
-   const distant=structuredClone(g);player(distant,'p2').wizard.position={q:2,r:0};expectRejected(distant,{type:'EVOCATION_ATTACK',playerId:'p1',targetId:'p2'},/adjacent/);
+   expectRejected(g,{type:'EVOCATION_ATTACK',playerId:'p1',targetId},/^Target must be in the same room$/);
+   const distant=structuredClone(g);player(distant,'p2').wizard.position={q:2,r:0};expectRejected(distant,{type:'EVOCATION_ATTACK',playerId:'p1',targetId:'p2'},/same room/);
    const protectedModel=structuredClone(g);protectedModel.evocations[0].position={q:2,r:-2};player(protectedModel,'p2').wizard.position={q:3,r:-2};
    expectRejected(protectedModel,{type:'EVOCATION_ATTACK',playerId:'p1',targetId:'p2'},/starting room/);
+   g=applyAction(g,{type:'EVOCATION_STEP',playerId:'p1',destination:{q:1,r:0}});
    g=applyAction(g,{type:'EVOCATION_ATTACK',playerId:'p1',targetId});expect(g.evocationActivation).toBeNull();
    if(targetId==='p2')expect(player(g,'p2').wizard.damageByPlayer).toEqual({p1:2});
    else {expect(g.evocations.some(e=>e.id==='enemy')).toBe(false);expect(player(g).kills).toBe(0);expect(player(g).victoryPoints).toBe(0);}
@@ -485,6 +487,7 @@ describe('all-model targeting and physical damage cubes',()=>{
   player(g,'p2').wizard.damageCubes=9;player(g,'p2').wizard.damageByPlayer={p1:4,p3:3,p4:2};
   for(const [p,n] of [[player(g),4],[p3,3],[p4,2]] as const){p.cubes.available-=n;p.cubes.onWizard=n;}
   expectCubesConserved(g);g=applyAction(g,{type:'ACTIVATE_EVOCATION',playerId:'p1',evocationId:'killer'});
+  g=applyAction(g,{type:'EVOCATION_STEP',playerId:'p1',destination:{q:1,r:0}});
   g=applyAction(g,{type:'EVOCATION_ATTACK',playerId:'p1',targetId:'p2'});
   expect(g.players.map(p=>p.victoryPoints)).toEqual([7,0,2,1]);expect(g.players.map(p=>p.kills)).toEqual([1,0,0,0]);
   expect(player(g).questsCompleted).toBe(1);expect(player(g).quest).toBeNull();expect(g.questDiscard.map(q=>q.id)).toEqual(['owner-kill']);
@@ -593,6 +596,7 @@ describe('free Evocation phase scheduling',()=>{
  it('skips the eliminated last model of an owner and cleans up when the remaining ready model is done',()=>{
   let g=actionFixture();g.evocations=[cadaver('killer'),cadaver('last'),cadaver('enemy','p2',{q:1,r:0})];g=evocationPhaseFixture(g);
   g=applyAction(g,{type:'ACTIVATE_EVOCATION',playerId:'p1',evocationId:'killer'});
+  g=applyAction(g,{type:'EVOCATION_STEP',playerId:'p1',destination:{q:1,r:0}});
   g=applyAction(g,{type:'EVOCATION_ATTACK',playerId:'p1',targetId:'enemy'});
   expect(g.phase).toBe('EVOCATION');expect(g.currentPlayerId).toBe('p1');expect(g.evocations.map(e=>e.id)).toEqual(['killer','last']);
   expectRejected(g,{type:'ACTIVATE_EVOCATION',playerId:'p2',evocationId:'enemy'},/only your own/);

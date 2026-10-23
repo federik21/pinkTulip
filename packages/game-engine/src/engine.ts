@@ -33,6 +33,9 @@ export const isWithinSpellRange = (a: Hex, b: Hex, range: number): boolean => {
  return Number.isFinite(distance) && distance<=range;
 };
 export const areAdjacent = (a: Hex, b: Hex) => hexDistance(a,b) === 1;
+export function areInSameRoom(game:Pick<GameState,'board'>,a:Hex,b:Hex):boolean {
+ return game.board.rooms.some(room=>room.tiles.some(h=>hexKey(h)===hexKey(a)) && room.tiles.some(h=>hexKey(h)===hexKey(b)));
+}
 const slots = ['slot1', 'slot2', 'slot3'] as const;
 const emptyPrepared = () => ({ rapid: null, slot1: null, slot2: null, slot3: null });
 const assert = (condition: unknown, message: string): void => { if (!condition) throw new GameRuleError(message); };
@@ -707,7 +710,7 @@ export function applyAction(state: GameState, action: GameAction): GameState {
    const {e}=requireEvocation(s,p.id);const target=modelTarget(s,action.targetId);
    assert(target.playerId!==p.id,'Evocations cannot damage their mage or friendly evocations');
    assert(!s.board.rooms.some(r=>r.startingFor&&r.tiles.some(h=>hexKey(h)===hexKey(target.position))),'Cannot target a model in its starting room');
-   assert(hexDistance(e.position,target.position)<=1,'Target not adjacent');
+  assert(areInSameRoom(s,e.position,target.position),'Target must be in the same room');
    damageModel(s,action.targetId,evocationAttack(e),p);finishEvocation(s);break;
   }
   case 'END_EVOCATION':requireEvocation(s,p.id);finishEvocation(s);break;
