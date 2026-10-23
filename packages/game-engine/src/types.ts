@@ -10,7 +10,8 @@ export type EventCard = { id: string; name: string; description: string; kind: '
 export type Quest = { id: string; name: string; description: string; kind: 'KILL' | 'REBUILD' | 'INSTABILITY'; amount: number; reward: number };
 export type PreparedCard = { card: Card; used: boolean };
 export type PreparedCards = { rapid: PreparedCard | null; slot1: PreparedCard | null; slot2: PreparedCard | null; slot3: PreparedCard | null };
-export type Wizard = { id: string; playerId: PlayerId; health: number; damageCubes: number; blackDamage: number; damageByPlayer: Record<PlayerId, number>; position: Hex; startingRoomId: RoomId; alive: boolean };
+// health is the authoritative maximum HP; damageCubes tracks current wounds.
+export type Wizard = { id: string; playerId: PlayerId; health: number; attack: number; movement: number; damageCubes: number; blackDamage: number; damageByPlayer: Record<PlayerId, number>; position: Hex; startingRoomId: RoomId; alive: boolean };
 export type Evocation = {
  id: string; playerId: PlayerId; name: string; archetype: 'UNDEAD'; movement: number; attack: number; health: number;
  passive: 'WOUNDED_FURY'; position: Hex; damageCubes: number; damageByPlayer: Record<PlayerId, number>; activated: boolean;
@@ -21,7 +22,7 @@ export type Player = {
  wizard: Wizard; personalDeck: Card[]; hand: Card[]; discard: Card[]; prepared: PreparedCards;
  cubes: { available: number; onWizard: number; onBoard: number; onEvocations: number }; actionTokens: number; victoryPoints: number;
  questsCompleted: number; kills: number; quest: Quest | null; additionalQuests: Quest[]; studyDrawn: boolean; studyDone: boolean;
- preparationDone: boolean; passed: boolean;
+ preparationDone: boolean; passed: boolean; cardLimit: number; questLimit: number;
 };
 export type Room = {
  id: RoomId; name: string; tiles: Hex[]; instability: number; instabilityLimit: number;
@@ -30,14 +31,16 @@ export type Room = {
  color: RoomColor | null; effect: RoomEffect | null; specialUsed: boolean;
 };
 export type Board = { tiles: Hex[]; rooms: Room[] };
-export type Activation = { playerId: PlayerId; actionsUsed: number; exploring: number; sequencedSpellUsed: boolean; spellsCast: number; discardedExit: boolean; roomEffectUsed: boolean };
+export type PhysicalAction = { kind: 'EXPLORE' | 'ATTACK'; mainEffectUsed: boolean; movementStarted: boolean };
+// actionsUsed counts every turn action, including spells and discard-to-move.
+export type Activation = { playerId: PlayerId; actionsUsed: number; exploring: number; sequencedSpellUsed: boolean; spellsCast: number; discardedExit: boolean; roomEffectUsed: boolean; physicalAction?: PhysicalAction | null };
 export type GameState = {
  gameId: string; hostId: PlayerId; round: number; phase: Phase; players: Player[]; board: Board;
  library: LibraryDeck[]; eventDeck: EventCard[]; eventDiscard: EventCard[]; questDeck: Quest[]; questDiscard: Quest[];
  powerfulDeck: Card[]; removedCards: Card[];
  evocations: Evocation[]; evocationActivation: EvocationActivation | null;
  currentPlayerId: PlayerId | null; activation: Activation | null; winner: PlayerId | null; log: string[];
- usedEvent: EventCard | null;
+ usedEvent: EventCard | null; blackRoseResolved: boolean;
 };
 export type GameAction =
  | { type: 'SET_READY'; playerId: PlayerId; ready: boolean }
@@ -45,6 +48,8 @@ export type GameAction =
  | { type: 'ADVANCE_PHASE'; playerId: PlayerId; expectedPhase: Phase; expectedRound: number }
  | { type: 'DRAW_STUDY'; playerId: PlayerId; deckId: string }
  | { type: 'DISCARD_STUDY'; playerId: PlayerId; cardIds: string[] }
+ | { type: 'DISCARD_QUESTS'; playerId: PlayerId; questIds: string[] }
+ | { type: 'DISCARD_HAND_LIMIT'; playerId: PlayerId; cardIds: string[] }
  | { type: 'PREPARE_CARDS'; playerId: PlayerId; rapidCardId: string; preparedCardIds: string[] }
  | { type: 'END_ACTIVATION'; playerId: PlayerId }
  | { type: 'PASS_ROUND'; playerId: PlayerId }
@@ -52,6 +57,11 @@ export type GameAction =
  | { type: 'EVOCATION_STEP'; playerId: PlayerId; destination: Hex }
  | { type: 'EVOCATION_ATTACK'; playerId: PlayerId; targetId: string }
  | { type: 'END_EVOCATION'; playerId: PlayerId }
+ | { type: 'BEGIN_PHYSICAL_ACTION'; playerId: PlayerId; kind: 'EXPLORE' | 'ATTACK' }
+ | { type: 'PERFORM_MOVEMENT'; playerId: PlayerId }
+ | { type: 'ACTIVATE_ROOM'; playerId: PlayerId; roomTargetId?: RoomId }
+ | { type: 'SKIP_PHYSICAL_EFFECTS'; playerId: PlayerId }
+ | { type: 'INFLICT_ATTACK'; playerId: PlayerId; targetId: string }
  | { type: 'EXPLORE'; playerId: PlayerId; activateRoomAtStart?: boolean; roomTargetId?: RoomId }
  | { type: 'EXPLORE_STEP'; playerId: PlayerId; destination: Hex; activateRoomAtEnd?: boolean; roomTargetId?: RoomId }
  | { type: 'END_EXPLORE'; playerId: PlayerId; activateRoomAtEnd?: boolean; roomTargetId?: RoomId }

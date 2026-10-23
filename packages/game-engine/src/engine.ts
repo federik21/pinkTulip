@@ -3,9 +3,24 @@ import { createEvents, createLibrary, createPowerfulDeck, createQuests, createSp
 
 export class GameRuleError extends Error {}
 export const PHYSICAL_TOKENS_PER_ROUND = 2;
+export const ACTIONS_PER_TURN = 2;
+export const MIN_MAGES = 2;
+export const MAX_MAGES = 4;
+export const MAGE_COLORS: Record<string,string> = {p1:'#fb7185',p2:'#60a5fa',p3:'#fbbf24',p4:'#34d399'};
 export const evocationAttack = (e:Evocation) => e.attack+(e.passive==='WOUNDED_FURY'?e.damageCubes:0);
 export const hexKey = (h: Hex) => `${h.q},${h.r}`;
 export const hexDistance = (a: Hex, b: Hex) => Math.max(Math.abs(a.q-b.q), Math.abs(a.r-b.r), Math.abs(a.q+a.r-b.q-b.r));
+// Spell sight follows one straight hex axis; movement may still turn between steps.
+export const hexLineDistance = (a: Hex, b: Hex) => {
+ const dq = b.q-a.q;
+ const dr = b.r-a.r;
+ if (dq === 0 || dr === 0 || dq + dr === 0) return Math.max(Math.abs(dq), Math.abs(dr), Math.abs(dq + dr));
+ return Number.POSITIVE_INFINITY;
+};
+export const isWithinSpellRange = (a: Hex, b: Hex, range: number): boolean => {
+ const distance=hexLineDistance(a,b);
+ return Number.isFinite(distance) && distance<=range;
+};
 export const areAdjacent = (a: Hex, b: Hex) => hexDistance(a,b) === 1;
 const slots = ['slot1', 'slot2', 'slot3'] as const;
 const emptyPrepared = () => ({ rapid: null, slot1: null, slot2: null, slot3: null });
@@ -39,6 +54,12 @@ const requireActivation = (s: GameState, id: string): Activation => {
 };
 
 export function createDemoBoard(): Board {
+ const names=shuffle([
+  'Ember Vault','Moonlit Gallery','Thorn Garden','Whispering Library','Ashen Forge','Silver Observatory',
+  'Hollow Chapel','Crimson Atelier','Veiled Archive','Gilded Reliquary','Echoing Crypt','Starlit Hall',
+  'Obsidian Study','Dreaming Atrium','Frost Conservatory','Sunken Treasury','Twilight Court','Waning Sanctum',
+  'Raven Belfry','Glass Labyrinth','Ivied Vestibule','Candlelit Refuge',
+ ]);
  const startingRooms = [
   {playerId:'p1',position:{q:3,r:-2}},
   {playerId:'p2',position:{q:-3,r:2}},
@@ -53,7 +74,7 @@ export function createDemoBoard(): Board {
   const regular=hexDistance(h,{q:0,r:0})>0 && hexDistance(h,{q:0,r:0})<=2;
   const index=regular?colorIndex++%6:-1;
   return {
-  id: `room-${h.q},${h.r}`, name: h.q===0 && h.r===0 ? 'Black Rose Chamber' : `Room ${h.q},${h.r}`,
+  id: `room-${h.q},${h.r}`, name: h.q===0 && h.r===0 ? 'Black Rose Chamber' : names.pop()!,
   tiles: [h], instability: 0, instabilityLimit: h.q===0 && h.r===0 ? 10 : 5,
   rewards: h.q===0 && h.r===0 ? [6,3] : [3,1], cubesByPlayer: {}, reconstructed: false, scored: false,
   color:index<0?null:ROOM_COLORS[index], effect:index<0?(h.q===0&&h.r===0?'DRAW_POWERFUL':null):effects[index], specialUsed:false,
@@ -62,24 +83,41 @@ export function createDemoBoard(): Board {
  return { tiles, rooms };
 }
 
-export function createGame(): GameState {
- const board = createDemoBoard();
- const players: Player[] = ['p1','p2'].map((id, i) => {
-  const start = board.rooms.find(r=>r.startingFor===id)!;
-  return {
-   id, name: i===0 ? 'Crimson Mage' : 'Azure Mage', connected: false, ready: false,
-  wizard: { id: `${id}-wizard`, playerId: id, health: 10, damageCubes: 0, blackDamage: 0, damageByPlayer: {}, position: {...start.tiles[0]}, startingRoomId: start.id, alive: true },
+function createMage(board:Board,id:PlayerId):Player {
+ const start=board.rooms.find(r=>r.startingFor===id)!;
+ const names:Record<string,string>={p1:'Crimson Mage',p2:'Azure Mage',p3:'Amber Mage',p4:'Emerald Mage'};
+ return {
+   id, name:names[id], connected: false, ready: false,
+  wizard: { id: `${id}-wizard`, playerId: id, health: 10, attack: 2, movement: 2, damageCubes: 0, blackDamage: 0, damageByPlayer: {}, position: {...start.tiles[0]}, startingRoomId: start.id, alive: true },
    personalDeck: shuffle(createSpellDeck(id).slice(0,12)), hand: [], discard: [], prepared: emptyPrepared(),
   cubes: { available:25, onWizard:0, onBoard:0, onEvocations:0 }, actionTokens:PHYSICAL_TOKENS_PER_ROUND, victoryPoints:0,
-  questsCompleted:0, kills:0, quest:null, additionalQuests:[], studyDrawn:false, studyDone:false, preparationDone:false, passed:false,
-  };
- });
+  questsCompleted:0, kills:0, quest:null, additionalQuests:[], studyDrawn:false, studyDone:false, preparationDone:false, passed:false, cardLimit:7, questLimit:2,
+ };
+}
+
+export function canStartGame(s:GameState):boolean {
+ return s.phase==='LOBBY' && s.players.length>=MIN_MAGES && s.players.length<=MAX_MAGES && s.players.every(p=>p.connected&&p.ready);
+}
+
+export function addPlayerToLobby(state:GameState):GameState {
+ assert(state.phase==='LOBBY','Cannot join a battle already in progress');
+ assert(state.players.length<MAX_MAGES,'Room full (4 mages)');
+ const s=structuredClone(state);
+ const id=['p1','p2','p3','p4'].find(id=>!s.players.some(p=>p.id===id))!;
+ s.players.push(createMage(s.board,id));
+ return s;
+}
+
+export function createGame(playerCount=2): GameState {
+ assert(Number.isInteger(playerCount)&&playerCount>=1&&playerCount<=MAX_MAGES,'Choose between 1 and 4 mages');
+ const board = createDemoBoard();
+ const players=['p1','p2','p3','p4'].slice(0,playerCount).map(id=>createMage(board,id));
  return {
   gameId:crypto.randomUUID(), hostId:'p1', round:0, phase:'LOBBY', players, board, library:createLibrary(),
   eventDeck:createEvents(), eventDiscard:[], questDeck:createQuests(), questDiscard:[],
   powerfulDeck:createPowerfulDeck(), removedCards:[],
   evocations:[], evocationActivation:null,
-  currentPlayerId:null, activation:null, winner:null, log:['Room created. Join and mark yourself ready.'], usedEvent:null,
+  currentPlayerId:null, activation:null, winner:null, log:['Room created. Join and mark yourself ready.'], usedEvent:null, blackRoseResolved:false,
  };
 }
 
@@ -87,6 +125,18 @@ export function getRoomMajorityWinners(room: Pick<Room,'cubesByPlayer'>): Player
  const entries=Object.entries(room.cubesByPlayer).filter(([id,n])=>id!=='black-rose' && n>0);
  const max=Math.max(0,...entries.map(([,n])=>n));
  return entries.filter(([,n])=>n===max).map(([id])=>id);
+}
+
+// Dense ranks: tied leaders do not consume the next distinct contribution rank.
+// Every tied contributor loses exactly one point, never dropping below one.
+export function getContributionAwards(cubes:Record<PlayerId,number>,rewards:readonly number[]) {
+ const entries=Object.entries(cubes).filter(([id,n])=>id!=='black-rose'&&n>0);
+ const totals=[...new Set(entries.map(([,n])=>n))].sort((a,b)=>b-a);
+ return entries.map(([playerId,cubes])=>{
+  const rank=totals.indexOf(cubes);
+  const tied=entries.filter(([,n])=>n===cubes).length>1;
+  return {playerId,cubes,rank:rank+1,tied,points:Math.max(1,(rewards[rank]??1)-(tied?1:0))};
+ });
 }
 
 function completeQuest(s: GameState, p: Player, kind: NonNullable<Player['quest']>['kind'], amount=1) {
@@ -125,15 +175,16 @@ function damage(s: GameState, target: Player, amount: number, source?: Player) {
  if(target.wizard.damageCubes<target.wizard.health) return;
  s.log.push(`${target.name} is defeated and returns to their starting room.`);
  const contributions=Object.entries(target.wizard.damageByPlayer).filter(([id,n])=>id!==target.id && n>0);
- for(const [id,cubes] of contributions) {
-  const contributor=getPlayer(s,id);
-  // Competition ranks, matching room scoring: ties share a rank and skip the next.
-  const rank=contributions.filter(([,other])=>other>cubes).length;
-  const points=rank===0?4:rank===1?2:1;
+ for(const {playerId,cubes,rank,tied,points} of getContributionAwards(Object.fromEntries(contributions),[4,2,1])) {
+  const contributor=getPlayer(s,playerId);
   contributor.victoryPoints+=points;
   contributor.cubes.available+=cubes;
   contributor.cubes.onWizard-=cubes;
-  s.log.push(`${contributor.name}: +${points} VP for ${cubes} damage cubes on ${target.name}; ${cubes} cubes returned.`);
+  s.log.push(`${contributor.name}: +${points} VP for ${cubes} damage cubes on ${target.name} (rank ${rank}${tied?', tied −1 VP':''}); ${cubes} cubes returned.`);
+ }
+ if(contributions.length===1 && target.wizard.blackDamage===0 && contributions[0][1]===target.wizard.damageCubes) {
+  const owner=getPlayer(s,contributions[0][0]);owner.victoryPoints++;
+  s.log.push(`${owner.name}: +1 VP exclusive-color bonus on defeated ${target.name}.`);
  }
  // The final hitter still receives quest/kill credit, but no separate flat VP bonus.
  if(source) { source.kills++; completeQuest(s,source,'KILL'); }
@@ -172,6 +223,14 @@ function damageModel(s:GameState,id:string,amount:number,source:Player) {
  if(target.mage)damage(s,target.mage,amount,source);else damageEvocation(s,target.evocation!,amount,source);
 }
 
+function mageAttackTarget(s:GameState,p:Player,id:string) {
+ assert(!isInStartingRoom(s,p),'Leave the starting room before attacking');
+ const target=modelTarget(s,id);assert(target.playerId!==p.id,'Cannot attack yourself or your own evocations');
+ assert(!s.board.rooms.some(r=>r.startingFor&&r.tiles.some(h=>hexKey(h)===hexKey(target.position))),'Cannot target a model in its starting room');
+ assert(hexDistance(p.wizard.position,target.position)===0,'Target must be in the same hex (distance 0)');
+ return target;
+}
+
 function placeInstability(s: GameState, room: Room, amount: number, source?: Player) {
  if(room.reconstructed || room.startingFor) return 0;
  const actual=Math.min(amount,room.instabilityLimit-room.instability,source?.cubes.available ?? amount);
@@ -184,13 +243,17 @@ function placeInstability(s: GameState, room: Room, amount: number, source?: Pla
  if(room.instability===room.instabilityLimit) {
   room.reconstructed=true;
   s.log.push(`${room.name} is rebuilt and cannot accept more instability.`);
+  if(source && room.cubesByPlayer[source.id]===room.instability) {
+   source.victoryPoints++;
+   s.log.push(`${source.name}: +1 VP for completing ${room.name} entirely in their color.`);
+  }
   if(source) completeQuest(s,source,'REBUILD');
  }
  return actual;
 }
 
 function startBlackRose(s: GameState) {
- s.round++; s.phase='BLACK_ROSE'; s.currentPlayerId=null; s.activation=null;s.evocationActivation=null;
+ s.round++; s.phase='BLACK_ROSE'; s.blackRoseResolved=false; s.currentPlayerId=null; s.activation=null;s.evocationActivation=null;
  for(const p of s.players) {
   p.actionTokens=PHYSICAL_TOKENS_PER_ROUND; p.passed=false; p.studyDrawn=false; p.studyDone=false; p.preparationDone=false;
   // Powerful spells stay with the mage until cast, including uncast preparations.
@@ -212,17 +275,30 @@ function startBlackRose(s: GameState) {
  }
 }
 
-function finishBlackRose(s: GameState) {
+const heldQuests = (p:Player) => p.quest?[p.quest,...p.additionalQuests]:[...p.additionalQuests];
+
+function beginStudyIfQuestsFit(s:GameState) {
+ if(s.players.some(p=>heldQuests(p).length>p.questLimit))return;
  for(const p of s.players) {
-  if(!p.quest) {
-    p.quest=drawQuest(s);
-    if(p.quest)s.log.push(`${p.name} receives a personal quest.`);
-  }
   let drawn=0;
   while(drawn<2 && p.personalDeck.length+p.discard.length>0) {p.hand.push(drawOne(p.personalDeck,p.discard));drawn++;}
   if(drawn<2)s.log.push(`${p.name} draws ${drawn} grimoire spells; the remaining personal spells are already held.`);
  }
  s.phase='STUDY'; s.log.push('STUDY — each mage draws 2 grimoire spells, chooses a library school, then discards 2.');
+}
+
+function finishBlackRose(s: GameState) {
+ assert(!s.blackRoseResolved,'Waiting for quest-limit discards');
+ for(const p of s.players) {
+  const quests=heldQuests(p);p.quest=quests.shift()??null;p.additionalQuests=quests;
+  if(!p.quest) {
+   p.quest=drawQuest(s);
+   if(p.quest)s.log.push(`${p.name} receives a personal quest.`);
+  }
+ }
+ s.blackRoseResolved=true;
+ if(s.players.some(p=>heldQuests(p).length>p.questLimit))s.log.push('BLACK ROSE — waiting for quest-limit discards.');
+ beginStudyIfQuestsFit(s);
 }
 
 function drawOne(deck: Card[], discard: Card[]): Card {
@@ -259,7 +335,8 @@ function activateRoom(s:GameState,p:Player,targetRoomId?:string) {
   case 'INSTABILITY': {
    const target=targetRoomId?getRoom(s,targetRoomId):room!;
    assert(!target.startingFor,'Starting rooms cannot be targeted');
-   assert(Math.min(...target.tiles.flatMap(h=>room!.tiles.map(origin=>hexDistance(origin,h))))<=1,'Room effect target out of range (maximum 1)');
+   const lineDistance = Math.min(...target.tiles.flatMap(h => room!.tiles.map(origin => hexLineDistance(origin, h))));
+   assert(Number.isFinite(lineDistance) && lineDistance <= 1,'Room effect target out of range (maximum 1)');
   placeInstability(s,target,reward,p);break;
   }
   case 'DRAW_GRIMOIRE':for(let i=0;i<reward && p.personalDeck.length+p.discard.length;i++)p.hand.push(drawOne(p.personalDeck,p.discard));break;
@@ -292,14 +369,40 @@ function activateRoom(s:GameState,p:Player,targetRoomId?:string) {
 }
 
 function endExplore(s:GameState,p:Player,activate:boolean,targetRoomId?:string) {
- const a=s.activation!;a.exploring=0;
+ const a=s.activation!;
+ if(a.physicalAction) {
+  assert(!activate,'Use ACTIVATE_ROOM separately for a pending physical action');
+  a.exploring=0;a.physicalAction.mainEffectUsed=true;finishPhysicalEffects(s);return;
+ }
+ a.exploring=0;
  if(activate){assert(!a.roomEffectUsed,'Room effect already used for this Explore');activateRoom(s,p,targetRoomId);a.roomEffectUsed=true;}
+ afterAction(s);
+}
+
+function requireNoPendingPhysical(a:Activation) {
+ assert(!a.physicalAction,'Finish the pending physical action first');
+}
+
+function requirePendingPhysical(s:GameState,p:Player) {
+ const a=requireActivation(s,p.id);
+ assert(a.physicalAction,'Begin a physical action first');
+ return {a,physical:a.physicalAction!};
+}
+
+function finishPhysicalEffects(s:GameState) {
+ const a=s.activation!;
+ if(a.physicalAction?.mainEffectUsed && a.roomEffectUsed)a.physicalAction=null;
  afterAction(s);
 }
 
 function requirePhysicalAction(s:GameState,p:Player) {
  const a=requireActivation(s,p.id);assert(a.exploring===0,'Finish exploring first');
- assert(a.actionsUsed<2,'Already used both physical actions');return a;
+ requireNoPendingPhysical(a);
+ requireTurnAction(a);return a;
+}
+
+function requireTurnAction(a:Activation) {
+ assert(a.actionsUsed<ACTIONS_PER_TURN,'Already used both turn actions');
 }
 
 function validateExitDestination(s:GameState,p:Player,destination:Hex) {
@@ -309,10 +412,11 @@ function validateExitDestination(s:GameState,p:Player,destination:Hex) {
 }
 
 export function canPlayerAct(s: GameState, p: Player): boolean {
- if(p.passed)return false;
  const a=s.activation?.playerId===p.id?s.activation:null;
- if(a?.exploring)return true;
- if(p.actionTokens>0 && (a?.actionsUsed??0)<2)return true;
+ if(a?.physicalAction || a?.exploring)return true;
+ if(p.passed)return false;
+ if((a?.actionsUsed??0)>=ACTIONS_PER_TURN)return false;
+ if(p.actionTokens>0)return true;
  if(isInStartingRoom(s,p))return !a?.discardedExit && (p.hand.some(c=>!c.powerful) || Object.values(p.prepared).some(c=>c&&!c.used&&!c.card.powerful));
  const next=slots.find(slot=>p.prepared[slot] && !p.prepared[slot]!.used);
  const spells=[p.prepared.rapid,next&&!a?.sequencedSpellUsed?p.prepared[next]:null,...p.hand.filter(c=>c.powerful).map(card=>({card,used:false}))];
@@ -320,17 +424,19 @@ export function canPlayerAct(s: GameState, p: Player): boolean {
   if(!prepared || prepared.used)return false;
   const card=prepared.card;
   // Every spell may target a room; model spells can use a harmless dummy there.
-  return s.board.rooms.some(r=>!r.startingFor && r.tiles.some(h=>hexDistance(h,p.wizard.position)<=card.range));
+  return s.board.rooms.some(r=>!r.startingFor && r.tiles.some(h=>isWithinSpellRange(p.wizard.position,h,card.range)));
  });
 }
 
 export function canPassActionPhase(s:GameState,p:Player):boolean {
+ const a=s.activation?.playerId===p.id?s.activation:null;
+ if(a?.physicalAction || a?.exploring || s.evocationActivation?.playerId===p.id)return false;
  return p.actionTokens===0 && !Object.values(p.prepared).some(c=>c&&!c.used) && !p.hand.some(c=>c.powerful);
 }
 
 function startActivation(s: GameState, p: Player) {
- s.currentPlayerId=p.id; s.activation={playerId:p.id,actionsUsed:0,exploring:0,sequencedSpellUsed:false,spellsCast:0,discardedExit:false,roomEffectUsed:false};
- s.log.push(`${p.name} takes a turn: 2 physical actions, one numbered spell and the flexible spell (free).`);
+ s.currentPlayerId=p.id; s.activation={playerId:p.id,actionsUsed:0,exploring:0,sequencedSpellUsed:false,spellsCast:0,discardedExit:false,roomEffectUsed:false,physicalAction:null};
+ s.log.push(`${p.name} takes a turn: 2 actions total across physical actions, spell casts, and discard-to-move.`);
 }
 
 function cleanup(s: GameState) {
@@ -339,13 +445,9 @@ function cleanup(s: GameState) {
  for(const room of s.board.rooms) {
   room.specialUsed=false;
   if(!room.reconstructed || room.scored) continue;
-  // Competition ranks: tied leaders share first prize; second prize needs rank 2.
-  const entries=Object.entries(room.cubesByPlayer).filter(([id,n])=>id!=='black-rose' && n>0).sort((a,b)=>b[1]-a[1]);
-  for(const [id,n] of entries) {
-   const rank=entries.filter(([,other])=>other>n).length;
-   const points=rank===0 ? room.rewards[0] : rank===1 ? room.rewards[1] : 0;
-   getPlayer(s,id).victoryPoints+=points;
-   s.log.push(`${getPlayer(s,id).name}: +${points} VP for ${room.name}.`);
+  for(const {playerId,rank,tied,points} of getContributionAwards(room.cubesByPlayer,room.rewards)) {
+   getPlayer(s,playerId).victoryPoints+=points;
+   s.log.push(`${getPlayer(s,playerId).name}: +${points} VP for ${room.name} (rank ${rank}${tied?', tied −1 VP':''}).`);
   }
   // Return physical cubes, but retain contributions and the locked rebuilt room.
   for(const p of s.players) { const n=room.cubesByPlayer[p.id]??0; p.cubes.available+=n; p.cubes.onBoard-=n; }
@@ -397,13 +499,15 @@ function requireEvocation(s:GameState,id:string) {
 
 function afterAction(s: GameState) {
  const a=s.activation!;
- if(a.exploring>0) return;
+ if(a.physicalAction || a.exploring>0) return;
  if(!canPlayerAct(s,getPlayer(s,a.playerId))) finishActivation(s);
 }
 
 function castSpell(s: GameState, p: Player, action: Extract<GameAction,{type:'CAST_SPELL'|'CAST_POWERFUL_SPELL'}>) {
  const a=requireActivation(s,p.id);
  assert(a.exploring===0,'Finish exploring first');
+ requireNoPendingPhysical(a);
+ requireTurnAction(a);
  assert(!isInStartingRoom(s,p),'Leave the starting room before casting spells');
  const prepared=action.type==='CAST_SPELL'?p.prepared[action.slot]:null;
  const card=action.type==='CAST_SPELL'?(prepared&&!prepared.used?prepared.card:undefined):p.hand.find(c=>c.id===action.cardId && c.powerful);
@@ -419,7 +523,7 @@ function castSpell(s: GameState, p: Player, action: Extract<GameAction,{type:'CA
   assert(!action.dummy || (!action.targetPlayerId&&!action.targetEvocationId),'Choose either a model or a dummy');
   assert(action.roomId,'Select a room'); room=getRoom(s,action.roomId!);
   assert(!room.startingFor,'Starting rooms cannot be targeted');
-  assert(Math.min(...room.tiles.map(h=>hexDistance(h,p.wizard.position)))<=spell.range,'Room out of range');
+  assert(room.tiles.some(h=>isWithinSpellRange(p.wizard.position,h,spell.range)),'Room out of range');
   if(!action.dummy)targets=[...s.players.filter(t=>t.id!==p.id && inRoom(t,room!)).map(t=>t.id),...s.evocations.filter(e=>e.playerId!==p.id && room!.tiles.some(h=>hexKey(h)===hexKey(e.position))).map(e=>e.id)];
  } else {
   assert(!!action.targetPlayerId!==!!action.targetEvocationId,'Select another mage or evocation');
@@ -427,7 +531,7 @@ function castSpell(s: GameState, p: Player, action: Extract<GameAction,{type:'CA
   const target=modelTarget(s,id);assert(target.playerId!==p.id,'Cannot damage your own models; select another mage or evocation');
   room=s.board.rooms.find(r=>r.tiles.some(h=>hexKey(h)===hexKey(target.position)));
   assert(!room?.startingFor,'Cannot target a model in its starting room');
-  assert(hexDistance(p.wizard.position,target.position)<=spell.range,'Model out of range');targets=[id];
+  assert(isWithinSpellRange(p.wizard.position,target.position,spell.range),'Model out of range');targets=[id];
  }
  // Resolve instability before damage so a defeated target's respawn never moves the room effect.
  if(room && spell.instability>0) placeInstability(s,room,spell.instability,p);
@@ -436,9 +540,9 @@ function castSpell(s: GameState, p: Player, action: Extract<GameAction,{type:'CA
  else p.hand.splice(p.hand.findIndex(c=>c.id===spell.id),1);
  if(spell.powerful){s.removedCards.push(spell);s.log.push(`${spell.name} is removed from the game after use.`);}
  else discardCard(s,p,spell);
- a.spellsCast++;
+ a.spellsCast++;a.actionsUsed++;
  if(action.type==='CAST_SPELL' && action.slot!=='rapid')a.sequencedSpellUsed=true;
- s.log.push(`${p.name} casts ${spell.name}${action.dummy?' on a dummy (no damage)':''} for free.`); afterAction(s);
+ s.log.push(`${p.name} casts ${spell.name}${action.dummy?' on a dummy (no damage)':''} for 1 action (no physical token).`); afterAction(s);
 }
 
 export function applyAction(state: GameState, action: GameAction): GameState {
@@ -449,7 +553,7 @@ export function applyAction(state: GameState, action: GameAction): GameState {
   case 'SET_READY': requirePhase(s,'LOBBY'); assert(p.connected,'Join the room first'); p.ready=action.ready; break;
   case 'START_GAME':
    requirePhase(s,'LOBBY'); assert(p.id===s.hostId,'Only the creator can start');
-   assert(s.players.every(p=>p.connected && p.ready),'Both players must join and mark themselves ready'); startBlackRose(s); break;
+    assert(canStartGame(s),'At least 2 mages must join and everyone must be ready'); startBlackRose(s); break;
   case 'ADVANCE_PHASE':
    assert(p.id===s.hostId,'Only the creator can continue the phase');
     assert(action.expectedPhase===s.phase && action.expectedRound===s.round,'Stale phase command; wait for the current phase');
@@ -473,8 +577,34 @@ export function applyAction(state: GameState, action: GameAction): GameState {
    if(s.players.every(p=>p.studyDone)) { s.phase='PREPARATION'; s.log.push('PREPARATION — choose spells 1 → 2 → 3 and one flexible spell.'); }
    break;
   }
+  case 'DISCARD_QUESTS': {
+   requirePhase(s,'BLACK_ROSE');assert(s.blackRoseResolved,'Resolve Black Rose before discarding quests');
+   const quests=heldQuests(p),overflow=quests.length-p.questLimit;
+   assert(overflow>0,'No quests over the quest limit');
+   assert(Array.isArray(action.questIds) && action.questIds.length===overflow && new Set(action.questIds).size===overflow,`Discard exactly ${overflow} different quests`);
+   assert(action.questIds.every(id=>quests.some(q=>q.id===id)),'Quest not owned by this player');
+   const selected=new Set(action.questIds),remaining=quests.filter(q=>!selected.has(q.id));
+   s.questDiscard.push(...quests.filter(q=>selected.has(q.id)));
+   p.quest=remaining.shift()??null;p.additionalQuests=remaining;
+   s.log.push(`${p.name} discards ${overflow} quests to meet the quest limit.`);
+   beginStudyIfQuestsFit(s);break;
+  }
+  case 'DISCARD_HAND_LIMIT': {
+   requirePhase(s,'PREPARATION');assert(!p.preparationDone,'Already prepared');
+   const overflow=p.hand.length-p.cardLimit;
+   assert(overflow>0,'No cards over the hand limit');
+   assert(Array.isArray(action.cardIds) && action.cardIds.length===overflow && new Set(action.cardIds).size===overflow,`Discard exactly ${overflow} different spells`);
+   assert(action.cardIds.every(id=>p.hand.some(c=>c.id===id)),'Spell not in hand');
+   const selected=new Set(action.cardIds);
+   // Explicit hand-limit exception: ALL origins (including powerful spells) go to
+   // personal discard, preserving schoolId/powerful for later draws and casts.
+   // Ordinary Study/cast/discard-exit routing still uses discardCard unchanged.
+   p.discard.push(...p.hand.filter(c=>selected.has(c.id)));p.hand=p.hand.filter(c=>!selected.has(c.id));
+   s.log.push(`${p.name} discards ${overflow} spells to meet the hand limit.`);break;
+  }
   case 'PREPARE_CARDS': {
    requirePhase(s,'PREPARATION'); assert(!p.preparationDone,'Already prepared');
+   assert(p.hand.length<=p.cardLimit,'Discard down to the hand limit before preparing cards');
    const ids=[...action.preparedCardIds,action.rapidCardId];
    assert(action.preparedCardIds.length===3 && new Set(ids).size===4,'Choose 3 ordered spells and 1 flexible spell');
    assert(ids.every(id=>p.hand.some(c=>c.id===id)),'Spell not in hand');
@@ -483,15 +613,17 @@ export function applyAction(state: GameState, action: GameAction): GameState {
     p.prepared[i===3 ? 'rapid' : slots[i]]={card,used:false};
    }
    p.preparationDone=true;
-  if(s.players.every(p=>p.preparationDone)) { s.phase='ACTION'; s.log.push('ACTION — up to 2 physical actions per turn; spells are free, at most one numbered spell per turn. End turn or pass when finished.'); startActivation(s,s.players[0]); }
+  if(s.players.every(p=>p.preparationDone)) { s.phase='ACTION'; s.log.push('ACTION — up to 2 total actions per turn, including spell casts and discard-to-move; at most one numbered spell per turn.'); startActivation(s,s.players[0]); }
    break;
   }
   case 'END_ACTIVATION': {
    const a=requireActivation(s,p.id); assert(a.exploring===0,'Finish exploring first');
+    requireNoPendingPhysical(a);
     assert(a.actionsUsed>=1 || a.spellsCast>0 || a.discardedExit,'Take an action, cast a spell, or pass for the round'); finishActivation(s); break;
   }
   case 'PASS_ROUND': {
    const a=requireActivation(s,p.id);assert(a.exploring===0,'Finish exploring first');
+    requireNoPendingPhysical(a);
    assert(canPassActionPhase(s,p),'You may pass permanently only with no physical tokens and no unused spells');
    p.passed=true;s.log.push(`${p.name} passes for the rest of the Action phase.`);finishActivation(s);break;
   }
@@ -522,11 +654,43 @@ export function applyAction(state: GameState, action: GameAction): GameState {
    damageModel(s,action.targetId,evocationAttack(e),p);finishEvocation(s);break;
   }
   case 'END_EVOCATION':requireEvocation(s,p.id);finishEvocation(s);break;
+  case 'BEGIN_PHYSICAL_ACTION': {
+   const a=requirePhysicalAction(s,p);assert(p.actionTokens>0,'No action tokens');
+   assert(action.kind==='EXPLORE'||action.kind==='ATTACK','Unknown physical action kind');
+   if(action.kind==='ATTACK')assert(!isInStartingRoom(s,p),'Leave the starting room before attacking');
+   p.actionTokens--;a.actionsUsed++;a.roomEffectUsed=false;
+   a.physicalAction={kind:action.kind,mainEffectUsed:false,movementStarted:false};
+   s.log.push(`${p.name} begins ${action.kind}: resolve the primary and room effects in either order, or skip remaining effects.`);break;
+  }
+  case 'PERFORM_MOVEMENT': {
+   const {a,physical}=requirePendingPhysical(s,p);
+   assert(physical.kind==='EXPLORE','Movement requires a pending Explore');
+   assert(!physical.mainEffectUsed && !physical.movementStarted,'Movement already started or resolved');
+   physical.movementStarted=true;a.exploring=p.wizard.movement;
+   if(a.exploring===0){physical.mainEffectUsed=true;finishPhysicalEffects(s);}
+   break;
+  }
+  case 'ACTIVATE_ROOM': {
+   const {a}=requirePendingPhysical(s,p);assert(a.exploring===0,'Finish exploring first');
+   assert(!a.roomEffectUsed,'Room effect already used for this physical action');
+   activateRoom(s,p,action.roomTargetId);a.roomEffectUsed=true;finishPhysicalEffects(s);break;
+  }
+  case 'SKIP_PHYSICAL_EFFECTS': {
+   const {a}=requirePendingPhysical(s,p);a.physicalAction=null;a.exploring=0;afterAction(s);break;
+  }
+  case 'INFLICT_ATTACK': {
+   const {physical}=requirePendingPhysical(s,p);
+   assert(physical.kind==='ATTACK','Attack requires a pending Attack');
+   assert(!physical.mainEffectUsed,'Attack primary effect already used');
+   mageAttackTarget(s,p,action.targetId);damageModel(s,action.targetId,p.wizard.attack,p);
+   physical.mainEffectUsed=true;finishPhysicalEffects(s);break;
+  }
   case 'EXPLORE': {
     const a=requirePhysicalAction(s,p);assert(p.actionTokens>0,'No action tokens');
-    p.actionTokens--; a.actionsUsed++; a.exploring=2;a.roomEffectUsed=false;
+    p.actionTokens--; a.actionsUsed++; a.exploring=p.wizard.movement;a.roomEffectUsed=false;
     if(action.activateRoomAtStart){activateRoom(s,p,action.roomTargetId);a.roomEffectUsed=true;}
-    s.log.push(`${p.name} explores: up to 2 one-step moves.`); break;
+    s.log.push(`${p.name} explores: up to ${p.wizard.movement} one-step moves.`);
+    if(a.exploring===0)afterAction(s);break;
   }
   case 'EXPLORE_STEP': {
    const a=requireActivation(s,p.id); assert(a.exploring>0,'Choose Explore first');
@@ -537,6 +701,8 @@ export function applyAction(state: GameState, action: GameAction): GameState {
   case 'END_EXPLORE': { const a=requireActivation(s,p.id); assert(a.exploring>0,'Not exploring');endExplore(s,p,!!action.activateRoomAtEnd,action.roomTargetId);break; }
   case 'DISCARD_EXIT': {
   const a=requireActivation(s,p.id);assert(a.exploring===0,'Finish exploring first');
+  requireNoPendingPhysical(a);
+  requireTurnAction(a);
   assert(isInStartingRoom(s,p),'Discard exit is only available in a starting room');
   assert(!a.discardedExit,'Already used a discard exit this turn');
   validateExitDestination(s,p,action.destination);
@@ -548,21 +714,18 @@ export function applyAction(state: GameState, action: GameAction): GameState {
    assert(key,'Choose a held or unused prepared card');
    const prepared=p.prepared[key!]!;card=prepared.card;prepared.used=true;
   }
-  discardCard(s,p,card);p.wizard.position={...action.destination};a.discardedExit=true;
-  s.log.push(`${p.name} discards ${card.name} to leave the starting room by 1 space (no token or action).`);
+  discardCard(s,p,card);p.wizard.position={...action.destination};a.discardedExit=true;a.actionsUsed++;
+  s.log.push(`${p.name} discards ${card.name} to leave the starting room by 1 space (1 action, no physical token).`);
   afterAction(s);break;
   }
   case 'PUNCH': {
   const a=requirePhysicalAction(s,p);assert(p.actionTokens>0,'No action tokens');
-  assert(!isInStartingRoom(s,p),'Leave the starting room before punching');
-  const target=modelTarget(s,action.targetId);assert(target.playerId!==p.id,'Cannot punch yourself or your own evocations');
-  assert(!s.board.rooms.some(r=>r.startingFor&&r.tiles.some(h=>hexKey(h)===hexKey(target.position))),'Cannot target a model in its starting room');
-  assert(hexDistance(p.wizard.position,target.position)<=1,'Model not adjacent');
+  const target=mageAttackTarget(s,p,action.targetId);
   p.actionTokens--; a.actionsUsed++;a.roomEffectUsed=false;
   const originalPosition=hexKey(target.position);
   if(action.roomEffect==='START'){activateRoom(s,p,action.roomTargetId);a.roomEffectUsed=true;}
   // A room effect may defeat the intended victim; never punch their respawn.
-  if(target.mage?hexKey(target.mage.wizard.position)===originalPosition:s.evocations.some(e=>e.id===action.targetId))damageModel(s,action.targetId,1,p);
+  if(target.mage?hexKey(target.mage.wizard.position)===originalPosition:s.evocations.some(e=>e.id===target.evocation!.id))damageModel(s,action.targetId,p.wizard.attack,p);
   if(action.roomEffect==='END'){activateRoom(s,p,action.roomTargetId);a.roomEffectUsed=true;}
   afterAction(s); break;
   }

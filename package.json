@@ -9,6 +9,7 @@
   "scripts": {
     "test": "npm run test -w @brw/game-engine",
     "test:network": "node --import tsx scripts/multiplayer-smoke.ts",
+    "test:lobby": "node --import tsx scripts/lobby-smoke.ts",
     "test:browser": "playwright test",
     "typecheck": "tsc --noEmit -p packages/game-engine/tsconfig.json && tsc --noEmit -p apps/server/tsconfig.json && tsc --noEmit -p apps/client/tsconfig.json",
     "dev": "npm run dev -w @brw/client",

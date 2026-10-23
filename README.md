@@ -1,6 +1,6 @@
 # Black Rose Wars — online prototype
 
-Two-player, unofficial TypeScript prototype with an authoritative WebSocket server, a shared rules engine, and a React client. Card names and effects are original placeholders, not a reproduction of the published card set.
+Two-to-four-mage, unofficial TypeScript prototype with an authoritative WebSocket server, a shared rules engine, and a React client. Card names and effects are original placeholders, not a reproduction of the published card set.
 
 ## Start locally
 
@@ -22,11 +22,13 @@ In a **separate terminal 2**, leave the client running:
 npm run dev -w @brw/client -- --host 0.0.0.0
 ```
 
-Open **http://localhost:5173** in two tabs or browser windows. The WebSocket address `ws://localhost:8080` is not a website to open in a tab.
+Open **http://localhost:5173** in two to four tabs, browser windows, or devices. The WebSocket address `ws://localhost:8080` is not a website to open in a tab.
 
-1. The first mage creates a room and clicks **Mark ready**.
-2. The other mage joins the same room and clicks **Mark ready**.
-3. The creator clicks **Start game**. Both occupied seats must be ready.
+1. The first mage creates a room and invites up to three other mages to join it.
+2. Wait for everyone you intend to play with to join, then each mage clicks **Mark ready**.
+3. The battle **starts automatically as soon as all joined mages are ready**, with a minimum of two. A lone ready creator waits for at least one other person. Unused seats do not block a two- or three-mage battle. Invite everyone before the final ready; new seats cannot join a running battle.
+
+Each joined mage receives a separate starting room, grimoire, cube pool, color, and turn. A fifth participant is rejected. Leaving a lobby removes that participant and transfers creator duties if necessary; leaving a running battle preserves the seat and pauses the game until reconnection. Rejoining a disconnected running seat is supported, but is not authenticated.
 
 For a second device on the same Wi-Fi, open the Vite Network URL (for example `http://192.168.1.5:5173`). The client connects to port 8080 on that same host. Allow the ports through the firewall. `VITE_WS_URL` can override the WebSocket endpoint; the server port can be changed with `PORT`.
 
@@ -36,63 +38,71 @@ If startup reports `EADDRINUSE`, another server already owns port 8080. Stop the
 
 **Black Rose → Study → Preparation → Action → Evocation → Cleanup.** The engine, WebSocket API and React client support summoning, model targeting and evocation control.
 
-Every phase has a brief, dismissible announcement. Black Rose and Cleanup remain visible until the creator continues, so players can read the event and scores. Study and Preparation finish automatically once both players submit.
+Every phase has a brief, dismissible announcement. Black Rose and Cleanup remain visible until the creator continues, so players can read the event and scores. Study and Preparation finish automatically once all participating mages submit.
 
 ### Black Rose
 
 - Each mage starts with **2 physical tokens**, refreshed to exactly **2** at the beginning of every round; unused tokens do not accumulate.
 - Draw and resolve one of 12 event cards: neutral instability in random unfinished rooms, or 1–2 black damage to every mage.
 - Black damage is neutral and does not award a player kill/quest credit. If it defeats a mage with player-owned damage cubes, those existing contributions still score and their cubes return; the mage respawns in their own starting room.
-- At the end of Black Rose, each mage without a quest receives exactly one. Existing quests are retained.
-- Start Study and draw 2 personal grimoire cards for each mage.
+- When the creator continues, each mage without a quest receives exactly one. Existing quests are retained. This resolution happens once, tracked by `blackRoseResolved`.
+- Each mage has **quest limit 2**. If anyone holds more, Black Rose stays visible until each affected owner selects **exactly their overflow** and submits `DISCARD_QUESTS { questIds }`. Selected quests go to the shared quest discard without completion rewards; retained quests stay private.
+- While quest selections are pending, the creator cannot continue again and **nobody can begin Study or draw their 2 grimoire cards**. Once all quests fit, Study starts automatically and each mage draws up to 2 personal grimoire cards. With no overflow, the creator's continue proceeds directly to Study; no empty selection is needed.
 
 ### Study
 
 - Choose one of **6 shared schools**, initially **36 spells each**. For now all schools use identical effect distributions, but every physical card has a unique ID.
 - Draw 4 spells from that school and select exactly 2 cards from your hand to discard.
-- **School spells always return to their own school's discard pile**, whether discarded during Study, cast, left unused in Preparation, or spent to exit a starting room. Personal spells return to the mage's grimoire discard.
-- Powerful spells cannot be discarded or spent on a starting-room exit; keep them until cast.
+- **School spells normally return to their own school's discard pile**, whether discarded during Study, cast, left unused in Preparation, or spent to exit a starting room. Personal spells normally return to the mage's grimoire discard. The mandatory Preparation hand-limit discard below is an explicit exception.
+- Powerful spells cannot be discarded during Study or spent on a starting-room exit. Only the mandatory hand-limit selection can put one into personal discard; otherwise keep it until cast.
 - Each depleted deck reshuffles only its own discard. Choose another school if the selected one has fewer than 4 cards across its draw and discard piles. Study draws up to 2 personal cards if the remaining grimoire cards are already held.
 
 ### Preparation
 
+- Each mage has **card limit 7**, checked against their **entire hand before removing prepared spells**. If over, select **exactly the excess number of different held cards** and submit `DISCARD_HAND_LIMIT { cardIds }`, then prepare. Preparation is blocked until the limit is met.
+- This mandatory selection sends **every selected card to the owner's PERSONAL discard**, even a school spell or powerful spell. Its ID, `schoolId` and `powerful` flag are preserved; it is not removed from the game. Later retrieval/draw and casting use its normal rules. This exception does not change Study/cast/discard-exit routing.
+- Hand-limit selection is available only in Preparation, before that mage has prepared. No overflow means no selection: an empty limit-discard command is rejected, not required to proceed.
 - Select three spells in progressive order **1 → 2 → 3**, and one **flexible** spell.
-- Numbered spells cannot skip an unused earlier slot, and **only one numbered spell may be cast per turn**. The flexible spell is independent and may also be cast in that turn.
+- Numbered spells cannot skip an unused earlier slot, and **only one numbered spell may be cast per turn**. The flexible spell is independent of that ordering, but every cast uses one of the shared two turn actions.
 - Unselected cards remain in hand. Uncast ordinary prepared cards go to their origin's discard when the next round starts. **Unused powerful preparations return to hand**, never a discard pile.
 
 ### Action
 
-- Each mage has **2 physical action tokens for the entire round**, separate from spells. Explore, Punch, and an additional evocation activation each consume **1 token and 1 physical action**. Summoning is a **free Grey room effect**, never a separate paid action.
-- Alternate turns with **up to 2 physical actions**, plus free spell casts. Choose **End turn** when finished; after both physical actions, any eligible free spells remain available. The turn automatically finishes only when no legal options remain.
-- **Begin movement** starts Explore, consuming 1 token and 1 action. Move **one adjacent hex at a time**, up to 2 steps. **Finish movement** stops early; it does not cost another action.
-- **Punch** costs 1 token, dealing 1 damage to an enemy mage or evocation in the same or an adjacent space.
-- **Activate a Grey room** as the optional start/end effect of Explore or Punch to summon **1 Cadaver (Undead) at the mage's position when the effect resolves**. Merely entering or occupying Grey does not summon. A reconstructed Grey room offers **2 Cadavers**, capped by the mage's **3 living owned evocations**: with two already owned, summon only one; at three, summon none. Destroyed models free their owned slots. There is **no extra token or physical-action cost** beyond the Explore/Punch itself.
+- Each mage's authoritative wizard stats are **maximum HP 10** (`wizard.health`), **attack 2** (`wizard.attack`), and **movement 2** (`wizard.movement`). Wounds are tracked separately in `damageCubes`; health is not remaining HP.
+- Each mage has **2 physical action tokens for the entire round**. Beginning **Explore** or **Attack**, and an additional evocation activation, each consume **1 physical token and 1 turn action**. Spells and discard-to-move use a turn action but **no physical token**. Summoning is a **free Grey room effect**, never a separate paid action.
+- Alternate turns with **up to 2 actions total**, tracked by `activation.actionsUsed`: Explore, Attack, every spell cast (numbered, flexible, and powerful), discard-to-move, and paid evocation activation all count. **Two Explores leave no spell cast available on that turn.** Numbered plus flexible, spell plus Explore, and discard-to-move plus Explore each use both actions. Choose **End turn** after one action to keep remaining resources. After the second action fully resolves, the turn automatically hands off; unused cards and physical tokens remain for later turns. The turn also ends early if no legal options remain. With no other eligible mage, the same mage can begin a new turn with a refreshed two-action budget.
+- Top-level **Explore** and **Attack** open their respective physical-action menus using `BEGIN_PHYSICAL_ACTION { kind }`. The token/action is consumed **only at begin**, not for subsequent primary or room effects.
+- Explore's **Perform 2 movements** (`PERFORM_MOVEMENT`; the displayed count follows `wizard.movement`) enables adjacent steps using `EXPLORE_STEP`. **Finish movement early** (`END_EXPLORE`) stops movement early. Completing movement leaves the room effect available if unused; it does not silently close the whole menu.
+- Attack's **Inflict attack** (`INFLICT_ATTACK { targetId }`) deals `wizard.attack` damage, normally **2**, to an enemy mage or evocation **in exactly the same hex (distance 0)**. Adjacent targets are not legal mage attacks. Evocations retain their separate same/adjacent attack range.
+- Both menus offer **Activate the room** (`ACTIVATE_ROOM`, optionally `roomTargetId` for Emerald) and **Skip remaining effects** (`SKIP_PHYSICAL_EFFECTS`). Resolve primary then room, or room then primary, each at most once. Using both automatically closes the menu. Skip is legal at any point, including during movement, preserves effects already resolved, and never refunds the token.
+- While a physical menu is pending, other mage commands—including spells, paid model activation, another physical action, discard exit, End turn and Pass—are locked. A zero-token mage still finishes the pending effects or skips. Room activation waits until movement has ended.
+- **Activate a Grey room** through `ACTIVATE_ROOM` to summon **1 Cadaver (Undead) at the mage's position when the effect resolves**. Merely entering or occupying Grey does not summon. A reconstructed Grey room offers **2 Cadavers**, capped by the mage's **3 living owned evocations**: with two already owned, summon only one; at three, summon none. Destroyed models free their owned slots. There is **no extra token or physical-action cost** beyond beginning Explore/Attack.
 - Grey replaces the former Ivory color. Its room effect is `SUMMON_CADAVER`, replacing `DRAW_LIBRARY`; it never draws from or recycles School 6. **Direct paid summoning has been removed**: `SUMMON_EVOCATION` is not a valid game action, and even a malicious legacy WebSocket payload is rejected with **Unknown game action**, without changing state.
 - Every Cadaver has **movement 2, base attack 2, health 2**, and **Wounded Fury**: attack strength is **2 + its current damageCubes**. Evocations persist across rounds until destroyed.
 - **Activate evocation** (`ACTIVATE_EVOCATION`) during Action is an additional paid activation of one owned model: 1 token and 1 physical action. It locks all mage commands until `END_EVOCATION` or a successful `EVOCATION_ATTACK` finishes it. A model may receive further paid activations if resources allow; these do **not** spend its later free Evocation-phase activation.
-- **Cast spell** costs **no action and no token**. Cast at most one numbered spell per turn, plus the flexible spell if unused. Select a prepared spell, a highlighted target room, then confirm. Ordinary spells deal up to **4 damage** and/or **2 instability**, with ranges 0–4 and model or room targets. Powerful spells held in hand may also be cast directly for free, independently of the numbered-spell quota; preparing one in a numbered slot instead uses that slot's normal ordering and quota.
+- **Cast spell** costs **1 turn action and no physical token**, including flexible, dummy, and powerful casts. Cast at most one numbered spell per turn; the flexible spell can be the other action if unused. Select a prepared spell, a highlighted target room, then confirm. Ordinary spells deal up to **4 damage** and/or **2 instability**, with ranges 0–4 and model or room targets. Powerful spells held in hand may be cast directly, independently of the numbered-spell quota but still within the two-action budget; preparing one in a numbered slot instead uses that slot's normal ordering and quota.
+- **Spell range follows a straight, contiguous hex line without turning**, not a hex radius. The target must share the caster's `q`, `r`, or `q + r` coordinate, at most the printed number of hex steps away; range 0 permits the caster's hex. This applies to room, mage, evocation, dummy, and powerful-spell targets. From `(0,0)`, range 2 reaches the center and the first two hexes along each of the six directions, but never `(1,-2)`, `(-1,-1)`, `(2,-1)`, `(-2,1)`, `(1,1)`, or `(-1,2)`, even at a higher range. Movement may still turn between adjacent steps; mage and evocation physical attack ranges are unchanged.
 - Single-model spells select an enemy mage or evocation. They also offer an explicit **dummy target**: choose any non-starting room within range and resolve non-damage effects there. No model takes damage and no damage cubes are placed, even if the room is occupied.
 - **No friendly fire:** model attacks/spells cannot target the controlling mage or any friendly evocation. Room spells and Crimson room damage affect **all enemy mages and evocations** there, never the caster or friendly summons. Instability applies to the target's original room even if damage defeats and respawns them.
-- In a **starting room**, a mage cannot cast, punch, activate a room effect, or buy an evocation activation: **Explore** out, or **discard a held/unused prepared card** to move exactly one adjacent space for no action or token. The discard exit can be used once per turn. Mages cannot voluntarily enter or reenter any starting room; defeat still respawns them there. Evocations can never enter any starting room. Regular rooms remain revisitable. Starting rooms and models inside them cannot be targeted by spells or physical attacks; Black event damage ignores mage starting-room protection. A mage in a starting room may still control their models during the free Evocation phase.
+- In a **starting room**, a mage cannot cast, begin Attack, activate a room effect, or buy an evocation activation: **Explore** out, or **discard a held/unused prepared card** to move exactly one adjacent space for **1 turn action and no physical token**. The discard exit can be used once per turn. Mages cannot voluntarily enter or reenter any starting room; defeat still respawns them there. Evocations can never enter any starting room. Regular rooms remain revisitable. Starting rooms and models inside them cannot be targeted by spells or physical attacks; Black event damage ignores mage starting-room protection. A mage in a starting room may still control their models during the free Evocation phase.
 - Player damage places **1 attacker-owned cube per damage actually inflicted**, limited by the attacker's available supply. Damage still applies if fewer cubes are available; overkill cannot add cubes beyond the victim's remaining health. The supply is shared with room instability.
 - All evocation damage is sourced to its **controlling mage**. That owner's `cubes.onWizard` tracks cubes on enemy mages, `cubes.onEvocations` separately tracks cubes on enemy summons, and `cubes.onBoard` tracks committed room instability. These and `cubes.available` share the same 25-cube supply. Victims record ownership in `damageByPlayer`.
 - Destroying an evocation returns **all cubes on it to their owners** and removes the model, with **no VP, mage-kill, or kill-quest reward**. An evocation defeating a mage still credits its controller normally, including contribution scoring and final-hitter kill/quest credit below.
-- When a mage is defeated, rank only players with cubes on that mage: **4 VP for first, 2 VP for second, 1 VP for every other contributor**. Equal counts share the same competition rank (two tied leaders each get 4 VP; the next contributor is third and gets 1). Black damage and players with zero cubes do not compete.
+- When a mage is defeated, rank only players with cubes on that mage: base rewards are **4 VP for first, 2 VP for second, 1 VP for every other contributor**. Use **dense ranks**: equal counts share a rank, and the next distinct count receives the next rank (1, 1, 2 rather than 1, 1, 3). Each tied contributor's award is reduced by **exactly 1 VP**, with a minimum award of **1 VP**, regardless of how many mages tie. For example, contributions of 4 / 4 / 1 yield **3 / 3 / 2 VP**. Black damage and players with zero cubes do not compete.
+- Award **+1 VP** to the sole contributor if **all damage on the defeated mage is accounted for by that mage's colored cubes**, with no neutral black damage. Damage inflicted after running out of physical cubes does not qualify as colored cubes. This bonus is separate from rank rewards and kill quests.
 - Return all damage cubes on the defeated mage to their respective owners, clear that mage's damage, and respawn them in their starting room. Cubes those owners placed on other mages or in rooms stay committed.
 - The final hitter still receives kill and kill-quest credit, but there is **no additional flat kill VP bonus**. Contribution scoring also applies when a neutral event delivers the finishing damage.
-- **End turn** keeps unused resources and is available after a physical action, a free spell, or a discard exit, but never during Explore or an active evocation. **Pass for this round** (`PASS_ROUND`) is legal **only with 0 physical tokens AND no unused prepared spells or held powerful spells**. Unused numbered slots still block passing even when this turn's numbered quota is already spent; end the turn and cast them on later turns. Passing is also forbidden during Explore or an active evocation. Ordinary unprepared hand cards do not block passing.
-- Exhausted mages with no legal spells, physical actions, or discard exit are automatically skipped; a permanent pass is not needed to drain the round. When everyone has passed or cannot act, enter **Evocation**, not Cleanup directly.
+- **End turn** keeps unused resources and is available after a completed/skipped physical action, a spell, or a discard exit, but never during a pending physical menu or active evocation. Spending both turn actions hands off automatically, not a permanent round pass. **Pass for this round** (`PASS_ROUND`) is legal **only with 0 physical tokens AND no unused prepared spells or held powerful spells**. Unused numbered slots still block passing even when this turn's numbered quota is already spent; end the turn and cast them on later turns. Ordinary unprepared hand cards do not block passing.
+- Exhausted mages with no legal spells, physical actions, or discard exit are automatically skipped; a permanent pass is not needed to drain the round. When everyone has passed or cannot act, enter **Evocation**; if no models exist, it immediately proceeds to Cleanup.
 
-#### Movement and room-activation buttons
+#### Physical-menu examples
 
-Use explicit **Begin movement** and **Activate room** buttons instead of a room-effect timing dropdown or a paid summon button.
+1. **Explore → Perform 2 movements → adjacent steps → Finish movement early if needed → Activate the room.** This uses the destination's room effect. Finishing the final movement step does not automatically activate it.
+2. **Explore → Activate the room → Perform 2 movements → steps or Finish movement early.** This uses the origin's room effect; a Grey Cadaver stays at the spawn hex instead of following the mage.
+3. **Attack → Inflict 2 damage to a model at distance 0 → choose an enemy → Activate the room**, or activate the room before inflicting damage. The attack still needs a legal same-hex enemy when it resolves. If a Crimson effect defeats that target first, skip the remaining attack rather than hitting its respawn.
+4. **Skip remaining effects** closes either menu whenever desired, even before using its primary effect. Paid **Activate evocation** is separate: it controls an existing model and never summons or triggers a room effect.
 
-1. Choose **Begin movement** to start Explore, paying its single token/action. Select highlighted adjacent hexes, up to two steps. Movement alone does not activate any room.
-2. To use the origin's room effect, choose **Activate room** before beginning movement; it starts Explore with the current room's effect, then allows movement. In Grey, the Cadaver appears at the origin and does not follow the mage.
-3. If no effect was used at the start, choose **Activate room & finish movement** while exploring to finish with the current room's effect. Choose **Finish movement** to stop early without activating. When selecting the final movement destination, choose **Move here without activating** or **Move here & activate room** before the move is sent; **Choose another destination** cancels this local choice. An end effect uses the mage's destination, not the origin; at most one effect may resolve for that Explore.
-4. Choosing a Punch target offers **Punch only**, **Activate room, then punch**, or **Punch, then activate room**. The effect is part of Punch, not an independent activation action. Paid **Activate evocation** controls an existing model and never summons or triggers a room effect.
-
-Room activation is disabled in starting rooms and for a reconstructed special already spent this Action phase. Emerald still needs a valid target within distance 1 of the activated room. The acting mage is identified by a **glow and gentle scale pulse** on the board and player card, alongside a named turn banner; the highlight follows the acting owner in both clients. Reduced-motion preferences disable animation while retaining the static glow and labels.
+Room activation is unavailable in starting rooms and for a reconstructed special already spent this Action phase. Emerald needs a valid target within distance 1 of the activated room. Legacy engine `EXPLORE`/`PUNCH` commands remain for compatibility, but the client/network smoke use the explicit menus above, not bundled start/end timing flags. Browser verification of the rewritten client is separate from the network smoke.
 
 ### Evocation
 
@@ -105,7 +115,11 @@ Room activation is disabled in starting rooms and for a reconstructed special al
 
 ### Rooms and Cleanup
 
-The 18 regular rooms have **6 colors, exactly 3 rooms per color**. The central chamber and the **four protected starting rooms at (-1,-2), (3,-2), (-3,2), and (1,2)** are separate. The two current mages start at (3,-2) and (-3,2); the other starts remain unoccupied and protected. Choose **one optional free room effect at the start OR the end of each Explore or Punch**; it never costs another action/token. An end-of-Explore effect uses the destination room. Starting rooms have no effect, and discard exits/spells do not trigger room effects.
+The 18 regular rooms have **6 colors, exactly 3 rooms per color**. The central chamber and four protected starting rooms are separate. Seats p1–p4 use the internal axial positions (3,-2), (-3,2), (-1,-2), and (1,2); unused starts remain protected. Every room has a **unique randomly assigned name**, except the fixed Black Rose Chamber. Names are shared with all players and stay fixed for that battle. The board, target choices, logs, and evocation locations use room names rather than coordinates; internal room IDs and axial coordinates remain unchanged for targeting and range calculations.
+
+Room interiors show **large, high-contrast instability/capacity badges**, a fill indicator, and colored ownership counts. A mage-color legend identifies all two to four participants and neutral Black Rose cubes. The board scrolls on small screens rather than making names and cube counts unreadably small.
+
+Choose **at most one free room effect within each Explore or Attack menu**, before or after its primary effect; it never costs another action/token. `ACTIVATE_ROOM` uses the mage's position when it resolves. Starting rooms have no effect, and discard exits/spells do not trigger room effects.
 
 | Color | Prototype free room effect |
 | --- | --- |
@@ -116,9 +130,9 @@ The 18 regular rooms have **6 colors, exactly 3 rooms per color**. The central c
 | Violet | Draw 1 card from your personal grimoire, reshuffling its discard if needed |
 | Grey | Summon 1 Cadaver at the activating mage's position, up to 3 living evocations owned by that mage |
 
-Choose Emerald's target with the room-effect target selector. Its range is measured from the room where the effect activates, so an end-of-Explore effect uses the destination, not the origin. Crimson's start effect can finish a mage before a Punch; the respawned mage is not hit again. Draw effects do nothing if their source has no available cards. Amber recycles completed quests when its deck runs out, never another mage's held quests.
+Choose Emerald's target with the room-effect target selector. Its range is measured from the room where the effect activates, so activating after movement uses the destination, not the origin. Crimson can finish a mage before Attack's primary effect; a respawn in a starting room cannot be attacked. Draw effects do nothing if their source has no available cards. Amber recycles the shared quest discard when its deck runs out, never another mage's held quests. Extra quests may exceed the limit during Action; mandatory selection waits until the end of the next Black Rose.
 
-**Reconstructed rooms double all seven effects:** Crimson deals 2 damage per enemy model, Azure retrieves up to 2 random personal-discard spells, Emerald places 2 instability within range 1, Amber draws up to 2 quests, Violet draws up to 2 grimoire spells, Grey summons up to 2 Cadavers without exceeding 3 living owned evocations, and the central chamber grants up to 2 powerful spells. Available supply and instability/cube caps still apply. This reconstructed special may be used **once per room globally across all players during an Action phase**, tracked by `specialUsed`; it is not once per mage or turn. Activating reconstructed Grey at the owned-model cap summons nothing but still spends that room's special. **Cleanup resets `specialUsed`** for the next Action phase. Ordinary unreconstructed room effects remain subject to the one-effect-per-Explore/Punch rule.
+**Reconstructed rooms double all seven effects:** Crimson deals 2 damage per enemy model, Azure retrieves up to 2 random personal-discard spells, Emerald places 2 instability within range 1, Amber draws up to 2 quests, Violet draws up to 2 grimoire spells, Grey summons up to 2 Cadavers without exceeding 3 living owned evocations, and the central chamber grants up to 2 powerful spells. Available supply and instability/cube caps still apply. This reconstructed special may be used **once per room globally across all players during an Action phase**, tracked by `specialUsed`; it is not once per mage or turn. Activating reconstructed Grey at the owned-model cap summons nothing but still spends that room's special. **Cleanup resets `specialUsed`** for the next Action phase. Ordinary unreconstructed room effects remain subject to the one-effect-per-physical-menu rule.
 
 The **central chamber grants one powerful Black Rose spell** from a separate, finite 12-card supply (four of each original prototype spell):
 
@@ -128,7 +142,7 @@ The **central chamber grants one powerful Black Rose spell** from a separate, fi
 | Sovereign Wrath | 8 | 1 | 4 | Single model |
 | Worldbreaker | 4 | 4 | 2 | Room |
 
-Powerful spells can be cast from hand as soon as Explore/Punch finishes. Held cards persist across Cleanup and future rounds; unused powerful prepared cards return to hand at the next Black Rose. **After casting, the physical card is permanently removed from the game**, never discarded or reshuffled. The powerful supply does not refill when empty. Standard range, starting-room protection, cube limits and dummy targeting still apply. Powerful spell identities remain hidden from opponents until used. These are original placeholder effects, not official card or room text.
+Powerful spells can be cast from hand after a physical menu finishes or is skipped **if a turn action remains**; otherwise wait for a later turn. Each cast costs one turn action, never a physical token. Held cards persist across Cleanup and future rounds; unused powerful prepared cards return to hand at the next Black Rose. **After casting, the physical card is permanently removed from the game**, never discarded or reshuffled. A powerful card selected for mandatory hand-limit overflow instead goes to personal discard and may be retrieved/redrawn before casting. The separate powerful supply does not refill when empty. Standard range, starting-room protection, cube limits and dummy targeting still apply. Held powerful identities remain hidden from opponents until publicly used or discarded. These are original placeholder effects, not official card or room text.
 
 | Room | Instability capacity | First place | Second place |
 | --- | ---: | ---: | ---: |
@@ -137,7 +151,8 @@ Powerful spells can be cast from hand as soon as Explore/Punch finishes. Held ca
 
 - Final cubes are capped at capacity and the player's physical supply (25 cubes initially).
 - Full rooms are immediately **rebuilt/locked** and accept no more cubes, including from events.
-- At Cleanup, each newly rebuilt room awards points to players ranked by their contribution. Tied leaders each receive first prize; neutral Black Rose cubes never compete for points.
+- Completing a room **entirely in your own cube color** grants **+1 VP immediately**, once only. Any neutral or other mage's cubes prevent this bonus. This is additional to quests and the later Cleanup award.
+- At Cleanup, each newly rebuilt room awards points using the **same dense-rank and tied-award rules as mage defeats**. The printed base prizes remain **3 / 1 VP for regular rooms**, **6 / 3 VP for the center**, and **1 VP for lower ranks**. Ties deduct exactly 1 VP from each tied award, never below 1; neutral Black Rose cubes never compete. A regular room with contributions 2 / 2 / 1 awards **2 / 2 / 1 VP**; the center with 4 / 4 / 2 awards **5 / 5 / 3 VP**.
 - Cubes return to the physical supply, but contribution records and rebuilt status remain. **A room scores only once.**
 - Quests reward **2–3 VP** for a mage kill, placing the last cube in a room, or placing 2 cubes in one room with one spell. Completion is immediate; a replacement arrives at the next Black Rose.
 - Victory is checked **only at Cleanup**, at **30 VP or more**. Highest total wins; tied highest totals use player order as the prototype tiebreaker.
@@ -147,28 +162,39 @@ Powerful spells can be cast from hand as soon as Explore/Punch finishes. Held ca
 
 ```bash
 npm test                 # engine behavior
-npm run test:network     # three real two-client rounds: tokens, spells, summons, evocations, privacy
+npm run test:lobby       # real 2/3/4-mage automatic starts, readiness, privacy, reconnects
+npm run test:network     # three real two-client rounds: menus, limits, spells, evocations, privacy
 npm run typecheck        # engine + server + client
 npm run build            # production client
 npx playwright install chromium  # once, for browser tests
-npm run test:browser     # two browsers play a round, plus mobile layout
+npm run test:browser     # separate visible-client validation; rerun after client/menu changes
 ```
 
-The standalone network script is outside the workspace typecheck projects. Check it separately with:
+The standalone network scripts are outside the workspace typecheck projects. Check them separately with:
 
 ```bash
-npx --no-install tsc --noEmit --target ES2022 --module ESNext --moduleResolution Bundler --strict --esModuleInterop --skipLibCheck scripts/multiplayer-smoke.ts
+npx --no-install tsc --noEmit --target ES2022 --module ESNext --moduleResolution Bundler --strict --esModuleInterop --skipLibCheck scripts/multiplayer-smoke.ts scripts/lobby-smoke.ts
 ```
 
 Browser tests run their own servers on ports 18080 and 15173, without disturbing local games.
 
-The browser suite uses only visible controls in two real clients. It checks explicit movement/room choices, final-step confirmation/cancellation, Grey summons at origin and destination, no automatic summon on entry, starting-room activation protection, paid activation without summoning, free spells, and the complete Evocation combat flow into the next round. Both clients verify the named turn banner, glowing/pulsing acting mage and highlight handoff; reduced-motion and mobile no-overflow checks are included. Model cards show their owner's damage cubes and current Wounded Fury attack value. Rebuilt room details show double-special readiness and whether this Action phase's activation has been spent.
+The six browser tests use only visible controls in two or four clients. The four-browser scenario verifies the lone-creator wait, all-joined readiness, automatic start, named rooms, prominent cube badges, all four mage identities and the first full turn rotation. Other scenarios verify the shared two-action limit, automatic handoff after two Explores with spells uncast and disabled, one-action flexible/numbered/discard costs without token loss, straight-line spell highlights, complete-round Grey summoning and Evocation combat, both physical-effect orders, pending-menu locks, partial movement and skips, same-hex attack targeting, and all five displayed mage attributes. A three-round retention scenario reaches the real hand-limit selector and checks a school card entering personal discard before slot assignment. Amber quest overflow is resolved through owner selections whenever random quest completions leave excess quests. Turn highlighting, reduced motion, mobile layout and absence of obsolete controls are also checked. Quest overflow is conditional in browser runs; deterministic engine tests cover both owners' quest selections and delayed Study in every run.
 
-The network smoke starts an isolated ephemeral-port server and always terminates its clients/server. It uses only public WebSocket actions: **no server-state mutation, fixtures, or test-only commands**. It correlates each acknowledgement by request ID and synchronizes the peer to that acknowledged public state (including log length) before inspecting its private hand. It casts all **24 prepared spells over three rounds**, retains **12 free Evocation activations**, and spends the actual two-token budgets rather than passing with resources left.
+The separate lobby smoke covers automatic starts with two, three and four joined mages, fifth-player rejection, unready-player gating, lobby departure and creator transfer, in-progress seat locking, multi-disconnect pausing, running reconnections preserving real cards/cubes/positions, and hidden cards/quests/future draws across all four viewers.
 
-Coverage includes premature-pass rejection (tokens, Explore, future ordered slots), automatic exhaustion, Grey summoning via **Explore start, the final movement step, and Finish Explore**, no automatic summon on entering Grey, one room effect per Explore, and a **Punch-end Grey activation at the three-model cap that legally summons nothing**. Every Grey reward checks spawn position, printed stats, ownership/cap, no extra action/token, and unchanged hands/library; legacy `SUMMON_EVOCATION` payloads must return exactly **Unknown game action** in the lobby, starting room, during Explore, on Grey with resources available, at capacity, and during an active evocation. Paid activation still spends one token/action without summoning or using the room special.
+The network smoke starts an isolated ephemeral-port server and always terminates its clients/server. It uses only public WebSocket actions: **no server-state mutation, fixtures, or test-only commands**. Acknowledgements are correlated by request ID; both viewers synchronize to the same public epoch before inspecting private data. Privacy checks run after every command, including opponent hand/preparation/quest masking and hidden future draws.
 
-Retained checks cover paid activation locking, free Evocation model choice/alternation/once-only/owner skipping, movement and starting-room protection, friendly-fire rejection, enemy mage and summon attacks, Wounded Fury, separate cube ledgers, and destroyed-model cube return without scoring. Amber extra-quest privacy and central powerful-card privacy, free casting and permanent removal are also checked. Events and draws remain random: when Grey is naturally reconstructed, the smoke checks its doubled/capped reward and special consumption, and avoids illegal reuse. **Reconstructed Grey is not guaranteed in every network run**; deterministic double-reward, global-lock/reset, cap/refill, and both Punch timings are covered by engine tests, along with held powerful-card persistence and the remaining strict-pass/combat/scoring edge cases.
+Its three real rounds spend each mage's actual two-token budget through **12 `BEGIN_PHYSICAL_ACTION` menus**, never successful legacy `EXPLORE`/`PUNCH` commands or bundled timing flags. Coverage includes:
+
+- Public wizard stats **10 maximum HP / 2 attack / 2 movement**, limits **7 cards / 2 quests**, single begin-time costs, independent primary/room effects, full and early-ended movement, both effect orders, automatic menu completion, and skipping after a room effect or midway through movement without refunding costs or undoing completed steps.
+- Pending-menu locks on spells, another physical action, turn ending/passing, discard exit and owned-model activation; peer turn/seat ownership, wrong-menu rejection, repeated-effect rejection, and zero-token pending resolution.
+- **23 actual prepared casts**, each using a turn action without a physical token: one of the 24 preparations is deliberately spent on a one-action, no-token discard exit. Mixed-action costs, two-action automatic handoffs, post-handoff action rejection, numbered sequencing, future-slot pass rejection and automatic exhaustion remain exercised. Central powerful cards are masked from the peer, cast within the shared action budget on eligible turns, and permanently removed. Off-axis prepared and powerful casts are rejected without state changes.
+- Natural **Violet/Azure draws reach a real hand overflow before round 3 Preparation**. Preparation is rejected first; exact overflow IDs are selected, including a school card, and the PERSONAL-discard exception is checked without changing library/removed piles. Under-limit empty selections and wrong-phase/count/unowned selections are rejected.
+- Amber retains additional private quests. Whenever natural draws outlast random quest completions, the next Black Rose remains resolved-but-pending, blocks creator re-resolution and Study/grimoire draws, then accepts the exact quest selection without awarding completion rewards. With no overflow, Study proceeds without any empty discard command.
+- Grey summons occur only via `ACTIVATE_ROOM`, never entry/begin/movement alone. Rewards check spawn position, printed stats, ownership, cap, unchanged hands/library/cubes and no extra cost. Naturally rebuilt rewards and spent-special rejection are checked when reached. Legacy direct summoning remains rejected.
+- Same-hex mage attacks deal **2 damage** with sourced cube ledgers. Free Evocation model choice, movement allowance, ownership, friendly-fire rejection, alternating/empty-owner selection, once-only flags when reachable, enemy summon destruction and cube return without kill rewards are retained.
+
+The script prints actual counters and gaps instead of claiming every random branch ran. **Quest overflow, rebuilt Grey and cap no-ops are not guaranteed in every run**; a spent reconstructed Grey special can prevent one or both Attack room effects, in which case the primary resolves and the rest is skipped. The engine suite covers dense scoring ranks, tie deductions and exclusive-color bonuses, four-mage construction/readiness, the shared turn budget, spell ranges, limits and both menu orders deterministically, including powerful overflow into personal discard, exact/duplicate/foreign selections, all skip stages, configurable stats, adjacent mage-attack rejection, paid evocation activations, Wounded Fury bonus, held powerful persistence, and remaining combat/scoring edge cases. The network scenario prioritizes real draw-driven overflow and new menus over retaining the old fixed 24-cast/12-activation totals.
 
 ## Architecture and scope
 
@@ -176,4 +202,4 @@ Retained checks cover paid activation locking, free Evocation model choice/alter
 - `apps/server`: in-memory room authority, readiness, action validation, hidden spells and draw piles, state broadcasts.
 - `apps/client`: phase-aware lobby and gameplay, spell selection/targeting, hex board, quest tracking, log, animations.
 
-This implementation is **two-player with Cadaver evocations supported end-to-end**. It does not claim full official rulebook fidelity, other summon archetypes, traps, official card/room text, authentication, or durable persistence. Reloading can reclaim a vacant seat by joining the same room; that seat is not authenticated. A disconnect pauses actions until the vacant seat is filled. Rooms are deleted when both players disconnect or the server restarts.
+This implementation supports **two to four mages with Cadaver evocations end-to-end**. It does not claim full official rulebook fidelity, other summon archetypes, traps, official card/room text, authentication, or durable persistence. Reloading can reclaim a disconnected running seat by joining the same room; that seat is not authenticated. A battle disconnect pauses actions until the vacant seat is filled. Lobby departures instead free a seat and transfer creator duties if necessary. Rooms are deleted when all participants disconnect or the server restarts.

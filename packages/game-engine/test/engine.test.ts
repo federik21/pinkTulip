@@ -7,6 +7,7 @@ function readyGame() {
  let g=createGame();
  for(const p of g.players) p.connected=true;
  for(const p of g.players) g=applyAction(g,{type:'SET_READY',playerId:p.id,ready:true});
+ expect(g.phase).toBe('LOBBY');expect(g.round).toBe(0); // Only the server auto-starts after readiness.
  return g;
 }
 function studyGame() {
@@ -19,6 +20,8 @@ function actionGame(g=studyGame(),p1Cards?:string[]) {
   g=applyAction(g,{type:'DISCARD_STUDY',playerId:id,cardIds:g.players.find(p=>p.id===id)!.hand.filter(c=>!c.powerful).slice(0,2).map(c=>c.id)});
  }
  for(const id of ['p1','p2']) {
+  const p=g.players.find(p=>p.id===id)!,overflow=p.hand.length-p.cardLimit;
+  if(overflow>0)g=applyAction(g,{type:'DISCARD_HAND_LIMIT',playerId:id,cardIds:p.hand.filter(c=>!c.powerful && !(id==='p1'&&p1Cards?.includes(c.id))).slice(0,overflow).map(c=>c.id)});
   const ids=id==='p1' && p1Cards?p1Cards:g.players.find(p=>p.id===id)!.hand.filter(c=>!c.powerful).slice(0,4).map(c=>c.id);
   g=applyAction(g,{type:'PREPARE_CARDS',playerId:id,rapidCardId:ids[3],preparedCardIds:ids.slice(0,3)});
  }
@@ -38,6 +41,25 @@ function roomGame(effect:RoomEffect) {
 function holdPowerful(g:GameState,target:Card['target']='ROOM',playerId='p1') {
  const index=g.powerfulDeck.findIndex(c=>c.target===target);expect(index).toBeGreaterThanOrEqual(0);
  const [card]=g.powerfulDeck.splice(index,1);g.players.find(p=>p.id===playerId)!.hand.push(card);return card;
+}
+// Resume p1 through a real opposing action, preserving round tokens and every card.
+function opponentTurn(g:GameState) {
+ expect(g.currentPlayerId).toBe('p2');const p=g.players[1];
+ if(p.actionTokens>0) {
+  g=applyAction(g,{type:'EXPLORE',playerId:'p2'});
+  if(g.board.rooms.some(r=>r.startingFor && hexDistance(r.tiles[0],p.wizard.position)===0)) {
+   const destination=g.board.rooms.find(r=>!r.startingFor && hexDistance(r.tiles[0],p.wizard.position)===1)!.tiles[0];
+   g=applyAction(g,{type:'EXPLORE_STEP',playerId:'p2',destination});
+  }
+  g=applyAction(g,{type:'END_EXPLORE',playerId:'p2'});
+ } else {
+  const slot=(['slot1','slot2','slot3','rapid'] as const).find(key=>p.prepared[key]&&!p.prepared[key]!.used)!;
+  expect(slot).toBeDefined();const card=p.prepared[slot]!.card;
+  const roomId=g.board.rooms.find(r=>r.tiles.some(h=>hexDistance(h,p.wizard.position)===0))!.id;
+  g=applyAction(g,{type:'CAST_SPELL',playerId:'p2',slot,roomId,...(card.target==='MODEL'?{dummy:true}:{})});
+ }
+ if(g.currentPlayerId==='p2')g=applyAction(g,{type:'END_ACTIVATION',playerId:'p2'});
+ expect(g.currentPlayerId).toBe('p1');expect(g.activation?.actionsUsed).toBe(0);return g;
 }
 // TEST FIXTURE ONLY: legacy phase/scoring tests do not exercise how spells/tokens are spent.
 // Exhaust ordinary preparations into their real discard piles (used slots are only references),
@@ -97,7 +119,7 @@ describe('lobby and decks',()=>{
 
 describe('Black Rose, study and preparation',()=>{
  it('resolves black damage events without awarding kill points and respawns defeated mages',()=>{
-  const g=readyGame();g.eventDeck=[{id:'black',name:'Black thorns',description:'damage',kind:'BLACK_DAMAGE',amount:2,rooms:0}];g.players[0].wizard.damageCubes=9;
+  const g=readyGame();g.eventDeck=[{id:'black',name:'Black thorns',description:'damage',kind:'BLACK_DAMAGE',amount:2,rooms:0}];g.players[0].wizard.damageCubes=9;g.players[0].wizard.blackDamage=9;
   const n=applyAction(g,{type:'START_GAME',playerId:'p1'});expect(n.players[0].wizard.damageCubes).toBe(0);expect(n.players[1].wizard.blackDamage).toBe(2);expect(n.players.every(p=>p.victoryPoints===0)).toBe(true);
  });
  it('places neutral event instability only on unfinished non-starting rooms',()=>{
@@ -155,7 +177,7 @@ describe('Black Rose, study and preparation',()=>{
 });
 
 describe('actions and spells',()=>{
- it('Explore consumes one token and one physical action, preserving free casts after two physical actions',()=>{
+ it('Explore consumes one token and one shared action, handing off after two resolved actions',()=>{
   let g=actionGame();g=applyAction(g,{type:'EXPLORE',playerId:'p1'});
   expect(g.players[0].actionTokens).toBe(1);expect(g.activation?.actionsUsed).toBe(1);
   expect(()=>applyAction(g,{type:'EXPLORE_STEP',playerId:'p1',destination:{q:0,r:0}})).toThrow();
@@ -163,10 +185,12 @@ describe('actions and spells',()=>{
   expect(g.activation?.exploring).toBe(1);
   g=applyAction(g,{type:'END_EXPLORE',playerId:'p1'});
   g=applyAction(g,{type:'EXPLORE',playerId:'p1'});
+  expect(g.currentPlayerId).toBe('p1');expect(g.activation?.actionsUsed).toBe(2);expect(g.players[0].actionTokens).toBe(0);
   g=applyAction(g,{type:'END_EXPLORE',playerId:'p1'});
-  expect(g.currentPlayerId).toBe('p1');expect(g.activation?.actionsUsed).toBe(2);
-  expect(()=>applyAction(g,{type:'EXPLORE',playerId:'p1'})).toThrow(/physical/);
-  g=applyAction(g,{type:'END_ACTIVATION',playerId:'p1'});expect(g.currentPlayerId).toBe('p2');
+  expect(g.currentPlayerId).toBe('p2');expect(g.activation?.actionsUsed).toBe(0);
+  expect(Object.values(g.players[0].prepared).every(c=>c&&!c.used)).toBe(true);expect(g.players[0].passed).toBe(false);
+  expect(()=>applyAction(g,{type:'EXPLORE',playerId:'p1'})).toThrow(/Not your turn/);
+  expect(()=>applyAction(g,{type:'END_ACTIVATION',playerId:'p1'})).toThrow(/Not your turn/);
  });
  it('allows one action then end turn without passing out of the round',()=>{
   let g=actionGame();expect(()=>applyAction(g,{type:'END_ACTIVATION',playerId:'p1'})).toThrow();
@@ -178,9 +202,9 @@ describe('actions and spells',()=>{
   for(const [i,key] of (['slot1','slot2','slot3','rapid'] as const).entries())g.players[0].prepared[key]={card:spell({id:`spell-${i}`}),used:false};
   expect(()=>applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'slot2',roomId:'room-0,0'})).toThrow(/order/);
   g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:'room-0,0'});
-  expect(g.activation?.actionsUsed).toBe(0);
+  expect(g.activation?.actionsUsed).toBe(1);expect(g.activation?.sequencedSpellUsed).toBe(false);
   g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'slot1',roomId:'room-0,0'});
-  // No other legal action remains this turn, so it hands off automatically.
+  // Both shared actions are spent, even though later numbered cards remain unused.
   expect(g.currentPlayerId).toBe('p2');expect(g.players[0].actionTokens).toBe(0);
  });
  it('damages every opposing model in a room, but never the caster',()=>{
@@ -199,7 +223,7 @@ describe('actions and spells',()=>{
   expect(()=>applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'slot1',targetPlayerId:'p2'})).toThrow(/starting/);
  });
  it('awards kill points and a personal kill quest, using the original target room for instability',()=>{
-  let g=giveSpell(actionGame(),spell({target:'MODEL',damage:4,range:4}));g.players[0].wizard.position={q:0,r:0};g.players[1].wizard.position={q:1,r:0};g.players[1].wizard.damageCubes=9;
+  let g=giveSpell(actionGame(),spell({target:'MODEL',damage:4,range:4}));g.players[0].wizard.position={q:0,r:0};g.players[1].wizard.position={q:1,r:0};g.players[1].wizard.damageCubes=9;g.players[1].wizard.blackDamage=9;
   g.players[0].quest={id:'kill',name:'Kill',description:'Kill',kind:'KILL',amount:1,reward:3};
   g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'slot1',targetPlayerId:'p2'});
   expect(g.players[0].victoryPoints).toBe(7);expect(g.players[0].quest).toBeNull();expect(g.board.rooms.find(r=>r.id==='room-1,0')!.instability).toBeGreaterThanOrEqual(2);
@@ -216,7 +240,7 @@ describe('damage cubes and defeat contributions',()=>{
   const g=actionGame();
   for(const p of g.players) {
    p.quest=null;p.wizard.damageCubes=0;p.wizard.blackDamage=0;
-   p.wizard.position=p.id==='p1'?{q:0,r:0}:{q:1,r:0};
+  p.wizard.position={q:0,r:0};
   }
   return g;
  }
@@ -238,15 +262,15 @@ describe('damage cubes and defeat contributions',()=>{
   expect(n.players[0].cubes).toEqual({available:22,onWizard:3,onBoard:0,onEvocations:0});
   expect(n.players[1].wizard.damageByPlayer).toEqual({p1:3});expect(n.players[1].wizard.damageCubes).toBe(3);
   n=applyAction(n,{type:'PUNCH',playerId:'p1',targetId:'p2'});
-  expect(n.players[0].cubes.onWizard).toBe(4);expect(n.players[0].cubes.available).toBe(21);
-  expect(n.players[1].wizard.damageByPlayer).toEqual({p1:4});
+  expect(n.players[0].cubes.onWizard).toBe(5);expect(n.players[0].cubes.available).toBe(20);
+  expect(n.players[1].wizard.damageByPlayer).toEqual({p1:5});
  });
  it('caps cube placement at the available supply without reducing the damage dealt',()=>{
   let g=combatGame();prepareHit(g,'p1',4);g.players[0].cubes.available=2;g.players[0].cubes.onBoard=23;
   g=hit(g,'p1');expect(g.players[1].wizard.damageCubes).toBe(4);expect(g.players[1].wizard.damageByPlayer).toEqual({p1:2});
   expect(g.players[0].cubes).toEqual({available:0,onWizard:2,onBoard:23,onEvocations:0});
   g=applyAction(g,{type:'PUNCH',playerId:'p1',targetId:'p2'});
-  expect(g.players[1].wizard.damageCubes).toBe(5);expect(g.players[1].wizard.damageByPlayer).toEqual({p1:2});
+  expect(g.players[1].wizard.damageCubes).toBe(6);expect(g.players[1].wizard.damageByPlayer).toEqual({p1:2});
  });
  it('shares the cube supply across room-wide damage without placing cubes on the caster',()=>{
   let g=combatGame();addAttacker(g,'p3',1);
@@ -276,16 +300,20 @@ describe('damage cubes and defeat contributions',()=>{
   expect(g.players[1].wizard.damageByPlayer).toEqual({});expect(g.players[1].wizard.damageCubes).toBe(0);
   expect(g.players[1].wizard.position).toEqual({q:-3,r:2});
  });
- it('awards equal contributors the same rank and does not give points to noncontributors',()=>{
+ it('awards tied contributors one less point and the next distinct rank second prize, excluding noncontributors',()=>{
   let g=combatGame();g.players[1].passed=true;prepareHit(g,'p1',4);addAttacker(g,'p3',4);addAttacker(g,'p4',2);addAttacker(g,'p5',1);
   for(const id of ['p1','p3']) {g=hit(g,id);g=applyAction(g,{type:'END_ACTIVATION',playerId:id});}
   g=hit(g,'p4');
-  expect(g.players.map(p=>p.victoryPoints)).toEqual([4,0,4,1,0]);
+  expect(g.players.map(p=>p.victoryPoints)).toEqual([3,0,3,2,0]);
+  expect(g.players.map(p=>p.kills)).toEqual([0,0,0,1,0]);
+  for(const p of g.players)expect(p.cubes).toEqual({available:25,onWizard:0,onBoard:0,onEvocations:0});
+  expect(g.players[1].wizard.damageByPlayer).toEqual({});expect(g.players[1].wizard.damageCubes).toBe(0);
  });
  it('keeps black damage neutral but settles existing damage cubes when an event defeats a mage',()=>{
   let g=combatGame();prepareHit(g,'p1',4);g=hit(g,'p1');
+  // TEST FIXTURE ONLY: supply a second isolated damage spell, not a turn-counter reset.
   g.players[0].prepared.rapid={card:spell({id:'second-hit',target:'MODEL',damage:4,instability:0}),used:false};
-  g=hit(g,'p1');g=passExhaustedFixture(g,'p1');g=passExhaustedFixture(g,'p2');
+  g=hit(g,'p1');expect(g.currentPlayerId).toBe('p2');g=passExhaustedFixture(g,'p2');g=passExhaustedFixture(g,'p1');
   g.eventDeck=[{id:'black-finisher',name:'Thorns',description:'Black damage',kind:'BLACK_DAMAGE',amount:2,rooms:0}];
   g=advance(g);
   expect(g.players[0].victoryPoints).toBe(4);expect(g.players[0].kills).toBe(0);
@@ -299,7 +327,7 @@ describe('damage cubes and defeat contributions',()=>{
   g.players[2].wizard.damageCubes=2;g.players[2].wizard.damageByPlayer={p1:2};
   g=hit(g,'p1');
   expect(g.log.some(line=>line.includes('places 3 damage cubes'))).toBe(true);
-  expect(g.players[0].victoryPoints).toBe(4);expect(g.players[0].cubes).toEqual({available:23,onWizard:2,onBoard:0,onEvocations:0});
+  expect(g.players[0].victoryPoints).toBe(5);expect(g.players[0].cubes).toEqual({available:23,onWizard:2,onBoard:0,onEvocations:0});
   expect(g.players[2].wizard.damageByPlayer).toEqual({p1:2});expect(g.players[2].wizard.damageCubes).toBe(2);
  });
 });
@@ -316,9 +344,10 @@ describe('rebuilt rooms, passing and victory',()=>{
  });
  it('scores central first/second as 6/3, excludes neutral cubes, and scores only once',()=>{
   let g=actionGame();const r=g.board.rooms.find(r=>r.id==='room-0,0')!;r.instability=10;r.reconstructed=true;r.cubesByPlayer={p1:6,p2:3,'black-rose':1};
-  g.players[0].cubes.onBoard=6;g.players[1].cubes.onBoard=3;
+  g.players[0].cubes.available-=6;g.players[0].cubes.onBoard=6;g.players[1].cubes.available-=3;g.players[1].cubes.onBoard=3;
   g=passExhaustedFixture(g,'p1');g=passExhaustedFixture(g,'p2');
   expect(g.phase).toBe('CLEANUP');expect(g.players.map(p=>p.victoryPoints)).toEqual([6,3]);
+  expect(g.players.map(p=>p.cubes.available)).toEqual([25,25]);expect(g.players.map(p=>p.cubes.onBoard)).toEqual([0,0]);
   g=advance(g);expect(g.round).toBe(2);expect(g.players.every(p=>p.actionTokens===2)).toBe(true);
   expect(g.board.rooms.find(x=>x.id===r.id)!.scored).toBe(true);
   g=advance(g);
@@ -332,7 +361,7 @@ describe('rebuilt rooms, passing and victory',()=>{
   }
   g=passExhaustedFixture(g,'p1');g=passExhaustedFixture(g,'p2');
   expect(g.phase).toBe('CLEANUP');expect(g.players.map(p=>p.victoryPoints)).toEqual([6,3]);
-  expect(g.players.map(p=>p.cubes.onBoard)).toEqual([0,0]);
+  expect(g.players.map(p=>p.cubes.available)).toEqual([25,25]);expect(g.players.map(p=>p.cubes.onBoard)).toEqual([0,0]);
  });
  it('skips exhausted players but allows remaining spells with zero tokens',()=>{
   let g=actionGame();g.players[0].actionTokens=0;g.players[0].prepared={rapid:null,slot1:null,slot2:null,slot3:null};
@@ -365,18 +394,20 @@ describe('rebuilt rooms, passing and victory',()=>{
  });
 });
 
-describe('free spells, starting rooms and colored chamber effects',()=>{
- it('casts one ordered spell plus the flexible spell for free, but never a second ordered spell in a turn',()=>{
+describe('token-free spells, starting rooms and colored chamber effects',()=>{
+ it('spends two actions on ordered plus flexible spells without tokens, but never casts a second ordered spell in a turn',()=>{
   let g=actionGame();g.players[0].wizard.position={q:0,r:0};
   for(const [i,key] of (['slot1','slot2','slot3','rapid'] as const).entries())g.players[0].prepared[key]={card:spell({id:`free-${i}`,instability:0}),used:false};
   g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'slot1',roomId:'room-0,0'});
-  expect(g.activation?.actionsUsed).toBe(0);expect(g.players[0].actionTokens).toBe(2);
+  expect(g.activation?.actionsUsed).toBe(1);expect(g.activation?.spellsCast).toBe(1);expect(g.players[0].actionTokens).toBe(2);
   expect(()=>applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'slot2',roomId:'room-0,0'})).toThrow(/one sequenced/);
   g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:'room-0,0'});
-  expect(g.activation?.actionsUsed).toBe(0);expect(g.activation?.spellsCast).toBe(2);
-  g=applyAction(g,{type:'END_ACTIVATION',playerId:'p1'});g=passExhaustedFixture(g,'p2');
+  expect(g.currentPlayerId).toBe('p2');expect(g.activation?.actionsUsed).toBe(0);expect(g.activation?.spellsCast).toBe(0);
+  expect(g.log.filter(line=>line.startsWith(`${g.players[0].name} casts `))).toHaveLength(2);expect(g.players[0].actionTokens).toBe(2);
+  expect(g.players[0].prepared.slot1!.used).toBe(true);expect(g.players[0].prepared.rapid!.used).toBe(true);
+  g=opponentTurn(g);
   g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'slot2',roomId:'room-0,0'});
-  expect(g.players[0].prepared.slot2!.used).toBe(true);expect(g.activation?.actionsUsed).toBe(0);
+  expect(g.players[0].prepared.slot2!.used).toBe(true);expect(g.activation?.actionsUsed).toBe(1);
  });
  it('blocks spells and punches in a starting room and prevents voluntary reentry',()=>{
   let g=actionGame();g.players[1].wizard.position={q:2,r:-2};
@@ -390,7 +421,7 @@ describe('free spells, starting rooms and colored chamber effects',()=>{
   expect(()=>applyAction(g,{type:'DISCARD_EXIT',playerId:'p1',cardId:card.id,destination:{q:0,r:0}})).toThrow(/adjacent/);
   g=applyAction(g,{type:'DISCARD_EXIT',playerId:'p1',cardId:card.id,destination:{q:2,r:-2}});
   expect(g.library[2].discard.map(c=>c.id)).toContain(card.id);expect(g.players[0].discard.map(c=>c.id)).not.toContain(card.id);
-  expect(g.activation?.actionsUsed).toBe(0);expect(g.players[0].actionTokens).toBe(0);
+  expect(g.activation?.actionsUsed).toBe(1);expect(g.players[0].actionTokens).toBe(0);
   expect(()=>applyAction(g,{type:'DISCARD_EXIT',playerId:'p1',cardId:card.id,destination:{q:1,r:-2}})).toThrow(/only available/);
  });
  it('maps all six colors to three rooms each, with a separate powerful center and protected starts',()=>{
@@ -460,14 +491,14 @@ describe('free spells, starting rooms and colored chamber effects',()=>{
   expect(g.activation?.actionsUsed).toBe(1);expect(g.players[0].actionTokens).toBe(1);
   }
  });
- it('adds Crimson damage and two owned cubes around a punch at START or END for one physical action',()=>{
+ it('adds Crimson damage and three owned cubes around a punch at START or END for one physical action',()=>{
   for(const timing of ['START','END'] as const) {
    let {g,room}=roomGame('ROOM_DAMAGE');
    for(const p of g.players)p.wizard.position={...room.tiles[0]};
    g=applyAction(g,{type:'PUNCH',playerId:'p1',targetId:'p2',roomEffect:timing});
   expect(g.activation?.actionsUsed).toBe(1);expect(g.activation?.roomEffectUsed).toBe(true);expect(g.players[0].actionTokens).toBe(1);
-   expect(g.players[1].wizard.damageCubes).toBe(2);expect(g.players[1].wizard.damageByPlayer).toEqual({p1:2});
-  expect(g.players[0].cubes).toEqual({available:23,onWizard:2,onBoard:0,onEvocations:0});expect(g.players[0].victoryPoints).toBe(0);
+  expect(g.players[1].wizard.damageCubes).toBe(3);expect(g.players[1].wizard.damageByPlayer).toEqual({p1:3});
+  expect(g.players[0].cubes).toEqual({available:22,onWizard:3,onBoard:0,onEvocations:0});expect(g.players[0].victoryPoints).toBe(0);
   }
  });
  it('Crimson damages every enemy in its room, never self or outsiders, and does not heal existing cubes',()=>{
@@ -489,7 +520,7 @@ describe('free spells, starting rooms and colored chamber effects',()=>{
   const before=g.players.map(p=>p.wizard.damageCubes);const room=g.board.rooms.find(r=>r.id==='room-0,0')!;
   g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'slot1',dummy:true,roomId:room.id});
   expect(g.players.map(p=>p.wizard.damageCubes)).toEqual(before);expect(g.players.every(p=>p.cubes.onWizard===0)).toBe(true);
-  expect(g.board.rooms.find(r=>r.id===room.id)!.instability).toBe(room.instability+2);expect(g.activation?.actionsUsed).toBe(0);
+  expect(g.board.rooms.find(r=>r.id===room.id)!.instability).toBe(room.instability+2);expect(g.activation?.actionsUsed).toBe(1);expect(g.players[0].actionTokens).toBe(2);
  });
  it('routes Study, cast, and uncast shared-library cards to their own school discards',()=>{
   let g=studyGame();g=applyAction(g,{type:'DRAW_STUDY',playerId:'p1',deckId:'school-3'});
@@ -560,7 +591,7 @@ describe('room effect regressions',()=>{
    const g=structuredClone(initial.g);g.players[1].wizard.position={...room.tiles[0]};
    const n=applyAction(g,{type:'PUNCH',playerId:'p1',targetId:'p2',roomEffect:timing,roomTargetId:adjacent.id});
    expect(n.board.rooms.find(r=>r.id===adjacent.id)!.cubesByPlayer).toEqual({p1:1});
-  expect(n.players[0].cubes).toEqual({available:23,onWizard:1,onBoard:1,onEvocations:0});expect(n.players[0].actionTokens).toBe(1);
+  expect(n.players[0].cubes).toEqual({available:22,onWizard:2,onBoard:1,onEvocations:0});expect(n.players[0].actionTokens).toBe(1);
   }
   const distant=initial.g.board.rooms.find(r=>!r.startingFor && hexDistance(r.tiles[0],room.tiles[0])>1)!;
   for(const target of [...initial.g.board.rooms.filter(r=>r.startingFor).map(r=>({id:r.id,error:/Starting/})),{id:distant.id,error:/range/},{id:'missing-room',error:/not found/}]) {
@@ -581,12 +612,13 @@ describe('room effect regressions',()=>{
   g=applyAction(g,{type:'END_EXPLORE',playerId:'p1'});
   g.players[1].wizard.position={...room.tiles[0]};g.players[1].wizard.health=4;
   g=giveSpell(g,spell({damage:4,instability:0}));g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'slot1',roomId:room.id});
-  expect(g.players[0].victoryPoints).toBe(11);expect(g.players[0].questsCompleted).toBe(2);expect(g.players[0].kills).toBe(1);
+  expect(g.players[0].victoryPoints).toBe(12);expect(g.players[0].questsCompleted).toBe(2);expect(g.players[0].kills).toBe(1);
   expect(g.players[0].quest).toEqual(remaining);expect(g.players[0].additionalQuests).toEqual([]);expect(g.questDiscard).toEqual([primary,extra]);
+  g=opponentTurn(g);
   g.players[0].prepared.rapid={card:spell({id:'finish-promoted'}),used:false};
   g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:room.id});
   expect(g.players[0].quest).toBeNull();expect(g.players[0].additionalQuests).toEqual([]);expect(g.players[0].questsCompleted).toBe(3);
-  expect(g.players[0].victoryPoints).toBe(13);expect(g.questDiscard).toEqual([primary,extra,remaining]);
+  expect(g.players[0].victoryPoints).toBe(14);expect(g.questDiscard).toEqual([primary,extra,remaining]);
  });
  it('Amber recycles only completed quests and leaves held quests unchanged when both quest piles are exhausted',()=>{
   for(const hasPrimary of [false,true]) {
@@ -658,20 +690,30 @@ describe('finite powerful spells',()=>{
    expect(Object.values(g.players[0].prepared).some(p=>p?.card.id===card.id)).toBe(false);
    const prepared=structuredClone(g.players[0].prepared);g=applyAction(g,cast);
    expect(g.players[0].hand).toEqual(beforeHand);expect(g.players[0].prepared).toEqual(prepared);expect(g.removedCards).toEqual([card]);
-  expect(g.players[0].wizard.damageCubes).toBe(0);expect(g.players[0].actionTokens).toBe(1);expect(g.activation?.actionsUsed).toBe(1);
-   expect(g.activation?.spellsCast).toBe(1);expect(g.activation?.sequencedSpellUsed).toBe(false);expect(()=>applyAction(g,cast)).toThrow(/unavailable/);
+  expect(g.players[0].wizard.damageCubes).toBe(0);expect(g.players[0].actionTokens).toBe(1);
+  expect(g.currentPlayerId).toBe('p2');expect(g.activation).toMatchObject({actionsUsed:0,spellsCast:0,sequencedSpellUsed:false});
+  expect(g.log.filter(line=>line.startsWith(`${g.players[0].name} casts `))).toHaveLength(1);
+  g=opponentTurn(g);expect(()=>applyAction(g,cast)).toThrow(/unavailable/);
   }
  });
- it('casts multiple held powers with zero tokens before or after a numbered spell without consuming its quota',()=>{
+ it('casts multiple held powers with zero tokens across legal turns before or after a numbered spell without consuming its quota',()=>{
   for(const powersFirst of [true,false]) {
-   let {g}=roomGame('DRAW_POWERFUL');const powers=[holdPowerful(g),holdPowerful(g)];g.players[0].actionTokens=0;
+   let {g}=roomGame('DRAW_POWERFUL');const ids=physicalCards(g).map(c=>c.id),powers=[holdPowerful(g),holdPowerful(g)];g.players[0].actionTokens=0;
    const numbered={type:'CAST_SPELL' as const,playerId:'p1',slot:'slot1' as const,roomId:'room-0,0',...(g.players[0].prepared.slot1!.card.target==='MODEL'?{dummy:true}:{})};
-   if(!powersFirst)g=applyAction(g,numbered);
-   for(const card of powers)g=applyAction(g,{type:'CAST_POWERFUL_SPELL',playerId:'p1',cardId:card.id,roomId:'room-0,0'});
+   if(!powersFirst) {
+    g=applyAction(g,numbered);expect(g.activation).toMatchObject({actionsUsed:1,spellsCast:1,sequencedSpellUsed:true});
+    expect(()=>applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'slot2',roomId:'room-0,0',dummy:true})).toThrow(/one sequenced/);
+   }
+   for(const card of powers) {
+    g=applyAction(g,{type:'CAST_POWERFUL_SPELL',playerId:'p1',cardId:card.id,roomId:'room-0,0'});
+    if(g.currentPlayerId==='p2')g=opponentTurn(g);
+    else expect(g.activation?.sequencedSpellUsed).toBe(false);
+   }
    if(powersFirst){expect(g.activation?.sequencedSpellUsed).toBe(false);g=applyAction(g,numbered);}
-   expect(g.currentPlayerId).toBe('p1');expect(g.activation?.actionsUsed).toBe(0);expect(g.players[0].actionTokens).toBe(0);
-   expect(g.activation?.spellsCast).toBe(3);expect(g.activation?.sequencedSpellUsed).toBe(true);expect(g.removedCards).toEqual(powers);
-   expect(()=>applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'slot2',roomId:'room-0,0',dummy:true})).toThrow(/one sequenced/);
+   expect(g.currentPlayerId).toBe('p1');expect(g.activation?.actionsUsed).toBe(1);expect(g.players[0].actionTokens).toBe(0);
+   expect(g.activation?.spellsCast).toBe(1);expect(g.activation?.sequencedSpellUsed).toBe(powersFirst);expect(g.removedCards).toEqual(powers);
+  expect(g.players[0].prepared.slot1!.used).toBe(true);expect(g.log.filter(line=>line.startsWith(`${g.players[0].name} casts `))).toHaveLength(3);expectConserved(g,ids);
+   if(powersFirst)expect(()=>applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'slot2',roomId:'room-0,0',dummy:true})).toThrow(/one sequenced/);
   }
  });
  it('schedules a zero-token mage with only a held model power for a dummy cast, but skips one trapped in a start',()=>{
@@ -696,13 +738,16 @@ describe('finite powerful spells',()=>{
   expect(g.players[0].hand.some(c=>c.powerful)).toBe(false);expectConserved(g,ids);
   expect(()=>applyAction(g,{type:'CAST_POWERFUL_SPELL',playerId:'p1',cardId:ordered.id,dummy:true,roomId:'room-0,0'})).toThrow(/unavailable/);
   expect(()=>applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'slot2',dummy:true,roomId:'room-0,0'})).toThrow(/order/);
+  // A legal branch checks the numbered quota before the flexible cast fills the turn.
+  const numberedOnly=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'slot1',roomId:'room-0,0',...(ordinary[0].target==='MODEL'?{dummy:true}:{})});
+  expect(()=>applyAction(numberedOnly,{type:'CAST_SPELL',playerId:'p1',slot:'slot2',dummy:true,roomId:'room-0,0'})).toThrow(/one sequenced/);expectConserved(numberedOnly,ids);
   g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:'room-0,0'});expect(g.activation?.sequencedSpellUsed).toBe(false);
   g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'slot1',roomId:'room-0,0',...(ordinary[0].target==='MODEL'?{dummy:true}:{})});
-  expect(()=>applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'slot2',dummy:true,roomId:'room-0,0'})).toThrow(/one sequenced/);
-  g=applyAction(g,{type:'END_ACTIVATION',playerId:'p1'});g=passExhaustedFixture(g,'p2');
+  expect(g.currentPlayerId).toBe('p2');expect(()=>applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'slot2',dummy:true,roomId:'room-0,0'})).toThrow(/Not your turn/);
+  g=opponentTurn(g);
   g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'slot2',dummy:true,roomId:'room-0,0'});
   expect(g.players[0].prepared.slot2?.used).toBe(true);expect(g.players[0].prepared.rapid?.used).toBe(true);expect(g.removedCards).toEqual([rapid,ordered]);
-  expect(g.activation?.sequencedSpellUsed).toBe(true);expect(g.activation?.actionsUsed).toBe(0);
+  expect(g.activation?.sequencedSpellUsed).toBe(true);expect(g.activation?.actionsUsed).toBe(1);
   expect(()=>applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'slot2',dummy:true,roomId:'room-0,0'})).toThrow(/unavailable/);expectConserved(g,ids);
  });
  it('keeps held powers through cleanup, returns unused powerful preparations next Black Rose and conserves cards across rounds',()=>{
@@ -763,7 +808,7 @@ describe('finite powerful spells',()=>{
    expect(g.players[1].wizard.damageCubes).toBe(card.damage);expect(g.players[1].wizard.damageByPlayer).toEqual({p1:card.damage});expect(g.players[0].wizard.damageCubes).toBe(0);
    expect(g.board.rooms.find(r=>r.id==='room-1,0')!.instability).toBe(card.instability);
   expect(g.players[0].cubes).toEqual({available:25-card.damage-card.instability,onWizard:card.damage,onBoard:card.instability,onEvocations:0});
-  expect(g.removedCards).toEqual([card]);expect(g.players[0].actionTokens).toBe(2);expect(g.activation?.actionsUsed).toBe(0);
+  expect(g.removedCards).toEqual([card]);expect(g.players[0].actionTokens).toBe(2);expect(g.activation?.actionsUsed).toBe(1);
   }
  });
  it('exhausts all twelve powers permanently without recycling removed cards through Center, personal or school draws',()=>{
@@ -771,10 +816,12 @@ describe('finite powerful spells',()=>{
   const last=g.powerfulDeck[0],powers=g.powerfulDeck.splice(1);g.players[0].hand.push(...powers);
   for(const card of powers) {
    g=applyAction(g,{type:'CAST_POWERFUL_SPELL',playerId:'p1',cardId:card.id,roomId:'room-0,0',...(card.target==='MODEL'?{dummy:true}:{})});expectConserved(g,ids);
+    if(g.currentPlayerId==='p2'){g=opponentTurn(g);expectConserved(g,ids);}
   }
   expect(g.powerfulDeck).toEqual([last]);expect(g.removedCards).toEqual(powers);
   g=applyAction(g,{type:'EXPLORE',playerId:'p1',activateRoomAtStart:true});g=applyAction(g,{type:'END_EXPLORE',playerId:'p1'});
   expect(g.players[0].hand).toContainEqual(last);expect(g.powerfulDeck).toEqual([]);
+    g=opponentTurn(g);expectConserved(g,ids);
   g=applyAction(g,{type:'CAST_POWERFUL_SPELL',playerId:'p1',cardId:last.id,roomId:'room-0,0',...(last.target==='MODEL'?{dummy:true}:{})});
   const removed=structuredClone(g.removedCards),hand=structuredClone(g.players[0].hand);
   // The preceding powers rebuilt Center: its special cannot be repeated until cleanup.
@@ -782,7 +829,8 @@ describe('finite powerful spells',()=>{
   expect(()=>applyAction(g,{type:'EXPLORE',playerId:'p1',activateRoomAtStart:true})).toThrow(/special already used/);expect(g).toEqual(locked);
   g=applyAction(g,{type:'EXPLORE',playerId:'p1'});g=applyAction(g,{type:'END_EXPLORE',playerId:'p1'});
   expect(g.players[0].hand).toEqual(hand);expect(g.powerfulDeck).toEqual([]);expect(g.removedCards).toEqual(removed);expect(removed).toHaveLength(12);expectConserved(g,ids);
-  g=passExhaustedFixture(g,'p1');g=passExhaustedFixture(g,'p2');g=advance(g);
+  expect(g.players[1].actionTokens).toBe(0);expect(Object.values(g.players[1].prepared).every(c=>c?.used)).toBe(true);
+  g=passExhaustedFixture(g,'p1');expect(g.phase).toBe('CLEANUP');g=advance(g);
   for(const p of g.players)p.discard.push(...p.personalDeck.splice(0));
   for(const school of g.library)school.discard.push(...school.cards.splice(0));
   g=actionGame(advance(g));

@@ -1,5 +1,5 @@
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
-import { applyAction, canPassActionPhase, createGame, evocationAttack, hexDistance, PHYSICAL_TOKENS_PER_ROUND } from '../src';
+import { applyAction, canPassActionPhase, createGame, evocationAttack, hexDistance, hexLineDistance, PHYSICAL_TOKENS_PER_ROUND } from '../src';
 import type { Card, Evocation, GameAction, GameState, Player, RoomEffect } from '../src';
 
 // Focused state fixtures deliberately omit dealing/Study, which the legacy suite covers.
@@ -59,6 +59,16 @@ function expectCardsConserved(g:GameState) {
  const cards=[...g.powerfulDeck,...g.removedCards,...g.library.flatMap(d=>[...d.cards,...d.discard]),...g.players.flatMap(p=>[...p.hand,...p.personalDeck,...p.discard,...Object.values(p.prepared).filter(c=>c&&!c.used).map(c=>c!.card)])];
  expect(cards).toHaveLength(252);expect(new Set(cards.map(c=>c.id)).size).toBe(252);
 }
+
+describe('hex range calculus',()=>{
+ it('treats spell range as contiguous hex-line sight, not a loose hex radius',()=>{
+  const origin={q:0,r:0};
+  const valid=[{q:2,r:0},{q:0,r:-2},{q:-2,r:0},{q:0,r:2},{q:2,r:-2},{q:-2,r:2}];
+  const invalid=[{q:1,r:-2},{q:-1,r:-1},{q:2,r:-1},{q:-2,r:1},{q:1,r:1},{q:-1,r:2}];
+  for(const target of valid) expect(hexLineDistance(origin,target)).toBe(2);
+  for(const target of invalid) expect(Number.isFinite(hexLineDistance(origin,target))).toBe(false);
+ });
+});
 // Capacity fixtures create every model through legal Grey effects, never by inserting evocations.
 // The first Explore summons two in a rebuilt Grey room, then moves toward a different Grey room.
 function approachGreyWithTwo(reconstructedDestination=false) {
@@ -74,7 +84,7 @@ function approachGreyWithTwo(reconstructedDestination=false) {
  return {g,source,destination};
 }
 function nextActionRound(g:GameState) {
- // Finish real remaining actions and free model activations before refreshing round tokens.
+ // Finish real remaining physical actions and free model activations before refreshing round tokens.
  for(const p of g.players){expect(Object.values(p.prepared).some(c=>c&&!c.used)).toBe(false);expect(p.hand.some(c=>c.powerful)).toBe(false);}
  while(g.phase==='ACTION'){expect(player(g,g.currentPlayerId!).actionTokens).toBeGreaterThan(0);g=explore(g,g.currentPlayerId!);}
  while(g.phase==='EVOCATION') {
@@ -128,25 +138,32 @@ describe('strict Action-phase exhaustion',()=>{
  it('cannot pass with any unused preparation, including numbered spells blocked until future turns',()=>{
   let g=actionFixture();for(const slot of ['slot1','slot2','slot3','rapid'] as const)prepare(g,slot);
   g=explore(g);g=explore(g);expect(player(g).actionTokens).toBe(0);
+  expect(g.currentPlayerId).toBe('p2');expect(canPassActionPhase(g,player(g))).toBe(false);
+  // Real opposing turns, not reset counters, make the remaining spells available again.
+  g=explore(g,'p2');g=applyAction(g,{type:'END_ACTIVATION',playerId:'p2'});
   g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'slot1',roomId:'room-0,0'});
+  expect(g.activation?.actionsUsed).toBe(1);expect(player(g).actionTokens).toBe(0);
   expectRejected(g,{type:'PASS_ROUND',playerId:'p1'},/no unused spells/);
   expectRejected(g,{type:'CAST_SPELL',playerId:'p1',slot:'slot2',roomId:'room-0,0'},/one sequenced/);
   expect(canPassActionPhase(g,player(g))).toBe(false);
   g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:'room-0,0'});
   expect(g.currentPlayerId).toBe('p2');expect(player(g).passed).toBe(false);
-  // No exhaustion fixture: real opposing actions allow the future numbered turns to occur.
-  g=explore(g,'p2');g=applyAction(g,{type:'END_ACTIVATION',playerId:'p2'});
+  g=explore(g,'p2');
   expect(g.currentPlayerId).toBe('p1');expectRejected(g,{type:'PASS_ROUND',playerId:'p1'},/no unused spells/);
   g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'slot2',roomId:'room-0,0'});
   expect(canPassActionPhase(g,player(g))).toBe(false);
-  g=explore(g,'p2');expect(g.currentPlayerId).toBe('p1');
+  // Only p1 remains eligible: the blocked numbered quota starts a fresh activation.
+  expect(g.currentPlayerId).toBe('p1');expect(g.activation).toMatchObject({actionsUsed:0,sequencedSpellUsed:false});
+  expectRejected(g,{type:'PASS_ROUND',playerId:'p1'},/no unused spells/);
   g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'slot3',roomId:'room-0,0'});
   expect(g.phase).toBe('CLEANUP');expect(player(g).passed).toBe(false);expect(canPassActionPhase(g,player(g))).toBe(true);expectCardsConserved(g);
  });
 
  it('requires a held power to be cast after spending both tokens, even when only a dummy target exists',()=>{
   let g=actionFixture();const power=holdPower(g);player(g,'p2').wizard.position={q:-3,r:2};
-  g=explore(g);g=explore(g);expect(g.currentPlayerId).toBe('p1');expect(player(g).actionTokens).toBe(0);
+  g=explore(g);g=explore(g);expect(g.currentPlayerId).toBe('p2');expect(player(g).actionTokens).toBe(0);
+  expect(canPassActionPhase(g,player(g))).toBe(false);expect(player(g).hand).toEqual([power]);
+  g=explore(g,'p2');g=applyAction(g,{type:'END_ACTIVATION',playerId:'p2'});
   expect(canPassActionPhase(g,player(g))).toBe(false);expectRejected(g,{type:'PASS_ROUND',playerId:'p1'},/no unused spells/);
   g=applyAction(g,{type:'CAST_POWERFUL_SPELL',playerId:'p1',cardId:power.id,dummy:true,roomId:'room-0,0'});
   expect(g.removedCards).toEqual([power]);expect(player(g).hand).toEqual([]);expect(g.currentPlayerId).toBe('p2');
@@ -169,7 +186,7 @@ describe('Cadavers and token activations',()=>{
   g=applyAction(g,{type:'END_EXPLORE',playerId:'p1'});expect(g.currentPlayerId).toBe('p2');expectCardsConserved(g);expectCubesConserved(g);
  });
 
- it('rejects paid activations from starts, while exploring, without tokens or after two physical actions',()=>{
+ it('rejects paid activations from starts, while exploring, without tokens or after two shared actions',()=>{
   const initial=actionFixture();initial.evocations=[cadaver('outside')];
   for(const start of initial.board.rooms.filter(r=>r.startingFor)) {
    const g=structuredClone(initial);player(g).wizard.position={...start.tiles[0]};
@@ -179,7 +196,8 @@ describe('Cadavers and token activations',()=>{
   }
   const activate={type:'ACTIVATE_EVOCATION' as const,playerId:'p1',evocationId:'outside'};
   const noTokens=structuredClone(initial);player(noTokens).actionTokens=0;expectRejected(noTokens,activate,/tokens/);
-  const quota=structuredClone(initial);quota.activation!.actionsUsed=2;expectRejected(quota,activate,/physical/);
+  // TEST FIXTURE ONLY: an exhausted activation isolates the shared-budget validation.
+  const quota=structuredClone(initial);quota.activation!.actionsUsed=2;expectRejected(quota,activate,/both turn actions/);
   const exploring=applyAction(initial,{type:'EXPLORE',playerId:'p1'});expectRejected(exploring,activate,/Finish exploring/);
   expectRejected(initial,{...activate,playerId:'p2'},/only your own/);
   const otherTurn=structuredClone(initial);otherTurn.evocations[0].playerId='p2';expectRejected(otherTurn,{...activate,playerId:'p2'},/turn/);
@@ -209,7 +227,10 @@ describe('Cadavers and token activations',()=>{
   g=applyAction(g,{type:'END_EVOCATION',playerId:'p1'});
   expect(g.evocationActivation).toBeNull();expect(g.phase).toBe('ACTION');expect(g.currentPlayerId).toBe('p1');
   expect(player(g).actionTokens).toBe(1);expect(g.activation?.actionsUsed).toBe(1);
-  g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:'room-0,0'});expect(g.activation?.spellsCast).toBe(1);
+  g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:'room-0,0'});
+  expect(player(g).prepared.rapid?.used).toBe(true);expect(g.library[0].discard).toContainEqual(ordinary);
+  expect(g.currentPlayerId).toBe('p2');expect(g.activation).toMatchObject({actionsUsed:0,spellsCast:0});
+  expect(player(g).actionTokens).toBe(1);expect(player(g).hand).toEqual([power]);expectCardsConserved(g);
  });
 
  it('permits repeated paid activations independently of the free phase once-per-model activation',()=>{
@@ -245,7 +266,8 @@ describe('Cadavers and token activations',()=>{
 
  it('uses Wounded Fury: one damage on a two-health Cadaver raises its attack from two to three',()=>{
   let g=actionFixture();g.evocations=[cadaver('wounded','p2')];expect(evocationAttack(g.evocations[0])).toBe(2);
-  g=applyAction(g,{type:'PUNCH',playerId:'p1',targetId:'wounded'});
+  prepare(g,'rapid',{target:'MODEL',damage:1});
+  g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',targetEvocationId:'wounded'});
   expect(g.evocations[0].health).toBe(2);expect(g.evocations[0].damageCubes).toBe(1);expect(evocationAttack(g.evocations[0])).toBe(3);
   expect(g.evocations[0].damageByPlayer).toEqual({p1:1});expectCubesConserved(g);
   g=applyAction(g,{type:'END_ACTIVATION',playerId:'p1'});
@@ -291,8 +313,8 @@ describe('Grey room summoning regressions',()=>{
   let {g,source}=greyFixture();const before=structuredClone(g);
   g=applyAction(g,{type:'PUNCH',playerId:'p1',targetId:'p2',roomEffect});
   expect(g.evocations).toHaveLength(1);expect(g.evocations[0]).toEqual(cadaver(g.evocations[0].id,'p1',source.tiles[0]));
-  expect(player(g,'p2').wizard.damageCubes).toBe(1);expect(player(g,'p2').wizard.damageByPlayer).toEqual({p1:1});
-  expect(player(g).cubes).toEqual({available:24,onBoard:0,onWizard:1,onEvocations:0});
+  expect(player(g,'p2').wizard.damageCubes).toBe(2);expect(player(g,'p2').wizard.damageByPlayer).toEqual({p1:2});
+  expect(player(g).cubes).toEqual({available:23,onBoard:0,onWizard:2,onEvocations:0});
   expect(player(g).actionTokens).toBe(1);expect(g.activation?.actionsUsed).toBe(1);expect(g.activation?.roomEffectUsed).toBe(true);
   expect(g.library).toEqual(before.library);expect(player(g).hand).toEqual(before.players[0].hand);expect(g.evocationActivation).toBeNull();expectCardsConserved(g);expectCubesConserved(g);
  });
@@ -370,9 +392,9 @@ describe('Grey room summoning regressions',()=>{
 
  it('frees an owned slot on real destruction and can refill it through a later Grey activation',()=>{
   let {g}=greyAtCapacityFixture(true);
-  const victim=g.evocations.find(e=>hexDistance(e.position,player(g,'p2').wizard.position)<=1)!;
+  const victim=g.evocations.find(e=>hexDistance(e.position,player(g,'p2').wizard.position)===0)!;
   g=explore(g);g=applyAction(g,{type:'END_ACTIVATION',playerId:'p1'});
-  for(let i=0;i<2;i++)g=applyAction(g,{type:'PUNCH',playerId:'p2',targetId:victim.id});
+  g=applyAction(g,{type:'PUNCH',playerId:'p2',targetId:victim.id});
   expect(g.evocations).toHaveLength(2);expect(g.evocations.some(e=>e.id===victim.id)).toBe(false);expect(player(g,'p2').cubes.onEvocations).toBe(0);
   g=applyAction(g,{type:'END_ACTIVATION',playerId:'p2'});
   g=applyAction(g,{type:'EXPLORE',playerId:'p1',activateRoomAtStart:true});
@@ -426,17 +448,20 @@ describe('Grey room summoning regressions',()=>{
 });
 
 describe('all-model targeting and physical damage cubes',()=>{
- it('lets a mage punch enemy evocations at distance zero or one, never friendly or protected models',()=>{
-  for(const position of [{q:0,r:0},{q:1,r:0}]) {
+ it('lets a mage punch enemy evocations only at distance zero, never adjacent, friendly or protected models',()=>{
+  for(const position of [{q:0,r:0}]) {
    let g=actionFixture();g.evocations=[cadaver('enemy','p2',position),cadaver('friendly')];
+   g.evocations[0].health=3;
    expectRejected(g,{type:'PUNCH',playerId:'p1',targetId:'friendly'},/own evocations/);
    expectRejected(g,{type:'PUNCH',playerId:'p1',targetId:'p1'},/yourself/);
-   const distant=structuredClone(g);distant.evocations[0].position={q:2,r:0};expectRejected(distant,{type:'PUNCH',playerId:'p1',targetId:'enemy'},/adjacent/);
+  for(const q of [1,2]) {
+   const distant=structuredClone(g);distant.evocations[0].position={q,r:0};expectRejected(distant,{type:'PUNCH',playerId:'p1',targetId:'enemy'},/same hex/);
+  }
    const protectedModel=structuredClone(g);player(protectedModel).wizard.position={q:2,r:-2};protectedModel.evocations[0].position={q:3,r:-2};
    expectRejected(protectedModel,{type:'PUNCH',playerId:'p1',targetId:'enemy'},/starting room/);
    g=applyAction(g,{type:'PUNCH',playerId:'p1',targetId:'enemy'});
-   expect(g.evocations.find(e=>e.id==='enemy')!.damageByPlayer).toEqual({p1:1});
-   expect(player(g).cubes.onEvocations).toBe(1);expect(player(g).cubes.onWizard).toBe(0);expectCubesConserved(g);
+  expect(g.evocations.find(e=>e.id==='enemy')!.damageByPlayer).toEqual({p1:2});
+  expect(player(g).cubes.onEvocations).toBe(2);expect(player(g).cubes.onWizard).toBe(0);expectCubesConserved(g);
   }
  });
 
@@ -656,9 +681,10 @@ describe('reconstructed room specials',()=>{
   expect(room(g,emerald.id).reconstructed).toBe(false);expect(room(g,emerald.id).specialUsed).toBe(false);
   prepare(g,'rapid',{instability:1});g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:emerald.id});
   expect(room(g,emerald.id).reconstructed).toBe(true);expect(room(g,emerald.id).specialUsed).toBe(false);
+  expect(g.currentPlayerId).toBe('p2');g=explore(g,'p2');g=applyAction(g,{type:'END_ACTIVATION',playerId:'p2'});
   g=applyAction(g,{type:'EXPLORE',playerId:'p1',activateRoomAtStart:true,roomTargetId:adjacent.id});g=applyAction(g,{type:'END_EXPLORE',playerId:'p1'});
   expect(room(g,adjacent.id).cubesByPlayer).toEqual({p1:2});expect(room(g,emerald.id).specialUsed).toBe(true);
-  g=explore(g,'p2');g=explore(g,'p2');expect(g.phase).toBe('CLEANUP');expect(room(g,emerald.id).specialUsed).toBe(false);expect(room(g,emerald.id).scored).toBe(true);
+  g=explore(g,'p2');expect(g.phase).toBe('CLEANUP');expect(room(g,emerald.id).specialUsed).toBe(false);expect(room(g,emerald.id).scored).toBe(true);
   g.eventDeck=[{id:'quiet',name:'Quiet',description:'Quiet',kind:'INSTABILITY',amount:0,rooms:0}];g=advance(g);g=advance(g);
   for(const id of ['p1','p2']) {
    g=applyAction(g,{type:'DRAW_STUDY',playerId:id,deckId:'school-1'});
