@@ -36,7 +36,8 @@ function checkPrivacy(state: GameState, viewer: string) {
   instability: 0, range: 0, target: 'MODEL',
  }));
  assert.deepEqual(state.eventDeck, []); assert.deepEqual(state.questDeck, []);
- assert.ok(state.library.every(deck => deck.cards.length > 0), 'Exercise nonempty future library decks');
+ assert.deepEqual(state.library.map(({ id, name }) => ({ id, name })), [{ id: 'cantrip', name: 'Cantrip' }]);
+ assert.ok(state.library[0].cards.length > 0 && state.library[0].cards.length <= 36, 'Exercise the finite nonempty future Cantrip deck');
  for (const deck of state.library) hidden(deck.cards);
  assert.ok(state.powerfulDeck.length > 0); hidden(state.powerfulDeck);
  for (const p of state.players) {
@@ -284,10 +285,17 @@ async function main() {
    for (const mage of mages) epoch = await ready(mage);
    assert.equal(epoch.phase, 'BLACK_ROSE'); autoStarts++;
    epoch = await advance(mages[0], epoch); assert.equal(epoch.phase, 'STUDY');
-   for (const mage of mages) {
-    epoch = await act(mage, { type: 'DRAW_STUDY', playerId: mage.id!, deckId: 'school-1' });
+  assert.equal(epoch.library[0].cards.length, 36); assert.deepEqual(epoch.library[0].discard, []);
+  await act(mages[0], { type: 'DRAW_STUDY', playerId: mages[0].id!, deckId: 'school-6' }, /School not found/);
+  for (const [i, mage] of mages.entries()) {
+   epoch = await act(mage, { type: 'DRAW_STUDY', playerId: mage.id!, deckId: 'cantrip' });
+   assert.equal(epoch.library[0].cards.length, 36 - 4 * (i + 1), 'All four mages draw from the same Cantrip stock');
     const own = player(epoch, mage.id!);
-    epoch = await act(mage, { type: 'DISCARD_STUDY', playerId: mage.id!, cardIds: own.hand.slice(-2).map(card => card.id) });
+   assert.ok(own.hand.slice(-4).every(card => card.schoolId === 'cantrip' && card.id.startsWith('cantrip-')));
+   const discarded = own.hand.slice(-2).map(card => card.id);
+   epoch = await act(mage, { type: 'DISCARD_STUDY', playerId: mage.id!, cardIds: discarded });
+   assert.equal(epoch.library[0].discard.length, 2 * (i + 1));
+   assert.ok(discarded.every(id => epoch.library[0].discard.some(card => card.id === id && card.schoolId === 'cantrip')));
    }
    assert.equal(epoch.phase, 'PREPARATION'); await roster(name, epoch, mages);
    for (const mage of mages) {

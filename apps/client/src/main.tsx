@@ -11,7 +11,7 @@ const WS_URL=import.meta.env.VITE_WS_URL??`${location.protocol==='https:'?'wss':
 const phaseInfo={
  LOBBY:['✦','Gather the mages','2–4 mages. The battle starts automatically when every joined mage is ready.'],
  BLACK_ROSE:['✺','Black Rose','An event reshapes the lodge. Personal quests follow.'],
- STUDY:['▤','Study','Draw 2 grimoire spells, choose a school for 4 more, discard 2.'],
+ STUDY:['▤','Study','Draw 2 grimoire spells and 4 Cantrip spells, then discard 2.'],
  PREPARATION:['✧','Preparation','Choose spells in order 1 → 2 → 3, then a flexible spell. Held powers must be prepared before casting.'],
  ACTION:['⚔','Action','Up to 2 actions total: Explore, Attack, spell casts, or discard-to-move.'],
  EVOCATION:['☠','Evocation','Activate each summon once. Move, then attack an enemy in its room, one model at a time.'],
@@ -35,9 +35,9 @@ function SpellCard({card,label,selected,disabled,onClick,used=false}:{card:Card;
 function StudyPanel({game,me,send}:{game:GameState;me:Player;send:Send}) {
  const [selected,setSelected]=useState<string[]>([]);
  if(me.studyDone)return <div className="notice">✓ Study complete. Waiting for the other mages.</div>;
- return <section className="phase-panel"><div className="section-heading"><div><span className="eyebrow">The shared library</span><h2>Six schools. Infinite possibilities.</h2></div><span className="badge">Grimoire +2 ✓</span></div>
-  {!me.studyDrawn?<><p>Choose one school to draw 4 spells. All six currently contain the same 36-card set.</p><div className="schools">{game.library.map((deck,i)=><button key={deck.id} disabled={deck.cards.length+deck.discard.length<4} onClick={()=>send({type:'DRAW_STUDY',playerId:me.id,deckId:deck.id})}><span className="school-rune">{['✺','❖','✧','☽','⚚','✹'][i]}</span><strong>{deck.name}</strong><small>{deck.cards.length} draw · {deck.discard.length} discard</small></button>)}</div></>:
-  <><p>Choose exactly 2 spells to discard. School spells return to that school's discard; personal spells return to your grimoire discard. Powerful spells cannot be discarded.</p><div className="cards">{me.hand.map(card=><SpellCard key={card.id} card={card} disabled={!!card.powerful} selected={selected.includes(card.id)} onClick={()=>setSelected(old=>old.includes(card.id)?old.filter(id=>id!==card.id):old.length<2?[...old,card.id]:old)}/>)}</div><button className="primary" disabled={selected.length!==2} onClick={()=>send({type:'DISCARD_STUDY',playerId:me.id,cardIds:selected})}>Discard selected ({selected.length}/2)</button></>}
+ return <section className="phase-panel"><div className="section-heading"><div><span className="eyebrow">The shared library</span><h2>Cantrip</h2></div><span className="badge">Grimoire +2 ✓</span></div>
+  {!me.studyDrawn?<><p>Draw 4 spells from Cantrip, the shared 36-card school of magic.</p><div className="schools">{game.library.map(deck=><button key={deck.id} disabled={deck.cards.length+deck.discard.length<4} onClick={()=>send({type:'DRAW_STUDY',playerId:me.id,deckId:deck.id})}><span className="school-rune">✺</span><strong>{deck.name}</strong><small>{deck.cards.length} draw · {deck.discard.length} discard</small></button>)}</div></>:
+  <><p>Choose exactly 2 spells to discard. Cantrip spells return to the shared Cantrip discard; personal spells return to your grimoire discard. Powerful spells cannot be discarded.</p><div className="cards">{me.hand.map(card=><SpellCard key={card.id} card={card} disabled={!!card.powerful} selected={selected.includes(card.id)} onClick={()=>setSelected(old=>old.includes(card.id)?old.filter(id=>id!==card.id):old.length<2?[...old,card.id]:old)}/>)}</div><button className="primary" disabled={selected.length!==2} onClick={()=>send({type:'DISCARD_STUDY',playerId:me.id,cardIds:selected})}>Discard selected ({selected.length}/2)</button></>}
  </section>;
 }
 

@@ -9,8 +9,8 @@ export const shuffle = <T>(items: T[]): T[] => {
  return result;
 };
 
-// Six identical schools, with unique physical card IDs. Every school has 36 cards.
-export function createSpellDeck(prefix: string): Card[] {
+// The 36-card spell set, with unique physical IDs and optional shared-school origin.
+export function createSpellDeck(prefix: string, schoolId?: string): Card[] {
  const patterns: Omit<Card, 'id' | 'kind'>[] = [
   { name: 'Ember Lance', damage: 4, instability: 0, range: 1, target: 'MODEL' },
   { name: 'Arcane Bolt', damage: 3, instability: 0, range: 3, target: 'MODEL' },
@@ -25,11 +25,11 @@ export function createSpellDeck(prefix: string): Card[] {
   { name: 'Withering Mist', damage: 1, instability: 1, range: 3, target: 'ROOM' },
   { name: 'Cataclysm', damage: 4, instability: 2, range: 0, target: 'ROOM' },
  ];
- return Array.from({ length: 36 }, (_, i) => ({ ...patterns[i % patterns.length], id: `${prefix}-${i + 1}`, kind: 'SPELL', ...(prefix.startsWith('school-') ? {schoolId:prefix} : {}) }));
+ return Array.from({ length: 36 }, (_, i) => ({ ...patterns[i % patterns.length], id: `${prefix}-${i + 1}`, kind: 'SPELL', ...(schoolId ? {schoolId} : {}) }));
 }
 
 export function createLibrary(): LibraryDeck[] {
- return Array.from({ length: 6 }, (_, i) => ({ id: `school-${i + 1}`, name: `School ${i + 1}`, cards: shuffle(createSpellDeck(`school-${i + 1}`)), discard: [] }));
+ return [{ id: 'cantrip', name: 'Cantrip', cards: shuffle(createSpellDeck('cantrip', 'cantrip')), discard: [] }];
 }
 
 // A finite, separate supply. These original spells never recycle into a discard.

@@ -624,7 +624,7 @@ export function applyAction(state: GameState, action: GameAction): GameState {
   case 'DRAW_STUDY': {
    requirePhase(s,'STUDY'); assert(!p.studyDrawn,'Already drew library spells');
    const deck=s.library.find(d=>d.id===action.deckId); assert(deck,'School not found');
-   assert(deck!.cards.length+deck!.discard.length>=4,'School has fewer than 4 spells; choose another');
+  assert(deck!.cards.length+deck!.discard.length>=4,`${deck!.name} has fewer than 4 available spells`);
    for(let i=0;i<4;i++) p.hand.push(drawOne(deck!.cards,deck!.discard));
    p.studyDrawn=true; s.log.push(`${p.name} draws 4 spells from ${deck!.name}.`); break;
   }

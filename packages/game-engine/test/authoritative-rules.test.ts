@@ -33,7 +33,7 @@ function conservation(g:GameState) {
   expect(Object.values(p.cubes).every(n=>n>=0)).toBe(true);
  }
  const cards=[...g.powerfulDeck,...g.removedCards,...g.library.flatMap(d=>[...d.cards,...d.discard]),...g.players.flatMap(p=>[...p.hand,...p.personalDeck,...p.discard,...Object.values(p.prepared).filter(c=>c&&!c.used).map(c=>c!.card)])];
- expect(cards).toHaveLength(216+12*g.players.length+12);expect(new Set(cards.map(c=>c.id)).size).toBe(cards.length);
+ expect(cards).toHaveLength(36+12*g.players.length+12);expect(new Set(cards.map(c=>c.id)).size).toBe(cards.length);
 }
 function neutralDefeat(contributions:Record<string,number>,blackDamage:number) {
  const g=actionFixture(),victim=player(g,'p4');

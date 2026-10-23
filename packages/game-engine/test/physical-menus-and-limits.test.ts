@@ -40,7 +40,7 @@ function cards(g:GameState) {
  return [...g.powerfulDeck,...g.removedCards,...g.library.flatMap(d=>[...d.cards,...d.discard]),...g.players.flatMap(p=>[...p.hand,...p.discard,...p.personalDeck,...Object.values(p.prepared).filter(c=>c&&!c.used).map(c=>c!.card)])];
 }
 function conserved(g:GameState) {
- expect(cards(g)).toHaveLength(252);expect(new Set(cards(g).map(c=>c.id)).size).toBe(252);
+ expect(cards(g)).toHaveLength(72);expect(new Set(cards(g).map(c=>c.id)).size).toBe(72);
  for(const p of g.players) {
   expect(p.cubes.available+p.cubes.onWizard+p.cubes.onBoard+p.cubes.onEvocations).toBe(25);
   expect(p.cubes.onWizard).toBe(g.players.reduce((sum,victim)=>sum+(victim.wizard.damageByPlayer[p.id]??0),0));
@@ -77,7 +77,7 @@ describe('agreed client interfaces and defaults',()=>{
   g=applyAction(g,{type:'START_GAME',playerId:'p1'});g=advance(g);
   expect(g.blackRoseResolved).toBe(true);
   for(const id of ['p1','p2']) {
-   g=applyAction(g,{type:'DRAW_STUDY',playerId:id,deckId:'school-1'});
+    g=applyAction(g,{type:'DRAW_STUDY',playerId:id,deckId:'cantrip'});
    g=applyAction(g,{type:'DISCARD_STUDY',playerId:id,cardIds:player(g,id).hand.slice(0,2).map(c=>c.id)});
   }
   for(const id of ['p1','p2'])g=applyAction(g,prepareAction(g,id));
@@ -424,8 +424,8 @@ describe('mandatory preparation hand limits and the personal-discard exception',
   expect(player(applyAction(n,prepareAction(n))).preparationDone).toBe(true);conserved(n);
  });
 
- it('routes personal, school and powerful overflow cards ALL to personal discard with flags and identities intact',()=>{
-  let g=preparationFixture(7);const personal=player(g).hand[0],school=g.library[2].cards.shift()!,power=g.powerfulDeck.shift()!;
+ it('routes personal, Cantrip and powerful overflow cards ALL to personal discard with flags and identities intact',()=>{
+  let g=preparationFixture(7);const personal=player(g).hand[0],school=g.library[0].cards.shift()!,power=g.powerfulDeck.shift()!;
   player(g).hand.push(school,power,player(g).personalDeck.shift()!);const before=structuredClone(g);
   const selected=[personal,school,power];g=applyAction(g,{type:'DISCARD_HAND_LIMIT',playerId:'p1',cardIds:selected.map(c=>c.id)});
   expect(player(g).discard).toEqual(selected);expect(player(g).hand).toHaveLength(7);expect(g.library).toEqual(before.library);
@@ -459,12 +459,12 @@ describe('mandatory preparation hand limits and the personal-discard exception',
   expect(g.removedCards).toEqual([power]);conserved(g);
  });
 
- it('normal Study still routes schools home and rejects powerful discards rather than applying the overflow exception',()=>{
+ it('normal Study still routes Cantrip home and rejects powerful discards rather than applying the overflow exception',()=>{
   let g=createGame();g.phase='STUDY';const power=g.powerfulDeck.shift()!;player(g).hand.push(power);
-  g=applyAction(g,{type:'DRAW_STUDY',playerId:'p1',deckId:'school-2'});const selected=player(g).hand.filter(c=>c.schoolId==='school-2').slice(0,2);
+  g=applyAction(g,{type:'DRAW_STUDY',playerId:'p1',deckId:'cantrip'});const selected=player(g).hand.filter(c=>c.schoolId==='cantrip').slice(0,2);
   rejected(g,{type:'DISCARD_STUDY',playerId:'p1',cardIds:[selected[0].id,power.id]},/Powerful spells cannot/);
   g=applyAction(g,{type:'DISCARD_STUDY',playerId:'p1',cardIds:selected.map(c=>c.id)});
-  expect(g.library[1].discard).toEqual(selected);expect(player(g).discard).toEqual([]);expect(player(g).hand).toContainEqual(power);conserved(g);
+  expect(g.library[0].discard).toEqual(selected);expect(player(g).discard).toEqual([]);expect(player(g).hand).toContainEqual(power);conserved(g);
  });
 });
 
@@ -473,7 +473,7 @@ describe('one-shot Black Rose quest-limit gate',()=>{
   let g=blackRoseFixture();const before=structuredClone(g),p1Quests=heldQuests(player(g)),p2Quests=heldQuests(player(g,'p2'));
   g=advance(g);expect(g.phase).toBe('BLACK_ROSE');expect(g.blackRoseResolved).toBe(true);
   expect(g.players.map(p=>p.hand.length)).toEqual([0,0]);expect(g.questDeck).toEqual(before.questDeck);
-  rejected(g,{type:'DRAW_STUDY',playerId:'p1',deckId:'school-1'},/BLACK_ROSE/);
+  rejected(g,{type:'DRAW_STUDY',playerId:'p1',deckId:'cantrip'},/BLACK_ROSE/);
   rejected(g,{type:'PREPARE_CARDS',playerId:'p1',preparedCardIds:[],rapidCardId:'missing'},/BLACK_ROSE/);
   for(let i=0;i<3;i++)rejected(g,{type:'ADVANCE_PHASE',playerId:'p1',expectedPhase:'BLACK_ROSE',expectedRound:1},/Waiting/);
   g=applyAction(g,{type:'DISCARD_QUESTS',playerId:'p1',questIds:[p1Quests[0].id]});

@@ -57,7 +57,7 @@ function expectCubesConserved(g:GameState) {
 }
 function expectCardsConserved(g:GameState) {
  const cards=[...g.powerfulDeck,...g.removedCards,...g.library.flatMap(d=>[...d.cards,...d.discard]),...g.players.flatMap(p=>[...p.hand,...p.personalDeck,...p.discard,...Object.values(p.prepared).filter(c=>c&&!c.used).map(c=>c!.card)])];
- expect(cards).toHaveLength(252);expect(new Set(cards.map(c=>c.id)).size).toBe(252);
+ expect(cards).toHaveLength(72);expect(new Set(cards.map(c=>c.id)).size).toBe(72);
 }
 
 describe('hex range calculus',()=>{
@@ -96,7 +96,7 @@ function nextActionRound(g:GameState) {
  g.eventDeck=[{id:'quiet-grey-round',name:'Quiet',description:'No damage',kind:'INSTABILITY',amount:0,rooms:0}];
  g=advance(g);g=advance(g);
  for(const id of ['p1','p2']) {
-  g=applyAction(g,{type:'DRAW_STUDY',playerId:id,deckId:'school-1'});
+  g=applyAction(g,{type:'DRAW_STUDY',playerId:id,deckId:'cantrip'});
   g=applyAction(g,{type:'DISCARD_STUDY',playerId:id,cardIds:player(g,id).hand.slice(0,2).map(c=>c.id)});
  }
  for(const id of ['p1','p2']) {
@@ -617,7 +617,7 @@ describe('free Evocation phase scheduling',()=>{
   g=advance(g);expect(g.round).toBe(2);expect(g.players.map(p=>p.actionTokens)).toEqual([2,2]);expect(g.evocations).toEqual([survivor]);expectCubesConserved(g);
   g=advance(g);
   for(const id of ['p1','p2']) {
-   g=applyAction(g,{type:'DRAW_STUDY',playerId:id,deckId:'school-1'});
+    g=applyAction(g,{type:'DRAW_STUDY',playerId:id,deckId:'cantrip'});
    g=applyAction(g,{type:'DISCARD_STUDY',playerId:id,cardIds:player(g,id).hand.slice(0,2).map(c=>c.id)});
   }
   for(const id of ['p1','p2']) {
@@ -692,7 +692,7 @@ describe('reconstructed room specials',()=>{
   g=explore(g,'p2');expect(g.phase).toBe('CLEANUP');expect(room(g,emerald.id).reconstructed).toBe(true);expect(room(g,emerald.id).specialUsed).toBe(false);expect(room(g,emerald.id).scored).toBe(true);
   g.eventDeck=[{id:'quiet',name:'Quiet',description:'Quiet',kind:'INSTABILITY',amount:0,rooms:0}];g=advance(g);g=advance(g);
   for(const id of ['p1','p2']) {
-   g=applyAction(g,{type:'DRAW_STUDY',playerId:id,deckId:'school-1'});
+    g=applyAction(g,{type:'DRAW_STUDY',playerId:id,deckId:'cantrip'});
    g=applyAction(g,{type:'DISCARD_STUDY',playerId:id,cardIds:player(g,id).hand.slice(0,2).map(c=>c.id)});
   }
   for(const id of ['p1','p2']) {

@@ -213,6 +213,8 @@ async function main() {
     }
     assert.ok(own.players.every(p => p.personalDeck.every(c => c.name === 'Hidden spell')));
     assert.deepEqual(own.eventDeck, []); assert.deepEqual(own.questDeck, []);
+    assert.deepEqual(own.library.map(({ id, name }) => ({ id, name })), [{ id: 'cantrip', name: 'Cantrip' }]);
+    assert.ok(own.library[0].cards.length + own.library[0].discard.length <= 36);
     assert.ok(own.library.every(d => d.cards.every(c => c.name === 'Hidden spell')));
     assert.ok(own.powerfulDeck.every(c => c.name === 'Hidden spell' && !c.powerful));
    }
@@ -360,6 +362,7 @@ async function main() {
   };
   assert.equal(epoch.phase, 'LOBBY'); assert.deepEqual(epoch.evocations, []);
   assert.deepEqual(epoch.players.map(p => p.id), ['p1'], 'Creating a room must not invent an unjoined second mage');
+  assert.equal(epoch.library[0].cards.length, 36); assert.deepEqual(epoch.library[0].discard, []);
   assert.equal(epoch.board.rooms.filter(r => r.color === 'grey' && r.effect === 'SUMMON_CADAVER').length, 3);
   await legacy('p1'); await act({ type: 'SET_READY', playerId: 'p1', ready: true });
   assert.equal(epoch.phase, 'LOBBY'); assert.equal(epoch.round, 0, 'A ready solo creator must wait for another mage');
@@ -380,7 +383,7 @@ async function main() {
     assert.deepEqual(epoch.players.map(p => p.hand.length), before.players.map(p => p.hand.length), 'Quest gate delays all grimoire draws');
     assert.deepEqual(epoch.players.map(p => p.personalDeck.length), before.players.map(p => p.personalDeck.length));
     await advance(/Waiting for quest-limit discards/);
-    await act({ type: 'DRAW_STUDY', playerId: 'p1', deckId: 'school-1' }, /BLACK_ROSE/);
+    await act({ type: 'DRAW_STUDY', playerId: 'p1', deckId: 'cantrip' }, /BLACK_ROSE/);
     for (const id of ids) {
      const own = player(await client(id).sync(epoch), id), held = quests(own), overflow = held.length - own.questLimit;
      if (overflow <= 0) {
@@ -399,12 +402,19 @@ async function main() {
    }
    assert.equal(epoch.phase, 'STUDY');
    await act({ type: 'DISCARD_QUESTS', playerId: 'p1', questIds: [] }, /STUDY/);
+  await act({ type: 'DRAW_STUDY', playerId: 'p1', deckId: 'school-1' }, /School not found/);
    for (const id of ids) {
     const own = player(await client(id).sync(epoch), id);
     assert.equal(own.hand.length, player(before, id).hand.length + 2);
     await act({ type: 'DISCARD_HAND_LIMIT', playerId: id, cardIds: [] }, /STUDY/);
-    await act({ type: 'DRAW_STUDY', playerId: id, deckId: 'school-1' });
-    const discarded = player(epoch, id).hand.filter(c => c.schoolId === 'school-1').slice(-2).map(c => c.id);
+   const stock = epoch.library[0], reshuffles = stock.cards.length < 4;
+   await act({ type: 'DRAW_STUDY', playerId: id, deckId: 'cantrip' });
+   assert.equal(epoch.library[0].cards.length, stock.cards.length + (reshuffles ? stock.discard.length : 0) - 4);
+   assert.equal(epoch.library[0].discard.length, reshuffles ? 0 : stock.discard.length);
+   const hand = player(epoch, id).hand;
+   assert.equal(hand.length, own.hand.length + 4);
+   assert.ok(hand.slice(-4).every(c => c.schoolId === 'cantrip' && c.id.startsWith('cantrip-')));
+   const discarded = hand.filter(c => c.schoolId === 'cantrip').slice(-2).map(c => c.id);
     assert.equal(discarded.length, 2);
     await act({ type: 'DISCARD_STUDY', playerId: id, cardIds: discarded });
     assert.ok(discarded.every(cardId => epoch.library[0].discard.some(c => c.id === cardId)));
