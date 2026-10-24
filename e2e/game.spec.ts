@@ -287,10 +287,11 @@ async function expectPhase(pages: Page[], phase: string) {
 
 async function studyCards(pages: Page[]) {
   for (const page of pages) {
-    await expect(page.getByRole('heading', { name: 'Cantrip', exact: true })).toBeVisible();
-    await expect(page.locator('.schools button')).toHaveCount(1);
+    await expect(page.getByRole('heading', { name: 'Schools of magic', exact: true })).toBeVisible();
+    await expect(page.locator('.schools button')).toHaveCount(2);
     await dismissOverlay(page);
-    await page.getByRole('button', { name: /Cantrip\b/ }).click();
+    // Combat scenarios deliberately keep drawing the original offensive school.
+    await page.locator('.schools button[data-school-id="cantrip"]').click();
     await expect(page.locator('.phase-panel .spell').nth(5)).toBeVisible();
     const cards = page.locator('.phase-panel .spell');
     const count = await cards.count();
@@ -994,7 +995,7 @@ async function receiveQuests(mages: Mage[], info: TestInfo) {
       await expect(confirm).toBeDisabled();
       for (const page of pages) {
         await expect(page.locator('.phase-track .current span')).toHaveText('Black Rose');
-        await expect(page.getByRole('heading', { name: 'Cantrip', exact: true })).toHaveCount(0);
+        await expect(page.getByRole('heading', { name: 'Schools of magic', exact: true })).toHaveCount(0);
         await expect(page.getByRole('button', { name: /^Receive quests & begin Study/ })).toHaveCount(0);
       }
       for (let index = 0; index < excess; index++) await choices.nth(index).click();

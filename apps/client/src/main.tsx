@@ -1,17 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ACTIONS_PER_TURN, BLACK_ROSE_ID, ENDGAME_REWARDS, getRoomRewards, Card, GameAction, GameState, Player, Room, MAX_MAGES, MIN_MAGES, ROOM_COLORS, ROOM_EFFECT_LABELS, isInStartingRoom, isWithinSpellRange, hexDistance, hexKey } from '@brw/game-engine';
+import { ACTIONS_PER_TURN, BLACK_ROSE_ID, ENDGAME_REWARDS, getRoomRewards, canUseSpellDummy, spellCanTargetModel, Card, GameAction, GameState, Player, Room, MAX_MAGES, MIN_MAGES, ROOM_COLORS, ROOM_EFFECT_LABELS, isInStartingRoom, isWithinSpellRange, hexDistance, hexKey } from '@brw/game-engine';
 import { ActiveEvocationControls, EvocationsPanel, targetModels } from './EvocationsPanel';
 import { DamageBar } from './DamageBar';
 import { PhysicalActionsPanel } from './PhysicalActionsPanel';
-import { MAGE_SYMBOLS as emoji, MAGE_COLOR_NAMES, cubeSegments, evocationNumber, mageStyle, ownerColor, ownerName, roomModelLayout, roomNameLines, roomStatus } from './presentation';
+import { MAGE_SYMBOLS as emoji, MAGE_COLOR_NAMES, SPELL_TARGET_LABELS, SPELL_TARGET_DESCRIPTIONS, cubeSegments, evocationNumber, mageStyle, ownerColor, ownerName, roomModelLayout, roomNameLines, roomStatus } from './presentation';
 import './style.css';
 
 const WS_URL=import.meta.env.VITE_WS_URL??`${location.protocol==='https:'?'wss':'ws'}://${location.hostname}:8080`;
 const phaseInfo={
  LOBBY:['✦','Gather the mages','2–4 mages. The battle starts automatically when every joined mage is ready.'],
  BLACK_ROSE:['✺','Black Rose','An event reshapes the lodge. Personal quests follow.'],
- STUDY:['▤','Study','Draw 2 grimoire spells and 4 Cantrip spells, then discard 2.'],
+ STUDY:['▤','Study','Draw 2 grimoire spells, choose a school for 4 more, then discard 2.'],
  PREPARATION:['✧','Preparation','Choose spells in order 1 → 2 → 3, then a flexible spell. Held powers must be prepared before casting.'],
  ACTION:['⚔','Action','Up to 2 actions total: Explore, Attack, spell casts, or discard-to-move.'],
  EVOCATION:['☠','Evocation','Activate each summon once. Move, then attack an enemy in its room, one model at a time.'],
@@ -25,19 +25,19 @@ const randomName=()=>['Ember','Moon','Storm','Rune','Thorn'][Math.floor(Math.ran
 
 function SpellCard({card,label,selected,disabled,onClick,used=false}:{card:Card;label?:string;selected?:boolean;disabled?:boolean;onClick?:()=>void;used?:boolean}) {
  return <button type="button" className={`spell ${card.powerful?'powerful':''} ${selected?'chosen':''} ${used?'used':''}`} disabled={disabled} onClick={onClick}>
-  <span className="eyebrow">{label??'Spell'} · {card.target==='ROOM'?'Room':'Model'}</span>
-  <strong>{card.name}</strong><span className="spell-rune">{card.damage>2?'✹':card.instability>0?'◈':'✧'}</span>
-  <span className="spell-effects">{card.damage>0&&<span>🔥 {card.damage} damage</span>}{card.instability>0&&<span>◆ {card.instability} instability</span>}</span>
-  <span className="hint">Range {card.range} · {card.target==='ROOM'?'all enemy models':'single enemy model'} · 1 action to cast{card.powerful?' · Remove after use':''}{used?' · Spent':''}</span>
+  <span className="eyebrow">{label??'Spell'} · {SPELL_TARGET_LABELS[card.target]}</span>
+  <strong>{card.name}</strong><span className="spell-rune">{card.heal?'♥':card.convert?'↻':card.damage>2?'✹':card.instability>0?'◈':'✧'}</span>
+  <span className="spell-effects">{card.damage>0&&<span>🔥 {card.damage} damage</span>}{card.instability>0&&<span>◆ {card.instability} instability</span>}{!!card.heal&&<span className="heal-effect">♥ {card.heal} heal</span>}{!!card.convert&&<span className="convert-effect">↻ {card.convert} convert · {card.target==='ROOM'?'room cubes':'damage cubes'}</span>}</span>
+  <span className="hint">Range {card.range} · {SPELL_TARGET_DESCRIPTIONS[card.target]} · 1 action to cast{card.powerful?' · Remove after use':''}{used?' · Spent':''}</span>
  </button>;
 }
 
 function StudyPanel({game,me,send}:{game:GameState;me:Player;send:Send}) {
  const [selected,setSelected]=useState<string[]>([]);
  if(me.studyDone)return <div className="notice">✓ Study complete. Waiting for the other mages.</div>;
- return <section className="phase-panel"><div className="section-heading"><div><span className="eyebrow">The shared library</span><h2>Cantrip</h2></div><span className="badge">Grimoire +2 ✓</span></div>
-  {!me.studyDrawn?<><p>Draw 4 spells from Cantrip, the shared 36-card school of magic.</p><div className="schools">{game.library.map(deck=><button key={deck.id} disabled={deck.cards.length+deck.discard.length<4} onClick={()=>send({type:'DRAW_STUDY',playerId:me.id,deckId:deck.id})}><span className="school-rune">✺</span><strong>{deck.name}</strong><small>{deck.cards.length} draw · {deck.discard.length} discard</small></button>)}</div></>:
-  <><p>Choose exactly 2 spells to discard. Cantrip spells return to the shared Cantrip discard; personal spells return to your grimoire discard. Powerful spells cannot be discarded.</p><div className="cards">{me.hand.map(card=><SpellCard key={card.id} card={card} disabled={!!card.powerful} selected={selected.includes(card.id)} onClick={()=>setSelected(old=>old.includes(card.id)?old.filter(id=>id!==card.id):old.length<2?[...old,card.id]:old)}/>)}</div><button className="primary" disabled={selected.length!==2} onClick={()=>send({type:'DISCARD_STUDY',playerId:me.id,cardIds:selected})}>Discard selected ({selected.length}/2)</button></>}
+ return <section className="phase-panel"><div className="section-heading"><div><span className="eyebrow">The shared library</span><h2>Schools of magic</h2></div><span className="badge">Grimoire +2 ✓</span></div>
+  {!me.studyDrawn?<><p>Choose a school to draw 4 spells. Each school has 12 spells with 3 copies of each, for 36 cards.</p><div className="schools">{game.library.map(deck=><button key={deck.id} data-school-id={deck.id} disabled={deck.cards.length+deck.discard.length<4} onClick={()=>send({type:'DRAW_STUDY',playerId:me.id,deckId:deck.id})}><span className="school-rune">{deck.id==='transmutation'?'⚗':'✺'}</span><strong>{deck.name}</strong><span className="hint">{deck.id==='transmutation'?'Heal wounds · Convert cubes':'Damage · Instability'}</span><small>{deck.cards.length} draw · {deck.discard.length} discard</small></button>)}</div></>:
+  <><p>Choose exactly 2 spells to discard. Shared spells return to their own school’s discard; personal spells return to your grimoire discard. Powerful spells cannot be discarded.</p><div className="cards">{me.hand.map(card=><SpellCard key={card.id} card={card} disabled={!!card.powerful} selected={selected.includes(card.id)} onClick={()=>setSelected(old=>old.includes(card.id)?old.filter(id=>id!==card.id):old.length<2?[...old,card.id]:old)}/>)}</div><button className="primary" disabled={selected.length!==2} onClick={()=>send({type:'DISCARD_STUDY',playerId:me.id,cardIds:selected})}>Discard selected ({selected.length}/2)</button></>}
  </section>;
 }
 
@@ -138,16 +138,15 @@ function App() {
  const inStart=isInStartingRoom(game,me);
  const activeEvocation=game.evocations.find(e=>e.id===game.evocationActivation?.evocationId);
  const movingEvocation=enabled&&game.evocationActivation?.playerId===me.id&&activeEvocation;
- const enemies=targetModels(game).filter(t=>t.playerId!==me.id);
  const actingPlayer=enabled&&(game.phase==='ACTION'||game.phase==='EVOCATION')?game.players.find(p=>p.id===game.currentPlayerId):undefined;
  const toggleRetinue=(playerId:string)=>setRetinueVisible(prev=>({...prev,[playerId]:!prev[playerId]}));
  const powerfulCards=me.hand.filter(c=>c.powerful);
  const spell=active?.physicalAction?null:selectedSlot?me.prepared[selectedSlot]?.card:null;
  const nextSlot=(['slot1','slot2','slot3'] as Slot[]).find(key=>me.prepared[key]&&!me.prepared[key]!.used);
- const spellModelsInRoom=(room:Room)=>!spell||room.startingFor||inStart?[]:enemies.filter(t=>room.tiles.some(h=>hexKey(h)===hexKey(t.position))&&isWithinSpellRange(me.wizard.position,t.position,spell.range));
+ const spellModelsInRoom=(room:Room)=>!spell||room.startingFor||inStart?[]:targetModels(game).filter(t=>spellCanTargetModel(spell,me.id,t.playerId,t.evocation?'EVOCATION':'MAGE')&&room.tiles.some(h=>hexKey(h)===hexKey(t.position))&&isWithinSpellRange(me.wizard.position,t.position,spell.range));
  const canTarget=(room:Room)=>{
   if(!spell||room.startingFor||inStart)return false;
-  if(spell.target==='ROOM'||dummy)return room.tiles.some(h=>isWithinSpellRange(me.wizard.position,h,spell.range));
+  if(spell.target==='ROOM'||dummy&&canUseSpellDummy(spell))return room.tiles.some(h=>isWithinSpellRange(me.wizard.position,h,spell.range));
   return spellModelsInRoom(room).length>0;
  };
  const room=game.board.rooms.find(r=>r.id===selectedRoom);
@@ -213,15 +212,16 @@ function App() {
     {room&&<div className="room-detail"><strong>{room.name} {room.reconstructed?'· Rebuilt':''}</strong><span>{room.startingFor?'Protected starting room · Exit only; no voluntary reentry':room.reconstructed?`Double special · ${roomStatus(room)} · no further cube placement`:`${room.color??'Central'} · ${room.instability}/${room.instabilityLimit} instability · Rewards ${room.rewards.join(' / ')} VP${room.instability>=room.instabilityLimit?' · Full: locked to new cubes; rebuilds at Cleanup, then unlocks its double special.':''}`}</span>
     {room.effect&&<span>{room.reconstructed?'Double special':'Free effect'}: {ROOM_EFFECT_LABELS[room.effect]}{room.reconstructed?` ×2 · ${room.specialUsed?'Used this Action phase':'Ready · once per Action phase'}`:' · once within Explore or Attack, before or after its primary effect.'}</span>}
     {!room.reconstructed&&<div className="contributions">{Object.entries(room.cubesByPlayer).filter(([,n])=>n>0).map(([id,n])=><span style={mageStyle(id)} key={id}>{emoji[id]??'✺'} {ownerName(game,id)}: {n}</span>)}</div>}
-    {spell?.target==='MODEL'&&!dummy&&<label className="action-setting">Spell target model<select aria-label="Spell target model" value={selectedModelId} onChange={e=>setSelectedModelId(e.target.value)}><option value="">First enemy in this room</option>{spellModelsInRoom(room).map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label>}
-    {spell&&<button className="primary" disabled={pending||!myTurn||turnActionsRemaining===0||!canTarget(room)} onClick={cast}>Cast {spell.name} here{dummy?' on dummy':''}</button>}
+    {spell&&spell.target!=='ROOM'&&spell.target!=='SELF'&&!dummy&&<label className="action-setting">Spell target model<select aria-label="Spell target model" value={selectedModelId} onChange={e=>setSelectedModelId(e.target.value)}><option value="">First eligible model in this room</option>{spellModelsInRoom(room).map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label>}
+    {spell?.target==='SELF'&&<p className="hint">This spell targets only your mage.</p>}
+    {spell&&<button className="primary" disabled={pending||!myTurn||turnActionsRemaining===0||!canTarget(room)} onClick={cast}>Cast {spell.name} {spell.target==='SELF'?'on yourself':'here'}{dummy?' on dummy':''}</button>}
     </div>}
     </section>
     {game.phase==='ACTION'&&<section className="phase-panel"><div className="section-heading"><div><span className="eyebrow">Your prepared grimoire · 1 action per cast</span><h2>{game.evocationActivation?.playerId===me.id?'Finish your evocation activation':myTurn?'Choose your next action':'Watch the other mage’s turn'}</h2></div><span className="badge">{myTurn?`${turnActionsRemaining} turn actions left`:me.passed?'Passed':'Waiting'}</span></div>
     {inStart&&<div className="notice">Leave your starting room with Explore or a discarded card before casting or attacking.</div>}
     {myTurn&&active?.physicalAction&&<div className="notice">Finish or skip your {active.physicalAction.kind==='EXPLORE'?'Explore':'Attack'} effects before casting spells.</div>}
-      <div className="cards prepared">{slotKeys.map((key,i)=>{const c=me.prepared[key];return c&&<SpellCard key={key} card={c.card} used={c.used} label={key==='rapid'?'✧ Flexible':`Spell ${i+1}`} selected={key===selectedSlot} disabled={pending||!myTurn||turnActionsRemaining===0||inStart||!!active?.physicalAction||!!active?.exploring||c.used||(key!=='rapid'&&(key!==nextSlot||!!active?.sequencedSpellUsed))} onClick={()=>{setSelectedSlot(old=>old===key?null:key);setSelectedRoom(null);setDummy(false);setExitCardId('');setToast('Choose a highlighted room containing your target, or select dummy targeting.');}}/>;})}</div>
-    {spell&&<><p className="hint">Every spell—including flexible and powerful—uses 1 of your 2 turn actions, but no physical token. Range follows a straight, contiguous hex line without turning; range 0 targets your own hex. Cast at most one numbered spell per turn. Powerful spells are removed after use.</p>{spell.target==='MODEL'&&<div className="button-row target-mode"><button className={!dummy?'primary':''} onClick={()=>{setDummy(false);setSelectedRoom(null);}}>Target enemy model</button><button className={dummy?'primary':''} onClick={()=>{setDummy(true);setSelectedRoom(null);}}>Target dummy · no damage</button></div>}{dummy&&<p className="hint">Select any non-starting room in range on a straight hex line. Only non-damage effects, such as instability, resolve—even if a model is present.</p>}</>}
+      <div className="cards prepared">{slotKeys.map((key,i)=>{const c=me.prepared[key];return c&&<SpellCard key={key} card={c.card} used={c.used} label={key==='rapid'?'✧ Flexible':`Spell ${i+1}`} selected={key===selectedSlot} disabled={pending||!myTurn||turnActionsRemaining===0||inStart||!!active?.physicalAction||!!active?.exploring||c.used||(key!=='rapid'&&(key!==nextSlot||!!active?.sequencedSpellUsed))} onClick={()=>{setSelectedSlot(old=>old===key?null:key);setSelectedRoom(selectedSlot!==key&&c.card.target==='SELF'?game.board.rooms.find(r=>r.tiles.some(h=>hexKey(h)===hexKey(me.wizard.position)))?.id??null:null);setSelectedModelId('');setDummy(false);setExitCardId('');setToast(c.card.target==='SELF'?'Your mage is selected. Confirm the spell to cast on yourself.':'Choose a highlighted room, then an eligible target.');}}/>;})}</div>
+    {spell&&<><p className="hint">Every spell—including flexible and powerful—uses 1 of your 2 turn actions, but no physical token. Range follows a straight, contiguous hex line without turning; range 0 targets your own hex. Cast at most one numbered spell per turn. Powerful spells are removed after use.</p><p className="spell-target-help hint">Target: {SPELL_TARGET_DESCRIPTIONS[spell.target]}. Damage never harms your mage or your evocations. Heal removes wounds from each selected model, including friendly models. Convert replaces other-colored {spell.target==='ROOM'?'instability cubes in the room':'damage cubes on the selected model'} with your available cubes; it does not add damage or instability.</p>{canUseSpellDummy(spell)&&<div className="button-row target-mode"><button className={!dummy?'primary':''} onClick={()=>{setDummy(false);setSelectedRoom(null);setSelectedModelId('');}}>Target enemy model</button><button className={dummy?'primary':''} onClick={()=>{setDummy(true);setSelectedRoom(null);setSelectedModelId('');}}>Target dummy · no damage</button></div>}{dummy&&<p className="hint">Select any non-starting room in range on a straight hex line. Only non-damage effects, such as instability, resolve—even if a model is present.</p>}</>}
     </section>}
       {powerfulCards.length>0&&<section className="powerful-panel"><span className="eyebrow">The central chamber's gift · saved in hand</span><h2>Black Rose spells</h2><p>Prepare in a later round. Held powers cannot be cast from hand and do not keep your Action phase alive. Prepare a power in an ordered or flexible slot; casting uses 1 turn action, no physical token, and permanently removes it. Unused prepared powers return to hand next round. Forced hand-limit discards are the only discard exception.</p><div className="cards">{powerfulCards.map(card=><SpellCard key={card.id} card={card} label="✺ Prepare in a later round" disabled/>)}</div><p className="hint">Supply: {game.powerfulDeck.length} remaining · {game.removedCards.length} permanently removed</p></section>}
     <section className="log-panel"><div className="section-heading"><h2>Chronicle</h2><span className="hint">Latest events first</span></div><div className="log" role="log">{game.log.slice(-45).reverse().map((entry,i)=><div key={`${game.log.length-i}`}><span>✧</span>{entry}</div>)}</div></section>
@@ -256,6 +256,8 @@ function App() {
     <p><b>Endgame:</b> positive kills and completed-quest majorities each award <b>{ENDGAME_REWARDS.join(' / ')} VP</b>, with the same dense-rank tie rule. Black Rose competes for kills, not quests. The first-player token grants <b>+1 VP</b>. Bonuses are scored once.</p>
     <p><b>One-color bonus:</b> gain <b>+1 VP</b> if all cubes in a room are yours when it is completed, or all damage cubes on a mage are yours when they are defeated. Black Rose cubes, black damage and unattributed wounds prevent a mage’s one-color bonus.</p>
     <p>Normal school discards return to their school; forced hand-limit discards are the exception.</p>
+    <p><b>Transmutation:</b> 12 spells, 3 copies each. <b>Heal</b> removes wounds and returns their cubes to their owners. A room heal affects every mage and evocation there. <b>Convert</b> swaps other-colored damage cubes on a model, or instability cubes in a room, for your available cubes without changing the total. Rebuilt room history cannot be converted.</p>
+    <p><b>Spell targets:</b> Self = only your mage; Mage = one mage; Evocation = one evocation; Model = either; Room = the room and all models there. Support may target friendly models. Your mage and evocations are immune to damage from your own spells, room effects, and controlled models.</p>
     <p><b>Central powers:</b> save in hand for a later Preparation, never cast directly. Prepared powers cost one turn action and are permanently removed on casting; unused prepared powers return to hand next round. Held powers do not keep Action alive.</p>
     <p><b>Cube supply:</b> with zero available cubes you cannot place room instability, but attacks and spells can still wound. Damage bars count received damage, including neutral black damage and separately labeled unattributed wounds, not remaining health.</p>
      <p className="hint">Grimoire {me.personalDeck.length} · Hand {me.hand.length}/{me.cardLimit} · Personal discard {me.discard.length}</p>

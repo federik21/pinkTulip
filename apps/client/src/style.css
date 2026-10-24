@@ -53,4 +53,6 @@
 .rebuilt-badge.used rect{fill:#302b35;stroke:#9b8ca7}
 .hex .rebuilt-badge text{font:800 7px 'DM Sans',sans-serif;fill:#e4f5e9;letter-spacing:.2px}
 @media(max-width:720px){.actions-panel,.evocation-controls{order:-3}.history-panel{order:-4}.evocations-panel{order:0}.damage-contributions{font-size:9px}}
-.schools{grid-template-columns:minmax(0,1fr);max-width:280px}
+.schools{grid-template-columns:repeat(2,minmax(0,1fr));max-width:none}
+.schools button[data-school-id="transmutation"] .school-rune,.spell .heal-effect{color:#86d9c0}
+.spell .convert-effect{color:#c4b5fd}

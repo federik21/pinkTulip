@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { resolve } from 'node:path';
 import { WebSocket } from 'ws';
+import { canUseSpellDummy, isWithinSpellRange, spellCanTargetModel } from '../packages/game-engine/src/engine';
 import type { Card, GameAction, GameState, Hex, Player } from '../packages/game-engine/src/types';
 
 // Standalone real-network coverage: ephemeral port, ordinary wire actions only,
@@ -18,6 +19,43 @@ const player = (state: GameState, id: string): Player => {
 };
 const sameHex = (a: Hex, b: Hex) => a.q === b.q && a.r === b.r;
 const distance = (a: Hex, b: Hex) => Math.max(Math.abs(a.q - b.q), Math.abs(a.r - b.r), Math.abs(a.q + a.r - b.q - b.r));
+type SpellSelection = Pick<Extract<GameAction, { type:'CAST_SPELL' }>, 'roomId' | 'targetPlayerId' | 'targetEvocationId' | 'dummy'>;
+
+function spellTarget(state: GameState, id: string, card: Card): SpellSelection | undefined {
+ const p = player(state, id);
+ const legal = (owner: string, kind: 'MAGE' | 'EVOCATION', position: Hex) =>
+  spellCanTargetModel(card, id, owner, kind) && isWithinSpellRange(p.wizard.position, position, card.range) &&
+  !state.board.rooms.some(r => r.startingFor && r.tiles.some(h => sameHex(h, position)));
+ if (card.target === 'SELF') return legal(id, 'MAGE', p.wizard.position) ? {} : undefined;
+ if (card.target === 'ROOM' || canUseSpellDummy(card)) {
+  const rooms = state.board.rooms.filter(r => !r.startingFor && r.tiles.some(h => isWithinSpellRange(p.wizard.position, h, card.range)) &&
+   (!card.damage || !state.players.some(t => t.id !== id && r.tiles.some(h => sameHex(h, t.wizard.position))) &&
+    !state.evocations.some(e => e.playerId !== id && r.tiles.some(h => sameHex(h, e.position)))));
+  // Conversion needs live cubes from another owner; a legal zero-effect cast
+  // remains useful when the ordinary game has not produced those cubes yet.
+  rooms.sort((a, b) => Number(!!card.convert && !b.scored && !b.reconstructed && Object.entries(b.cubesByPlayer).some(([owner, n]) => owner !== id && n > 0)) -
+   Number(!!card.convert && !a.scored && !a.reconstructed && Object.entries(a.cubesByPlayer).some(([owner, n]) => owner !== id && n > 0)));
+  const room = rooms[0];
+  return room ? { roomId:room.id, ...(canUseSpellDummy(card) ? { dummy:true } : {}) } : undefined;
+ }
+ const mage = [...state.players].sort((a, b) => b.wizard.damageCubes - a.wizard.damageCubes)
+  .find(t => legal(t.id, 'MAGE', t.wizard.position) && (!card.damage || t.id === id));
+ if (mage) return { targetPlayerId:mage.id };
+ const evocation = [...state.evocations].sort((a, b) => b.damageCubes - a.damageCubes)
+  .find(e => legal(e.playerId, 'EVOCATION', e.position) && (!card.damage || e.playerId === id));
+ return evocation ? { targetEvocationId:evocation.id } : undefined;
+}
+
+function checkCubes(state: GameState) {
+ for (const p of state.players) {
+  assert.ok(Object.values(p.cubes).every(n => Number.isInteger(n) && n >= 0));
+  assert.equal(Object.values(p.cubes).reduce((sum, n) => sum + n, 0), 25);
+  assert.equal(p.cubes.onWizard, state.players.reduce((sum, t) => sum + (t.wizard.damageByPlayer[p.id] ?? 0), 0));
+  assert.equal(p.cubes.onEvocations, state.evocations.reduce((sum, e) => sum + (e.damageByPlayer[p.id] ?? 0), 0));
+  assert.equal(p.cubes.onBoard, state.board.rooms.filter(r => !r.scored).reduce((sum, r) => sum + (r.cubesByPlayer[p.id] ?? 0), 0));
+ }
+}
+const withoutHistory = (state: GameState) => { const copy = structuredClone(state); delete copy.history; return copy; };
 
 function publicEpoch(state: GameState): string {
  const { history, ...shared } = state;
@@ -36,9 +74,13 @@ function checkPrivacy(state: GameState, viewer: string) {
   instability: 0, range: 0, target: 'MODEL',
  }));
  assert.deepEqual(state.eventDeck, []); assert.deepEqual(state.questDeck, []);
- assert.deepEqual(state.library.map(({ id, name }) => ({ id, name })), [{ id: 'cantrip', name: 'Cantrip' }]);
- assert.ok(state.library[0].cards.length > 0 && state.library[0].cards.length <= 36, 'Exercise the finite nonempty future Cantrip deck');
- for (const deck of state.library) hidden(deck.cards);
+ assert.deepEqual(state.library.map(({ id, name }) => ({ id, name })), [
+  { id: 'cantrip', name: 'Cantrip' }, { id: 'transmutation', name: 'Transmutation' },
+ ]);
+ for (const deck of state.library) {
+  assert.ok(deck.cards.length > 0 && deck.cards.length + deck.discard.length <= 36, `Exercise the finite nonempty future ${deck.name} deck`);
+  hidden(deck.cards);
+ }
  assert.ok(state.powerfulDeck.length > 0); hidden(state.powerfulDeck);
  for (const p of state.players) {
   assert.ok(p.personalDeck.length > 0, `Exercise ${p.id}'s nonempty future deck`); hidden(p.personalDeck);
@@ -50,6 +92,24 @@ function checkPrivacy(state: GameState, viewer: string) {
   hidden(p.hand); assert.equal(p.quest, null); assert.deepEqual(p.additionalQuests, []);
   for (const slot of Object.values(p.prepared)) if (slot) hidden([slot.card]);
  }
+}
+
+function checkCardSupply(state: GameState, owners: Player[]) {
+ assert.equal(owners.length, state.players.length, 'Combine only each mage’s own view at the same epoch');
+ // Used preparations reference discarded/removed cards, not additional physical copies.
+ const visible = [...state.library.flatMap(deck => deck.discard), ...state.removedCards,
+  ...owners.flatMap(p => [...p.hand, ...p.discard, ...Object.values(p.prepared)
+   .filter(slot => slot && !slot.used).map(slot => slot!.card)])];
+ assert.ok(visible.every(card => !card.id.startsWith('hidden-')));
+ assert.equal(new Set(visible.map(card => card.id)).size, visible.length, 'All observable physical cards have globally unique IDs');
+ const shared = visible.filter(card => card.schoolId);
+ assert.ok(shared.every(card => state.library.some(deck => deck.id === card.schoolId) && !card.powerful && card.id.startsWith(`${card.schoolId}-`)));
+ for (const deck of state.library)
+  assert.equal(deck.cards.length + shared.filter(card => card.schoolId === deck.id).length, 36, `${deck.name} conserves its own 36 cards`);
+ // Hidden future IDs deliberately cannot be compared across private wire views.
+ assert.equal(state.library.reduce((sum, deck) => sum + deck.cards.length, 0) + shared.length, 72);
+ assert.equal(state.library.reduce((sum, deck) => sum + deck.cards.length, 0) + state.powerfulDeck.length +
+  state.players.reduce((sum, p) => sum + p.personalDeck.length, 0) + visible.length, 72 + 12 * state.players.length + 12);
 }
 
 class Mage {
@@ -151,18 +211,21 @@ async function main() {
    assert.equal(new Set(epoch.players.map(p => p.id)).size, mages.length);
    const expected: RoomSummary = { id: roomId, players: epoch.players.length, capacity: 4,
     status: epoch.phase === 'LOBBY' ? 'waiting' : 'playing' };
+  const owners: Player[] = [];
    for (const mage of mages) {
     const state = await mage.sync(epoch); assert.ok(mage.id); checkPrivacy(state, mage.id);
+   owners.push(player(state, mage.id));
     // Each roster list must follow this exact STATE, never an earlier equal count.
     let from = mage.messages.length - 1;
     while (from >= 0 && !(mage.messages[from].type === 'STATE' && mage.messages[from].state === state)) from--;
     const list = await mage.wait(m => m.type === 'ROOM_LIST' && !!m.rooms?.some(r => r.id === roomId && JSON.stringify(r) === JSON.stringify(expected)), from);
     assert.equal(list.rooms!.filter(r => r.id === roomId).length, 1);
    }
+    checkCardSupply(epoch, owners);
    await observer.wait(m => m.type === 'ROOM_LIST' && !!m.rooms?.some(r => JSON.stringify(r) === JSON.stringify(expected)));
   };
   const act = async (mage: Mage, action: GameAction, error?: RegExp): Promise<GameState> => {
-   const state = await mage.command(action, error); assert.ok(state); return state;
+    const state = await mage.command(action, error); assert.ok(state); checkCubes(state); return state;
   };
   const ready = (mage: Mage, value = true) => act(mage, { type: 'SET_READY', playerId: mage.id!, ready: value });
   const advance = (mage: Mage, epoch: GameState, error?: RegExp) => act(mage, {
@@ -285,23 +348,35 @@ async function main() {
    for (const mage of mages) epoch = await ready(mage);
    assert.equal(epoch.phase, 'BLACK_ROSE'); autoStarts++;
    epoch = await advance(mages[0], epoch); assert.equal(epoch.phase, 'STUDY');
-  assert.equal(epoch.library[0].cards.length, 36); assert.deepEqual(epoch.library[0].discard, []);
+  for (const deck of epoch.library) { assert.equal(deck.cards.length, 36); assert.deepEqual(deck.discard, []); }
   await act(mages[0], { type: 'DRAW_STUDY', playerId: mages[0].id!, deckId: 'school-6' }, /School not found/);
-  for (const [i, mage] of mages.entries()) {
-   epoch = await act(mage, { type: 'DRAW_STUDY', playerId: mage.id!, deckId: 'cantrip' });
-   assert.equal(epoch.library[0].cards.length, 36 - 4 * (i + 1), 'All four mages draw from the same Cantrip stock');
+    const schoolDraws = [0, 0], schoolDiscards = [0, 0];
+    for (const [i, mage] of mages.entries()) {
+     const schoolIndex = i % 2 === 0 ? 1 : 0, otherIndex = 1 - schoolIndex;
+     const stock = epoch.library[schoolIndex], untouched = epoch.library[otherIndex];
+     epoch = await act(mage, { type:'DRAW_STUDY', playerId:mage.id!, deckId:stock.id });
+     schoolDraws[schoolIndex] += 4;
+     assert.equal(epoch.library[schoolIndex].cards.length, 36 - schoolDraws[schoolIndex], 'Mages share each finite school independently');
+     assert.deepEqual(epoch.library[otherIndex], untouched, 'Draws must not borrow from the other school');
     const own = player(epoch, mage.id!);
-   assert.ok(own.hand.slice(-4).every(card => card.schoolId === 'cantrip' && card.id.startsWith('cantrip-')));
-   const discarded = own.hand.slice(-2).map(card => card.id);
-   epoch = await act(mage, { type: 'DISCARD_STUDY', playerId: mage.id!, cardIds: discarded });
-   assert.equal(epoch.library[0].discard.length, 2 * (i + 1));
-   assert.ok(discarded.every(id => epoch.library[0].discard.some(card => card.id === id && card.schoolId === 'cantrip')));
+     const drawn = own.hand.slice(-4);
+     assert.ok(drawn.every(card => card.schoolId === stock.id && card.id.startsWith(`${stock.id}-`)));
+     // Preserve a support cast that needs no summon. Eight genuine Transmutation
+     // draws across p1/p3 exceed the six EVOCATION-only cards in the school, so
+     // at least one legal support cast is guaranteed without seeding randomness.
+     const discarded = [...drawn].sort((a, b) => Number(b.target === 'EVOCATION') - Number(a.target === 'EVOCATION')).slice(0, 2).map(card => card.id);
+     epoch = await act(mage, { type:'DISCARD_STUDY', playerId:mage.id!, cardIds:discarded });
+     schoolDiscards[schoolIndex] += 2;
+     assert.equal(epoch.library[schoolIndex].discard.length, schoolDiscards[schoolIndex]);
+     assert.ok(discarded.every(id => epoch.library[schoolIndex].discard.some(card => card.id === id && card.schoolId === stock.id)));
+     assert.deepEqual(epoch.library[otherIndex], untouched, 'Discards stay out of the other school');
    }
    assert.equal(epoch.phase, 'PREPARATION'); await roster(name, epoch, mages);
    for (const mage of mages) {
     const own = player(await mage.sync(epoch), mage.id!);
+     const hand = [...own.hand].sort((a, b) => Number(!!(b.heal || b.convert) && b.target !== 'EVOCATION') - Number(!!(a.heal || a.convert) && a.target !== 'EVOCATION'));
     epoch = await act(mage, { type: 'PREPARE_CARDS', playerId: mage.id!,
-     preparedCardIds: own.hand.slice(0, 3).map(card => card.id), rapidCardId: own.hand[3].id });
+      preparedCardIds: hand.slice(0, 3).map(card => card.id), rapidCardId: hand[3].id });
    }
    assert.equal(epoch.phase, 'ACTION'); await roster(name, epoch, mages);
    const pathTo = (state: GameState, id: string, target: Hex): Hex[] => {
@@ -326,15 +401,36 @@ async function main() {
     if (epoch.activation!.exploring > 0) epoch = await act(mage, { type: 'END_EXPLORE', playerId: mage.id! });
     epoch = await act(mage, { type: 'ACTIVATE_ROOM', playerId: mage.id! });
    };
-   for (const mage of mages) {
+  let supportCasts = 0;
+  const supportTypes = new Set<Card['target']>();
+  for (const mage of mages) {
     assert.equal(epoch.currentPlayerId, mage.id);
     const emerald = epoch.board.rooms.filter(r => r.color === 'emerald' && !r.reconstructed)
      .map(r => ({ room: r, path: pathTo(epoch, mage.id!, r.tiles[0]) }))
      .sort((a, b) => a.path.length - b.path.length)[0];
     assert.ok(emerald); await exploreTo(mage, emerald.room.tiles[0]);
     assert.ok(player(epoch, mage.id!).cubes.onBoard > 0, 'Reconnect must preserve real spent cubes');
-    if (mage !== mages[3]) epoch = await act(mage, { type: 'END_ACTIVATION', playerId: mage.id! });
+    if (mage !== mages[3]) {
+     const own = player(await mage.sync(epoch), mage.id!), card = own.prepared.slot1!.card;
+     const selection = spellTarget(epoch, mage.id!, card);
+     if ((card.heal || card.convert) && selection) {
+      const before = await mage.sync(epoch), tokens = own.actionTokens;
+      epoch = await act(mage, { type:'CAST_SPELL', playerId:mage.id!, slot:'slot1', ...selection });
+      const after = structuredClone(epoch);
+      assert.equal(epoch.currentPlayerId, mages[mages.indexOf(mage) + 1].id, 'Support is the second shared turn action');
+      assert.equal(player(epoch, mage.id!).actionTokens, tokens, 'Support never spends a physical token');
+      assert.ok(epoch.library.find(d => d.id === card.schoolId)!.discard.some(c => c.id === card.id));
+      assert.equal(epoch.history?.undoLabel, 'Cast spell'); checkPrivacy(epoch, mage.id!);
+      epoch = await act(mage, { type:'UNDO_ACTION', playerId:mage.id! });
+      assert.deepEqual(withoutHistory(epoch), withoutHistory(before));
+      assert.equal(epoch.history?.redoLabel, 'Cast spell'); checkPrivacy(epoch, mage.id!);
+      epoch = await act(mage, { type:'REDO_ACTION', playerId:mage.id! });
+      assert.deepEqual(epoch, after); supportCasts++; supportTypes.add(card.target);
+     } else epoch = await act(mage, { type:'END_ACTIVATION', playerId:mage.id! });
+    }
    }
+     assert.ok(supportCasts > 0, 'Real independent school draws guarantee at least one non-EVOCATION support cast');
+     console.log(`PASS: alternating Cantrip/Transmutation Study, ${supportCasts} real typed support casts (${[...supportTypes].join('/')}) with exact socket undo/redo, private metadata and physical cube conservation`);
    await exploreTo(mages[3], { q: 0, r: 0 });
    assert.equal(epoch.currentPlayerId, 'p1');
    assert.equal(player(epoch, 'p4').actionTokens, 0);

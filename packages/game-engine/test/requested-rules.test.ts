@@ -57,7 +57,7 @@ function expectCubesConserved(g:GameState) {
 }
 function expectCardsConserved(g:GameState) {
  const cards=[...g.powerfulDeck,...g.removedCards,...g.library.flatMap(d=>[...d.cards,...d.discard]),...g.players.flatMap(p=>[...p.hand,...p.personalDeck,...p.discard,...Object.values(p.prepared).filter(c=>c&&!c.used).map(c=>c!.card)])];
- expect(cards).toHaveLength(72);expect(new Set(cards.map(c=>c.id)).size).toBe(72);
+ expect(cards).toHaveLength(108);expect(new Set(cards.map(c=>c.id)).size).toBe(108);
 }
 
 describe('hex range calculus',()=>{
@@ -498,8 +498,8 @@ describe('all-model targeting and physical damage cubes',()=>{
   let g=actionFixture();g.evocations=[cadaver('enemy','p2',{q:1,r:0}),cadaver('friendly')];
   prepare(g,'slot1',{target:'MODEL',damage:1,instability:1,range:1});
   const cast={type:'CAST_SPELL' as const,playerId:'p1',slot:'slot1' as const,targetEvocationId:'enemy'};
-  expectRejected(g,{...cast,targetPlayerId:'p2'},/Select another mage or evocation/);
-  expectRejected(g,{...cast,targetEvocationId:'friendly'},/own models/);
+  expectRejected(g,{...cast,targetPlayerId:'p2'},/Select one mage or evocation/);
+  expectRejected(g,{...cast,targetEvocationId:'friendly'},/category or ownership/);
   expectRejected(g,{...cast,targetEvocationId:'missing'},/not found/);
   expectRejected(g,{...cast,dummy:true,roomId:'room-0,0'},/either/);
   const far=structuredClone(g);far.evocations[0].position={q:2,r:0};expectRejected(far,cast,/range/);
@@ -511,8 +511,8 @@ describe('all-model targeting and physical damage cubes',()=>{
   let g=actionFixture();g.evocations=[cadaver('enemy','p2',{q:1,r:0}),cadaver('friendly')];const power=holdPower(g);
   player(g).hand.splice(player(g).hand.indexOf(power),1);player(g).prepared.rapid={card:power,used:false};
   const cast={type:'CAST_SPELL' as const,playerId:'p1',slot:'rapid' as const,targetEvocationId:'enemy'};
-  expectRejected(g,{...cast,targetPlayerId:'p2'},/Select another mage or evocation/);
-  expectRejected(g,{...cast,targetEvocationId:'friendly'},/own models/);
+  expectRejected(g,{...cast,targetPlayerId:'p2'},/Select one mage or evocation/);
+  expectRejected(g,{...cast,targetEvocationId:'friendly'},/category or ownership/);
   expectRejected(g,{...cast,dummy:true,roomId:'room-0,0'},/either/);
   g=applyAction(g,cast);expect(g.evocations.map(e=>e.id)).toEqual(['friendly']);expect(g.removedCards).toEqual([power]);
   expect(room(g,'room-1,0').cubesByPlayer).toEqual({p1:power.instability});expect(room(g).instability).toBe(0);

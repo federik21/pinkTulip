@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
-import { areInSameRoom, isWithinSpellRange } from '../packages/game-engine/src/engine';
+import { areInSameRoom, canUseSpellDummy, isWithinSpellRange, spellCanTargetModel } from '../packages/game-engine/src/engine';
 import type { Card, GameAction, GameState, Hex, Player } from '../packages/game-engine/src/types';
 
 // Real isolated server/clients: no engine fixtures, state mutation or test-only actions.
@@ -34,6 +34,24 @@ function epochKey(s: GameState) {
   return { ...publicPlayer, hand: hand.length, personalDeck: personalDeck.length,
    prepared: slots.map(slot => prepared[slot] ? { used: prepared[slot]!.used } : null) };
  }) });
+}
+
+function checkCardSupply(state: GameState, owners: Player[]) {
+ assert.equal(owners.length, state.players.length, 'Combine only each mage’s own view at the same epoch');
+ // Used preparations reference discarded/removed cards, not additional physical copies.
+ const visible = [...state.library.flatMap(deck => deck.discard), ...state.removedCards,
+  ...owners.flatMap(p => [...p.hand, ...p.discard, ...Object.values(p.prepared)
+   .filter(slot => slot && !slot.used).map(slot => slot!.card)])];
+ assert.ok(visible.every(card => !card.id.startsWith('hidden-')));
+ assert.equal(new Set(visible.map(card => card.id)).size, visible.length, 'All observable physical cards have globally unique IDs');
+ const shared = visible.filter(card => card.schoolId);
+ assert.ok(shared.every(card => state.library.some(deck => deck.id === card.schoolId) && !card.powerful && card.id.startsWith(`${card.schoolId}-`)));
+ for (const deck of state.library)
+  assert.equal(deck.cards.length + shared.filter(card => card.schoolId === deck.id).length, 36, `${deck.name} conserves its own 36 cards`);
+ // Hidden future IDs deliberately cannot be compared across private wire views.
+ assert.equal(state.library.reduce((sum, deck) => sum + deck.cards.length, 0) + shared.length, 72);
+ assert.equal(state.library.reduce((sum, deck) => sum + deck.cards.length, 0) + state.powerfulDeck.length +
+  state.players.reduce((sum, p) => sum + p.personalDeck.length, 0) + visible.length, 72 + 12 * state.players.length + 12);
 }
 
 class Mage {
@@ -200,9 +218,15 @@ async function main() {
     const sameTurn = (before: GameState, id: string) => epoch.phase === 'ACTION' && epoch.currentPlayerId === id &&
     !epoch.log.slice(before.log.length).some(line => line.includes(' takes a turn: '));
   async function privacy() {
+   const owners: Player[] = [];
+   const hidden = (cards: Card[]) => cards.forEach((card, index) => assert.deepEqual(card, {
+    id: `hidden-${index}`, name: 'Hidden spell', kind: 'SPELL', damage: 0,
+    instability: 0, range: 0, target: 'MODEL',
+   }));
    for (const { id, connected } of epoch.players) {
     if (!connected) continue;
     const own = await client(id).sync(epoch);
+    owners.push(player(own, id));
     assert.equal(epochKey(own), epochKey(epoch));
     assert.ok(own.history && typeof own.history.canUndo === 'boolean' && typeof own.history.canRedo === 'boolean');
     assert.ok(Object.keys(own.history).every(key => ['canUndo', 'canRedo', 'undoLabel', 'redoLabel'].includes(key)), 'History exposes availability only, never snapshots');
@@ -210,14 +234,21 @@ async function main() {
      assert.equal(other.quest, null); assert.deepEqual(other.additionalQuests, []);
      assert.ok(other.hand.every(c => c.name === 'Hidden spell' && !c.schoolId && !c.powerful));
      assert.ok(Object.values(other.prepared).every(c => !c || c.card.name === 'Hidden spell' && !c.card.powerful));
+     hidden(other.hand);
+     for (const prepared of Object.values(other.prepared)) if (prepared) hidden([prepared.card]);
     }
-    assert.ok(own.players.every(p => p.personalDeck.every(c => c.name === 'Hidden spell')));
+    for (const p of own.players) hidden(p.personalDeck);
     assert.deepEqual(own.eventDeck, []); assert.deepEqual(own.questDeck, []);
-    assert.deepEqual(own.library.map(({ id, name }) => ({ id, name })), [{ id: 'cantrip', name: 'Cantrip' }]);
-    assert.ok(own.library[0].cards.length + own.library[0].discard.length <= 36);
-    assert.ok(own.library.every(d => d.cards.every(c => c.name === 'Hidden spell')));
-    assert.ok(own.powerfulDeck.every(c => c.name === 'Hidden spell' && !c.powerful));
+    assert.deepEqual(own.library.map(({ id, name }) => ({ id, name })), [
+     { id: 'cantrip', name: 'Cantrip' }, { id: 'transmutation', name: 'Transmutation' },
+    ]);
+    for (const deck of own.library) {
+     assert.ok(deck.cards.length + deck.discard.length <= 36);
+     hidden(deck.cards);
+    }
+    hidden(own.powerfulDeck);
    }
+   checkCardSupply(epoch, owners);
   }
   const command = async (mage: Mage, action: WireAction, error?: RegExp): Promise<GameState> => {
     await mage.sync(epoch); const before = epoch;
@@ -362,7 +393,7 @@ async function main() {
   };
   assert.equal(epoch.phase, 'LOBBY'); assert.deepEqual(epoch.evocations, []);
   assert.deepEqual(epoch.players.map(p => p.id), ['p1'], 'Creating a room must not invent an unjoined second mage');
-  assert.equal(epoch.library[0].cards.length, 36); assert.deepEqual(epoch.library[0].discard, []);
+  for (const deck of epoch.library) { assert.equal(deck.cards.length, 36); assert.deepEqual(deck.discard, []); }
   assert.equal(epoch.board.rooms.filter(r => r.color === 'grey' && r.effect === 'SUMMON_CADAVER').length, 3);
   await legacy('p1'); await act({ type: 'SET_READY', playerId: 'p1', ready: true });
   assert.equal(epoch.phase, 'LOBBY'); assert.equal(epoch.round, 0, 'A ready solo creator must wait for another mage');
@@ -407,10 +438,11 @@ async function main() {
     const own = player(await client(id).sync(epoch), id);
     assert.equal(own.hand.length, player(before, id).hand.length + 2);
     await act({ type: 'DISCARD_HAND_LIMIT', playerId: id, cardIds: [] }, /STUDY/);
-   const stock = epoch.library[0], reshuffles = stock.cards.length < 4;
+  const stock = epoch.library[0], transmutation = epoch.library[1], reshuffles = stock.cards.length < 4;
    await act({ type: 'DRAW_STUDY', playerId: id, deckId: 'cantrip' });
    assert.equal(epoch.library[0].cards.length, stock.cards.length + (reshuffles ? stock.discard.length : 0) - 4);
    assert.equal(epoch.library[0].discard.length, reshuffles ? 0 : stock.discard.length);
+  assert.deepEqual(epoch.library[1], transmutation, 'Cantrip draws and reshuffles must not borrow from Transmutation');
    const hand = player(epoch, id).hand;
    assert.equal(hand.length, own.hand.length + 4);
    assert.ok(hand.slice(-4).every(c => c.schoolId === 'cantrip' && c.id.startsWith('cantrip-')));
@@ -418,6 +450,7 @@ async function main() {
     assert.equal(discarded.length, 2);
     await act({ type: 'DISCARD_STUDY', playerId: id, cardIds: discarded });
     assert.ok(discarded.every(cardId => epoch.library[0].discard.some(c => c.id === cardId)));
+    assert.deepEqual(epoch.library[1], transmutation, 'Cantrip discards stay out of the other school');
    }
    for (const id of ids) {
     let own = player(await client(id).sync(epoch), id);
@@ -452,11 +485,25 @@ async function main() {
 
   function spellTarget(id: string, card: Card) {
    const p = player(epoch, id);
+   const legal = (owner: string, kind: 'MAGE' | 'EVOCATION', position: Hex) =>
+    spellCanTargetModel(card, id, owner, kind) && isWithinSpellRange(p.wizard.position, position, card.range) && !roomAt(epoch, position).startingFor;
+   if (card.target === 'SELF') {
+    assert.ok(legal(id, 'MAGE', p.wizard.position)); return { targetPlayerId:id };
+   }
+   if (card.target !== 'ROOM' && !canUseSpellDummy(card)) {
+    const mage = [...epoch.players].sort((a, b) => b.wizard.damageCubes - a.wizard.damageCubes)
+     .find(t => legal(t.id, 'MAGE', t.wizard.position) && (!card.damage || t.id === id));
+    if (mage) return { targetPlayerId:mage.id };
+    const model = [...epoch.evocations].sort((a, b) => b.damageCubes - a.damageCubes)
+     .find(e => legal(e.playerId, 'EVOCATION', e.position) && (!card.damage || e.playerId === id));
+    assert.ok(model, `A real safe ${card.target} target is required; support cannot use a dummy`);
+    return { targetEvocationId:model.id };
+   }
     const room = epoch.board.rooms.find(r => !r.startingFor && r.tiles.some(h => isWithinSpellRange(p.wizard.position, h, card.range)) &&
     !epoch.players.some(other => other.id !== id && r.tiles.some(h => sameHex(h, other.wizard.position))) &&
     !epoch.evocations.some(e => e.playerId !== id && r.tiles.some(h => sameHex(h, e.position))));
    assert.ok(room, 'Every planned cast has a real safe room target');
-   return { roomId: room.id, ...(card.target === 'MODEL' ? { dummy: true } : {}) };
+   return { roomId: room.id, ...(canUseSpellDummy(card) ? { dummy: true } : {}) };
   }
   async function castAvailable(id: string, numberedOnly = false) {
    epoch = await client(id).sync(epoch);
@@ -466,12 +513,12 @@ async function main() {
     if (!slot) return false;
     const card = p.prepared[slot]!.card, before = epoch;
     const rangeCoverage = card.powerful ? 'offAxisPowerful' : 'offAxisPrepared';
-  if (!coverage[rangeCoverage]) {
+  if (!coverage[rangeCoverage] && (card.target === 'ROOM' || canUseSpellDummy(card))) {
    const origin = p.wizard.position;
    const offLine = epoch.board.rooms.find(r => !r.startingFor && r.tiles.some(h =>
     distance(origin, h) <= card.range && h.q !== origin.q && h.r !== origin.r && h.q + h.r !== origin.q + origin.r));
    if (offLine) {
-    const targeting = { roomId: offLine.id, ...(card.target === 'MODEL' ? { dummy: true } : {}) };
+    const targeting = { roomId: offLine.id, ...(canUseSpellDummy(card) ? { dummy: true } : {}) };
     await act({ type: 'CAST_SPELL', playerId: id, slot, ...targeting }, /Room out of range/);
     assert.deepEqual(epoch, before, 'Rejected off-axis spells must preserve the entire authoritative state');
     coverage[rangeCoverage]++;
@@ -479,8 +526,10 @@ async function main() {
   }
   await act({ type: 'CAST_SPELL', playerId: id, slot, ...spellTarget(id, card) });
    assert.equal(player(epoch, id).actionTokens, p.actionTokens);
-   assert.deepEqual(epoch.players.map(p => p.wizard), before.players.map(p => p.wizard));
-   assert.deepEqual(epoch.evocations.map(({ activated, ...e }) => e), before.evocations.map(({ activated, ...e }) => e));
+    if (!card.heal && !card.convert) {
+     assert.deepEqual(epoch.players.map(p => p.wizard), before.players.map(p => p.wizard));
+     assert.deepEqual(epoch.evocations.map(({ activated, ...e }) => e), before.evocations.map(({ activated, ...e }) => e));
+    }
    coverage.prepared++; preparedByRound[before.round - 1]++;
    if (slot === 'rapid') coverage.flexible++; else coverage.numbered++;
    assert.equal(player(epoch, id).prepared[slot]!.used, true);

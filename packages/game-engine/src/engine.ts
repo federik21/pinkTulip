@@ -32,6 +32,14 @@ export const isWithinSpellRange = (a: Hex, b: Hex, range: number): boolean => {
  const distance=hexLineDistance(a,b);
  return Number.isFinite(distance) && distance<=range;
 };
+export function spellCanTargetModel(card:Card,casterId:string,ownerId:string,kind:'MAGE'|'EVOCATION'):boolean {
+ if(card.target==='SELF')return kind==='MAGE' && casterId===ownerId;
+ if(card.target==='ROOM' || (card.target!=='MODEL' && card.target!==kind))return false;
+ return casterId!==ownerId || (card.heal??0)>0 || (card.convert??0)>0;
+}
+export function canUseSpellDummy(card:Card):boolean {
+ return card.target==='MODEL' && !card.heal && !card.convert;
+}
 export const areAdjacent = (a: Hex, b: Hex) => hexDistance(a,b) === 1;
 export function areInSameRoom(game:Pick<GameState,'board'>,a:Hex,b:Hex):boolean {
  return game.board.rooms.some(room=>room.tiles.some(h=>hexKey(h)===hexKey(a)) && room.tiles.some(h=>hexKey(h)===hexKey(b)));
@@ -236,8 +244,8 @@ function damageEvocation(s:GameState,e:Evocation,amount:number,source:Player) {
  if(cubes)e.damageByPlayer[source.id]=(e.damageByPlayer[source.id]??0)+cubes;
  s.log.push(`${e.name} suffers ${inflicted} damage; ${source.name} places ${cubes} damage cubes.`);
  if(e.damageCubes<e.health)return;
- for(const [id,n] of Object.entries(e.damageByPlayer)) {
-  const owner=getPlayer(s,id);owner.cubes.available+=n;owner.cubes.onEvocations-=n;
+ for(const owner of s.players) {
+  const n=e.damageByPlayer[owner.id]??0;owner.cubes.available+=n;owner.cubes.onEvocations-=n;
  }
  s.evocations=s.evocations.filter(model=>model.id!==e.id);
  s.log.push(`${e.name} is destroyed; its damage cubes return to their owners.`);
@@ -248,6 +256,57 @@ function modelTarget(s:GameState,id:string) {
  const evocation=s.evocations.find(e=>e.id===id);
  assert(mage||evocation,'Target model not found');
  return {mage,evocation,playerId:mage?.id??evocation!.playerId,position:mage?.wizard.position??evocation!.position};
+}
+
+type CubeLocation = 'onWizard' | 'onEvocations' | 'onBoard';
+type WoundedModel = Pick<Player['wizard'],'damageCubes'|'damageByPlayer'> & {blackDamage?:number};
+function removeCubes(ledger:Record<PlayerId,number>,id:PlayerId,amount:number) {
+ ledger[id]-=amount;
+ if(ledger[id]===0)delete ledger[id];
+}
+
+// Physical sources are always processed in seat order, then Black Rose. Neutral
+// cubes have no supply to return; unattributed wounds are not convertible cubes.
+function convertCubes(s:GameState,p:Player,ledger:Record<PlayerId,number>,location:CubeLocation,amount:number,total:number,model?:WoundedModel) {
+ let remaining=Math.min(amount,p.cubes.available,total),converted=0;
+ for(const id of [...s.players.map(owner=>owner.id),BLACK_ROSE_ID]) {
+  if(id===p.id || remaining<=0)continue;
+  const n=Math.min(remaining,ledger[id]??0);
+  if(n>0) {
+   removeCubes(ledger,id,n);
+   const owner=s.players.find(owner=>owner.id===id);
+   if(owner){owner.cubes.available+=n;owner.cubes[location]-=n;}
+   converted+=n;remaining-=n;
+  }
+  if(id===BLACK_ROSE_ID && model && remaining>0) {
+   const black=Math.min(remaining,model.blackDamage??0);
+   if(black>0){model.blackDamage!-=black;converted+=black;remaining-=black;}
+  }
+ }
+ if(converted>0) {
+  ledger[p.id]=(ledger[p.id]??0)+converted;
+  p.cubes.available-=converted;p.cubes[location]+=converted;
+  s.log.push(`${p.name} converts ${converted} ${location==='onBoard'?'instability':'damage'} cubes; total ${location==='onBoard'?'instability':'wounds'} is unchanged.`);
+ }
+}
+
+// Healing returns colored cubes in seat order (including safe own-color legacy
+// ledgers), then removes Black Rose cubes, then any unattributed wounds.
+function healModel(s:GameState,model:WoundedModel,location:Exclude<CubeLocation,'onBoard'>,amount:number) {
+ const healed=Math.min(amount,model.damageCubes);
+ let remaining=healed;
+ for(const owner of s.players) {
+  const n=Math.min(remaining,model.damageByPlayer[owner.id]??0);
+  if(n>0) {
+   removeCubes(model.damageByPlayer,owner.id,n);
+   owner.cubes.available+=n;owner.cubes[location]-=n;remaining-=n;
+  }
+ }
+ const black=Math.min(remaining,model.damageByPlayer[BLACK_ROSE_ID]??0);
+ if(black>0){removeCubes(model.damageByPlayer,BLACK_ROSE_ID,black);remaining-=black;}
+ if(model.blackDamage!==undefined)model.blackDamage-=Math.min(remaining,model.blackDamage);
+ model.damageCubes-=healed;
+ if(healed>0)s.log.push(`Healing removes ${healed} wounds and returns their physical cubes.`);
 }
 
 function damageModel(s:GameState,id:string,amount:number,source:Player) {
@@ -456,8 +515,11 @@ export function canPlayerAct(s: GameState, p: Player): boolean {
  return spells.some(prepared=>{
   if(!prepared || prepared.used)return false;
   const card=prepared.card;
-  // Every spell may target a room; model spells can use a harmless dummy there.
-  return s.board.rooms.some(r=>!r.startingFor && r.tiles.some(h=>isWithinSpellRange(p.wizard.position,h,card.range)));
+  if(card.target==='ROOM' || canUseSpellDummy(card))return s.board.rooms.some(r=>!r.startingFor && r.tiles.some(h=>isWithinSpellRange(p.wizard.position,h,card.range)));
+  const legal=(ownerId:string,kind:'MAGE'|'EVOCATION',position:Hex)=>spellCanTargetModel(card,p.id,ownerId,kind)
+   && !s.board.rooms.some(r=>r.startingFor && r.tiles.some(h=>hexKey(h)===hexKey(position)))
+   && isWithinSpellRange(p.wizard.position,position,card.range);
+  return s.players.some(t=>legal(t.id,'MAGE',t.wizard.position)) || s.evocations.some(e=>legal(e.playerId,'EVOCATION',e.position));
  });
 }
 
@@ -577,25 +639,44 @@ function castSpell(s: GameState, p: Player, action: Extract<GameAction,{type:'CA
   assert(slots.find(slot=>p.prepared[slot] && !p.prepared[slot]!.used)===action.slot,'Cast numbered spells in order 1 → 2 → 3');
  }
  const spell=card!;
- let targets: string[]=[]; let room: Room | undefined;
+ let targets: ReturnType<typeof modelTarget>[]=[]; let room: Room | undefined;
  if(spell.target==='ROOM' || action.dummy) {
-  assert(!action.dummy || spell.target==='MODEL','Dummy targeting is for single-model spells');
-  assert(!action.dummy || (!action.targetPlayerId&&!action.targetEvocationId),'Choose either a model or a dummy');
+  assert(!action.dummy || canUseSpellDummy(spell),'Dummy targeting is only for MODEL spells without healing or conversion');
+  assert(!action.targetPlayerId&&!action.targetEvocationId,'Choose either a room/dummy or a model');
   assert(action.roomId,'Select a room'); room=getRoom(s,action.roomId!);
   assert(!room.startingFor,'Starting rooms cannot be targeted');
   assert(room.tiles.some(h=>isWithinSpellRange(p.wizard.position,h,spell.range)),'Room out of range');
-  if(!action.dummy)targets=[...s.players.filter(t=>t.id!==p.id && inRoom(t,room!)).map(t=>t.id),...s.evocations.filter(e=>e.playerId!==p.id && room!.tiles.some(h=>hexKey(h)===hexKey(e.position))).map(e=>e.id)];
+  if(!action.dummy)targets=[...s.players.filter(t=>inRoom(t,room!)).map(t=>modelTarget(s,t.id)),...s.evocations.filter(e=>room!.tiles.some(h=>hexKey(h)===hexKey(e.position))).map(e=>modelTarget(s,e.id))];
  } else {
-  assert(!!action.targetPlayerId!==!!action.targetEvocationId,'Select another mage or evocation');
-  const id=action.targetEvocationId??action.targetPlayerId!;
-  const target=modelTarget(s,id);assert(target.playerId!==p.id,'Cannot damage your own models; select another mage or evocation');
+  assert(!action.roomId,'Individual model spells cannot target a room');
+  const inferSelf=spell.target==='SELF' && !action.targetPlayerId && !action.targetEvocationId;
+  assert(inferSelf || !!action.targetPlayerId!==!!action.targetEvocationId,'Select one mage or evocation');
+  const id=inferSelf?p.id:action.targetEvocationId??action.targetPlayerId!;
+  const target=modelTarget(s,id);
+  assert(inferSelf || (action.targetPlayerId?!!target.mage:!!target.evocation),'Target payload does not match the model kind');
+  assert(spellCanTargetModel(spell,p.id,target.playerId,target.mage?'MAGE':'EVOCATION'),'Spell cannot target this model category or ownership');
   room=s.board.rooms.find(r=>r.tiles.some(h=>hexKey(h)===hexKey(target.position)));
   assert(!room?.startingFor,'Cannot target a model in its starting room');
-  assert(isWithinSpellRange(p.wizard.position,target.position,spell.range),'Model out of range');targets=[id];
+  assert(isWithinSpellRange(p.wizard.position,target.position,spell.range),'Model out of range');targets=[target];
  }
- // Resolve instability before damage so a defeated target's respawn never moves the room effect.
+ // Snapshot targets/room before resolving: instability, conversion, healing,
+ // damage last. Defeat/respawn cannot relocate any already-selected room effect.
  if(room && spell.instability>0) placeInstability(s,room,spell.instability,p);
- for(const id of targets)damageModel(s,id,spell.damage,p);
+ if((spell.convert??0)>0) {
+  // A ROOM conversion changes live instability ownership, never model wounds or
+  // historical contributions. Full-but-unbuilt rooms still contain live cubes.
+  if(spell.target==='ROOM') {
+   if(room && !room.scored && !room.reconstructed)convertCubes(s,p,room.cubesByPlayer,'onBoard',spell.convert!,room.instability);
+  } else for(const target of targets) {
+   const model=target.mage?.wizard??target.evocation!;
+   convertCubes(s,p,model.damageByPlayer,target.mage?'onWizard':'onEvocations',spell.convert!,model.damageCubes,model);
+  }
+ }
+ if((spell.heal??0)>0)for(const target of targets)healModel(s,target.mage?.wizard??target.evocation!,target.mage?'onWizard':'onEvocations',spell.heal!);
+ if(spell.damage>0)for(const target of targets) {
+  if(target.playerId===p.id)continue; // Support may select friends; damage never does.
+  if(target.mage)damage(s,target.mage,spell.damage,p);else damageEvocation(s,target.evocation!,spell.damage,p);
+ }
  prepared!.used=true;
  if(spell.powerful){s.removedCards.push(spell);s.log.push(`${spell.name} is removed from the game after use.`);}
  else discardCard(s,p,spell);

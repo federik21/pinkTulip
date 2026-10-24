@@ -40,7 +40,7 @@ function cards(g:GameState) {
  return [...g.powerfulDeck,...g.removedCards,...g.library.flatMap(d=>[...d.cards,...d.discard]),...g.players.flatMap(p=>[...p.hand,...p.discard,...p.personalDeck,...Object.values(p.prepared).filter(c=>c&&!c.used).map(c=>c!.card)])];
 }
 function conserved(g:GameState) {
- expect(cards(g)).toHaveLength(72);expect(new Set(cards(g).map(c=>c.id)).size).toBe(72);
+ const all=cards(g);expect(all).toHaveLength(72+12*g.players.length+12);expect(new Set(all.map(c=>c.id)).size).toBe(all.length);
  for(const p of g.players) {
   expect(p.cubes.available+p.cubes.onWizard+p.cubes.onBoard+p.cubes.onEvocations).toBe(25);
   expect(p.cubes.onWizard).toBe(g.players.reduce((sum,victim)=>sum+(victim.wizard.damageByPlayer[p.id]??0),0));

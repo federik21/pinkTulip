@@ -58,45 +58,62 @@ const rgb=(color:string)=>`rgb(${[1,3,5].map(start=>parseInt(color.slice(start,s
 const colorFor=(id:string)=>rgb(MAGE_COLORS[id]??'#d4cedd');
 
 for(const viewport of [{width:1440,height:1200},{width:390,height:844}]) {
- test(`Study offers only Cantrip and draws from its single shared school at ${viewport.width}px`,async ({page},testInfo)=>{
+ for(const schoolId of ['cantrip','transmutation']) {
+ test(`Study offers two independent schools and draws/discards ${schoolId} at ${viewport.width}px`,async ({page},testInfo)=>{
   await page.setViewportSize(viewport);
   let game=fixtureState(4);game.phase='STUDY';game.activation=null;game.currentPlayerId=null;
   for(const p of game.players)p.hand.push(...p.personalDeck.splice(0,2));
   const wire=await mount(page,game);
   const panel=page.locator('.phase-panel'),schools=panel.locator('.schools button');
-  await expect(panel.getByRole('heading',{name:'Cantrip',exact:true})).toBeVisible();
-  await expect(schools).toHaveCount(1);
-  await expect(schools).toContainText('Cantrip');
-  await expect(schools).toContainText('36 draw · 0 discard');
-  await expect(panel).toContainText('shared 36-card school');
+  const chosen=panel.locator(`.schools button[data-school-id="${schoolId}"]`);
+  const otherId=schoolId==='cantrip'?'transmutation':'cantrip';
+  const other=panel.locator(`.schools button[data-school-id="${otherId}"]`);
+  const deck=game.library.find(d=>d.id===schoolId)!;
+  const otherDeck=game.library.find(d=>d.id===otherId)!;
+  await expect(panel.getByRole('heading',{name:'Schools of magic',exact:true})).toBeVisible();
+  await expect(schools).toHaveCount(2);
+  await expect(schools.locator('strong')).toHaveText(['Cantrip','Transmutation']);
+  for(const button of [chosen,other]) {
+   await expect(button).toContainText('36 draw · 0 discard');
+   await expect(button).toBeEnabled();
+  }
+  await expect(panel).toContainText('Choose a school to draw 4 spells. Each school has 12 spells with 3 copies of each, for 36 cards.');
+  await expect(chosen).toContainText(schoolId==='transmutation'?'Heal wounds · Convert cubes':'Damage · Instability');
   await expect(panel).not.toContainText(/six|School [1-6]/i);
-  await testInfo.attach(`cantrip-${viewport.width}`,{body:await panel.screenshot({path:testInfo.outputPath('cantrip.png')}),contentType:'image/png'});
+  await testInfo.attach(`schools-${schoolId}-${viewport.width}`,{body:await panel.screenshot({path:testInfo.outputPath('schools.png')}),contentType:'image/png'});
 
-  // Only the shared pool counts: other mages may be holding most of its cards.
-  game.players[1].hand.push(...game.library[0].cards.splice(3));wire.update(game);
-  await expect(schools).toContainText('3 draw · 0 discard');
-  await expect(schools).toBeDisabled();
-  game.library[0].discard.push(game.players[1].hand.pop()!);wire.update(game);
-  await expect(schools).toContainText('3 draw · 1 discard');
-  await expect(schools).toBeEnabled();
-  await schools.click();
+  // Availability is per school, never the combined stock or opponents' hands.
+  game.players[1].hand.push(...deck.cards.splice(3));wire.update(game);
+  await expect(chosen).toContainText('3 draw · 0 discard');
+  await expect(chosen).toBeDisabled();await expect(other).toBeEnabled();
+  game.players[2].hand.push(...otherDeck.cards.splice(3));wire.update(game);
+  await expect(other).toBeDisabled();
+  deck.discard.push(game.players[1].hand.pop()!);wire.update(game);
+  await expect(chosen).toContainText('3 draw · 1 discard');
+  await expect(chosen).toBeEnabled();await expect(other).toBeDisabled();
+  const untouched=structuredClone(otherDeck);
+  await chosen.click();
   await expect.poll(()=>wire.commands.length).toBe(1);
-  expect(wire.commands[0].action).toEqual({type:'DRAW_STUDY',playerId:'p1',deckId:'cantrip'});
-  await expect(schools).toBeDisabled();
+  expect(wire.commands[0].action).toEqual({type:'DRAW_STUDY',playerId:'p1',deckId:schoolId});
+  await expect(chosen).toBeDisabled();
   game=applyAction(game,wire.commands[0].action);wire.update(game);wire.ack();
+  expect(game.players[0].hand.filter(c=>c.schoolId===schoolId)).toHaveLength(4);
+  expect(game.library.find(d=>d.id===otherId)).toEqual(untouched);
   await expect(panel.locator('.spell')).toHaveCount(6);
-  await expect(panel).toContainText('Cantrip spells return to the shared Cantrip discard');
+  await expect(panel).toContainText('Shared spells return to their own school’s discard');
   await expect(panel.locator('.schools')).toHaveCount(0);
 
-  const discards=game.players[0].hand.filter(c=>c.schoolId==='cantrip').slice(0,2);
+  const discards=game.players[0].hand.filter(c=>c.schoolId===schoolId).slice(0,2);
   for(const card of discards)await panel.locator('.spell').nth(game.players[0].hand.findIndex(c=>c.id===card.id)).click();
   await panel.getByRole('button',{name:'Discard selected (2/2)',exact:true}).click();
   await expect.poll(()=>wire.commands.length).toBe(2);
   expect(wire.commands[1].action).toEqual({type:'DISCARD_STUDY',playerId:'p1',cardIds:discards.map(c=>c.id)});
   game=applyAction(game,wire.commands[1].action);wire.update(game);wire.ack();
-  expect(game.library).toHaveLength(1);expect(game.library[0].discard).toEqual(discards);
+  expect(game.library).toHaveLength(2);expect(game.library.find(d=>d.id===schoolId)!.discard).toEqual(discards);
+  expect(game.library.find(d=>d.id===otherId)).toEqual(untouched);
   await expect(page.getByText('✓ Study complete. Waiting for the other mages.',{exact:true})).toBeVisible();
  });
+ }
 }
 
 test('mage card counts show current hand size over the limit and update for every player',async ({page})=>{

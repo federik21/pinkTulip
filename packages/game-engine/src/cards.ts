@@ -28,8 +28,29 @@ export function createSpellDeck(prefix: string, schoolId?: string): Card[] {
  return Array.from({ length: 36 }, (_, i) => ({ ...patterns[i % patterns.length], id: `${prefix}-${i + 1}`, kind: 'SPELL', ...(schoolId ? {schoolId} : {}) }));
 }
 
+export function createTransmutationDeck(): Card[] {
+ const patterns: Omit<Card, 'id' | 'kind' | 'schoolId'>[] = [
+  { name: 'Mending Light', target: 'SELF', heal: 3, damage: 0, instability: 0, range: 0 },
+  { name: 'Vital Thread', target: 'MODEL', heal: 2, damage: 0, instability: 0, range: 2 },
+  { name: "Summoner's Balm", target: 'EVOCATION', heal: 2, damage: 0, instability: 0, range: 3 },
+  { name: 'Renewing Word', target: 'MAGE', heal: 3, damage: 0, instability: 0, range: 2 },
+  { name: 'Sanctuary', target: 'ROOM', heal: 2, damage: 0, instability: 0, range: 1 },
+  { name: 'Restorative Tide', target: 'ROOM', heal: 1, damage: 0, instability: 1, range: 2 },
+  { name: 'Stolen Sigil', target: 'MODEL', convert: 2, damage: 0, instability: 0, range: 2 },
+  { name: "Mage's Due", target: 'MAGE', convert: 3, damage: 0, instability: 0, range: 2 },
+  { name: 'Reclaimed Servant', target: 'EVOCATION', convert: 2, damage: 0, instability: 0, range: 3 },
+  { name: 'Rewrite the Lodge', target: 'ROOM', convert: 3, damage: 0, instability: 0, range: 2 },
+  { name: "Alchemist's Refuge", target: 'SELF', heal: 2, convert: 1, damage: 0, instability: 0, range: 0 },
+  { name: 'Transmuting Surge', target: 'MODEL', damage: 1, convert: 1, instability: 0, range: 2 },
+ ];
+ return Array.from({ length: 36 }, (_, i) => ({ ...patterns[i % patterns.length], id: `transmutation-${i + 1}`, kind: 'SPELL', schoolId: 'transmutation' }));
+}
+
 export function createLibrary(): LibraryDeck[] {
- return [{ id: 'cantrip', name: 'Cantrip', cards: shuffle(createSpellDeck('cantrip', 'cantrip')), discard: [] }];
+ return [
+  { id: 'cantrip', name: 'Cantrip', cards: shuffle(createSpellDeck('cantrip', 'cantrip')), discard: [] },
+  { id: 'transmutation', name: 'Transmutation', cards: shuffle(createTransmutationDeck()), discard: [] },
+ ];
 }
 
 // A finite, separate supply. These original spells never recycle into a discard.

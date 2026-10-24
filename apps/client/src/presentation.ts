@@ -1,8 +1,10 @@
 import type { CSSProperties } from 'react';
-import { BLACK_ROSE_ID, Evocation, GameState, Hex, MAGE_COLORS, hexKey } from '@brw/game-engine';
+import { BLACK_ROSE_ID, Evocation, GameState, Hex, MAGE_COLORS, SpellTarget, hexKey } from '@brw/game-engine';
 
 export const MAGE_SYMBOLS:Record<string,string>={p1:'🧙‍♀️',p2:'🧙‍♂️',p3:'🧝‍♀️',p4:'🧝‍♂️'};
 export const MAGE_COLOR_NAMES:Record<string,string>={p1:'Rose',p2:'Blue',p3:'Amber',p4:'Green'};
+export const SPELL_TARGET_LABELS:Record<SpellTarget,string>={SELF:'Self',ROOM:'Room',MAGE:'Mage',EVOCATION:'Evocation',MODEL:'Model'};
+export const SPELL_TARGET_DESCRIPTIONS:Record<SpellTarget,string>={SELF:'only your mage',ROOM:'all models in a room',MAGE:'one mage',EVOCATION:'one evocation',MODEL:'one mage or evocation'};
 export const ownerColor=(id:string)=>MAGE_COLORS[id]??'#d4cedd';
 export const mageStyle=(id:string)=>({'--mage-color':ownerColor(id)} as CSSProperties);
 export const ownerName=(game:GameState,id:string)=>id===BLACK_ROSE_ID?'Black Rose':game.players.find(p=>p.id===id)?.name??'Unknown mage';

@@ -85,7 +85,8 @@ function cleanupBoundaryFixture(g:GameState) {
 // Used preparations are references to cards already in a discard or removedCards, not extra physical cards.
 const physicalCards=(g:GameState)=>[...g.powerfulDeck,...g.removedCards,...g.library.flatMap(d=>[...d.cards,...d.discard]),...g.players.flatMap(p=>[...p.personalDeck,...p.hand,...p.discard,...Object.values(p.prepared).filter(c=>c&&!c.used).map(c=>c!.card)])];
 function expectConserved(g:GameState,ids:string[]) {
- const cards=physicalCards(g);expect(cards).toHaveLength(36+12*g.players.length+12);expect(new Set(cards.map(c=>c.id)).size).toBe(cards.length);
+ const cards=physicalCards(g);expect(cards).toHaveLength(72+12*g.players.length+12);expect(new Set(cards.map(c=>c.id)).size).toBe(cards.length);
+ for(const schoolId of ['cantrip','transmutation'])expect(cards.filter(c=>c.schoolId===schoolId)).toHaveLength(36);
  expect(cards.map(c=>c.id).sort()).toEqual([...ids].sort());
 }
 
@@ -100,13 +101,21 @@ describe('lobby and decks',()=>{
   expect(starts.every(r=>r.color===null && r.effect===null)).toBe(true);
   for(const start of starts)expect(g.board.rooms.some(r=>!r.startingFor && hexDistance(start.tiles[0],r.tiles[0])===1)).toBe(true);
  });
- it('creates exactly one 36-card Cantrip school with globally unique cards and bounded effects',()=>{
-  const g=createGame(); expect(g.phase).toBe('LOBBY'); expect(g.library).toHaveLength(1);
-  expect(g.library[0]).toMatchObject({id:'cantrip',name:'Cantrip',discard:[]});
-  const all=g.library.flatMap(d=>d.cards); expect(all).toHaveLength(36);expect(new Set(all.map(c=>c.id)).size).toBe(36);
-  expect(all.every(c=>c.schoolId==='cantrip' && c.id.startsWith('cantrip-') && !c.powerful)).toBe(true);
-  expect([...all].sort((a,b)=>a.id.localeCompare(b.id))).toEqual(createSpellDeck('cantrip','cantrip').sort((a,b)=>a.id.localeCompare(b.id)));
-  for(const c of all){expect(c.damage).toBeLessThanOrEqual(4);expect(c.instability).toBeLessThanOrEqual(2);}
+ it('creates two unique 36-card schools while preserving the unchanged Cantrip deck and bounded effects',()=>{
+  const g=createGame(); expect(g.phase).toBe('LOBBY'); expect(g.library).toHaveLength(2);
+  expect(g.library.map(({id,name,discard})=>({id,name,discard}))).toEqual([
+   {id:'cantrip',name:'Cantrip',discard:[]},{id:'transmutation',name:'Transmutation',discard:[]},
+  ]);
+  const all=g.library.flatMap(d=>d.cards); expect(all).toHaveLength(72);expect(new Set(all.map(c=>c.id)).size).toBe(72);
+  for(const deck of g.library) {
+   expect(deck.cards).toHaveLength(36);
+   expect(deck.cards.every(c=>c.schoolId===deck.id && c.id.startsWith(`${deck.id}-`) && !c.powerful)).toBe(true);
+   const names=[...new Set(deck.cards.map(c=>c.name))];expect(names).toHaveLength(12);
+   for(const name of names)expect(deck.cards.filter(c=>c.name===name)).toHaveLength(3);
+  }
+  const cantrip=g.library[0].cards;
+  expect([...cantrip].sort((a,b)=>a.id.localeCompare(b.id))).toEqual(createSpellDeck('cantrip','cantrip').sort((a,b)=>a.id.localeCompare(b.id)));
+  for(const c of cantrip){expect(c.damage).toBeLessThanOrEqual(4);expect(c.instability).toBeLessThanOrEqual(2);}
   expect(createSpellDeck('a').map(({id,...c})=>c)).toEqual(createSpellDeck('b').map(({id,...c})=>c));
   expectConserved(g,physicalCards(g).map(c=>c.id));
  });
@@ -157,8 +166,9 @@ describe('Black Rose, study and preparation',()=>{
   for(let i=0;i<count;i++) {
    const before=structuredClone(g),id=g.players[i].id;
    g=applyAction(g,{type:'DRAW_STUDY',playerId:id,deckId:'cantrip'});
-   expect(before.library[0].cards).toEqual(stock.slice(4*i));expect(g.library).toHaveLength(1);
+  expect(before.library[0].cards).toEqual(stock.slice(4*i));expect(g.library).toHaveLength(2);
    expect(g.library[0].cards).toEqual(stock.slice(4*(i+1)));expect(g.library[0].discard).toEqual([]);
+  expect(g.library[1]).toEqual(before.library[1]);
    expect(g.players[i].hand).toEqual([...personal[i],...stock.slice(4*i,4*(i+1))]);
    expect(g.players.filter(p=>p.id!==id)).toEqual(before.players.filter(p=>p.id!==id));
    expectConserved(g,ids);
@@ -183,8 +193,9 @@ describe('Black Rose, study and preparation',()=>{
   g=advance(g);expect(g.library.every(deck=>deck.discard.length===36)).toBe(true);
   g=applyAction(g,{type:'DRAW_STUDY',playerId:'p1',deckId:'cantrip'});
   expect(g.players[0].hand).toHaveLength(6);expect(g.library[0].cards).toHaveLength(32);
+  expect(g.library[1].cards).toEqual([]);expect(g.library[1].discard).toHaveLength(36);
   const all=physicalCards(g);
-  expect(all).toHaveLength(72);expect(new Set(all.map(c=>c.id)).size).toBe(72);expect(all.filter(c=>!c.powerful)).toHaveLength(60);
+  expect(all).toHaveLength(108);expect(new Set(all.map(c=>c.id)).size).toBe(108);expect(all.filter(c=>!c.powerful)).toHaveLength(96);
  });
  it.each([0,1,2,3])('draws across a Cantrip reshuffle with %i cards left, excluding held, prepared, personal and powerful piles',remaining=>{
   let g=studyGame();const ids=physicalCards(g).map(c=>c.id),deck=g.library[0],other=g.players[1];
@@ -196,12 +207,14 @@ describe('Black Rose, study and preparation',()=>{
   expect(drawn).toHaveLength(4);expect(drawn.slice(0,remaining)).toEqual(before.library[0].cards);
   for(const card of drawn.slice(remaining))expect(before.library[0].discard).toContainEqual(card);
   expect(g.library[0].cards).toHaveLength(30);expect(g.library[0].discard).toEqual([]);
+  expect(g.library[1]).toEqual(before.library[1]);
   expect(g.players[1]).toEqual(before.players[1]);expect(g.players[0].personalDeck).toEqual(before.players[0].personalDeck);
   expect(g.players[0].discard).toEqual(before.players[0].discard);expect(g.powerfulDeck).toEqual(before.powerfulDeck);expect(g.removedCards).toEqual(before.removedCards);
   expectConserved(g,ids);
  });
- it.each([0,1,2,3])('rejects a Cantrip shortage of %i available spells atomically despite stocked personal and powerful piles',available=>{
+ it.each([0,1,2,3])('rejects a Cantrip shortage of %i available spells atomically despite stocked Transmutation, personal and powerful piles',available=>{
   const g=studyGame(),ids=physicalCards(g).map(c=>c.id),deck=g.library[0];
+  expect(g.library[1]).toMatchObject({id:'transmutation',discard:[]});expect(g.library[1].cards).toHaveLength(36);
   g.players[1].hand.push(...deck.cards.splice(available));
   deck.discard.push(...deck.cards.splice(Math.min(1,available)));const before=structuredClone(g);
   expect(()=>applyAction(g,{type:'DRAW_STUDY',playerId:'p1',deckId:'cantrip'})).toThrow('Cantrip has fewer than 4 available spells');
@@ -223,7 +236,7 @@ describe('Black Rose, study and preparation',()=>{
    }
   g=passExhaustedFixture(g,'p1');g=passExhaustedFixture(g,'p2');
   const all=physicalCards(g);
-  expect(all).toHaveLength(72);expect(new Set(all.map(c=>c.id)).size).toBe(72);expect(all.filter(c=>!c.powerful)).toHaveLength(60);
+  expect(all).toHaveLength(108);expect(new Set(all.map(c=>c.id)).size).toBe(108);expect(all.filter(c=>!c.powerful)).toHaveLength(96);
   expect(g.phase).toBe(round===3?'GAME_OVER':'CLEANUP');if(round<3)g=advance(g);
   }
  });
@@ -728,7 +741,7 @@ describe('finite powerful spells',()=>{
    expect(g.powerfulDeck.filter(c=>JSON.stringify([c.damage,c.instability,c.range,c.target])===JSON.stringify(pattern))).toHaveLength(4);
   }
   expect(g.powerfulDeck.every(c=>c.kind==='SPELL' && c.powerful===true && !c.schoolId)).toBe(true);
-  expect(physicalCards(g).filter(c=>!c.powerful)).toHaveLength(60);expect(g.players.every(p=>p.additionalQuests.length===0)).toBe(true);
+  expect(physicalCards(g).filter(c=>!c.powerful)).toHaveLength(96);expect(g.players.every(p=>p.additionalQuests.length===0)).toBe(true);
   expectConserved(g,physicalCards(g).map(c=>c.id));
  });
  it('Center gives one held spell at Explore START or END, which must wait for later preparation',()=>{
@@ -847,10 +860,10 @@ describe('finite powerful spells',()=>{
    }
    if(card.target==='MODEL') {
     expect(()=>applyAction(g,{...cast,targetPlayerId:'p2'})).toThrow(/starting room/);
-    expect(()=>applyAction(g,{...cast,targetPlayerId:'p1'})).toThrow(/another mage/);
+    expect(()=>applyAction(g,{...cast,targetPlayerId:'p1'})).toThrow(/category or ownership/);
     expect(()=>applyAction(g,{...cast,dummy:true,roomId:'room-0,0',targetPlayerId:'p2'})).toThrow(/either/);
    } else {
-    expect(()=>applyAction(g,{...cast,dummy:true,roomId:'room-0,0'})).toThrow(/single-model/);
+    expect(()=>applyAction(g,{...cast,dummy:true,roomId:'room-0,0'})).toThrow(/Dummy targeting.*MODEL/);
     g.players[0].wizard.position={q:-2,r:0};
     expect(()=>applyAction(g,{...cast,roomId:'room-2,0'})).toThrow(/range/);g.players[0].wizard.position={q:0,r:0};
    }
