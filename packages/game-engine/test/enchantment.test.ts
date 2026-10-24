@@ -84,7 +84,7 @@ function reject(s:GameState,action:GameAction,error:RegExp) {
 }
 function expectSameFreshResolution(first:GameState,second:GameState) {
  // Independent resolutions have identical facts, but deliberately disjoint event UUIDs.
- const facts=(s:GameState)=>({...s,feedbackEvents:s.feedbackEvents?.map(({id,...event})=>event)});
+ const facts=(s:GameState)=>({...s,feedbackEvents:s.feedbackEvents?.map(({id,interruptId,...event})=>({...event,...(interruptId?{interruptIndex:s.feedbackEvents!.findIndex(e=>e.id===interruptId)}:{})}))});
  expect(facts(first)).toEqual(facts(second));
  const secondIds=new Set(second.feedbackEvents?.map(event=>event.id));
  for(const event of first.feedbackEvents??[])expect(secondIds.has(event.id)).toBe(false);
@@ -425,6 +425,64 @@ describe('continuous bindings, expiry, immunities and physical ledgers',()=>{
   s=exploreInto(s,'p1',{q:1,r:0});expect(room(s,east).instability).toBe(0);
   s=exploreInto(s,'p2',{q:1,r:0});expect(room(s,east)).toMatchObject({instability:1,cubesByPlayer:{p1:1}});conserved(s);
  });
+ it('Thorned Path ignores immediate own-mage conversion but still binds and places instability on entry',()=>{
+  const s=fixture();wound(s,'p1',{p2:1,p3:1,'black-rose':1});
+  const card=prepare(s,'Thorned Path'),before=structuredClone(s),cards=physicalCards(s);
+  let result=cast(s,'p1',{targetPlayerId:'p1-wizard'});
+  expect(player(result).wizard).toEqual(player(before).wizard);expect(result.players.map(p=>p.cubes)).toEqual(before.players.map(p=>p.cubes));
+  expect(result.feedbackEvents).toEqual([]);expect(result.activation).toMatchObject({actionsUsed:1,spellsCast:1});
+  expect(player(result).actionTokens).toBe(2);expect(player(result).prepared.rapid?.used).toBe(true);
+  expect(result.ongoingSpells).toMatchObject([{playerId:'p1',targetPlayerId:'p1',card}]);
+  const active=structuredClone(result.ongoingSpells);expect(result.activeSpellOrder).toEqual([active![0].id]);
+  expect(result.library.find(d=>d.id==='enchantment')!.discard).not.toContainEqual(card);
+  expect(s).toEqual(before);expect(physicalCards(result)).toEqual(cards);conserved(result);
+  result=exploreInto(result,'p1',{q:1,r:0});
+  expect(player(result).wizard).toMatchObject({damageCubes:3,damageByPlayer:{p2:1,p3:1,'black-rose':1},position:{q:1,r:0}});
+  expect(room(result,east)).toMatchObject({instability:1,cubesByPlayer:{p1:1}});
+  expect(player(result).cubes).toEqual({...player(before).cubes,available:player(before).cubes.available-1,onBoard:1});
+  expect(result.players.slice(1).map(p=>p.cubes)).toEqual(before.players.slice(1).map(p=>p.cubes));
+  expect(result.feedbackEvents).toMatchObject([{kind:'SPELL_TRIGGERED',activeSpellId:active![0].id,ongoing:true,ownerId:'p1',trigger:'ENTER_ROOM'}]);
+  expect(result.ongoingSpells).toEqual(active);expect(physicalCards(result)).toEqual(cards);conserved(result);
+ });
+ for(const kind of ['MAGE','EVOCATION'] as const)for(const own of [false,true]) {
+  it(`ongoing ${kind} binding ${own?'ignores own':'resolves enemy'} conversion both immediately and on entry, then resumes instability`,()=>{
+   const s=fixture(),id=kind==='MAGE'?(own?'p1':'p2'):'bound-servant';
+   if(kind==='EVOCATION')evoc(s,id,own?'p1':'p2',8);
+   wound(s,id,{p1:1,p3:2,'black-rose':1});
+   const trigger=on('ENTER_ROOM','BOUND_MODEL','ANY');
+   const card={...take(s,'Stolen Sigil'),convert:1,spellType:'CONTINGENCY' as const,ongoing:{trigger,effects:[
+    instruction('CONVERT',2,'BOUND_MODEL'),instruction('INSTABILITY',1,'EVENT_ROOM'),
+   ]}};
+   prepare(s,card);const before=structuredClone(s),cards=physicalCards(s);
+   let result=cast(s,'p1',kind==='MAGE'?{targetPlayerId:id}:{targetEvocationId:id});
+   const bound=(state:GameState)=>kind==='MAGE'?player(state,id).wizard:state.evocations.find(e=>e.id===id)!;
+   expect(bound(result)).toMatchObject({damageCubes:4,damageByPlayer:own?{p1:1,p3:2,'black-rose':1}:{p1:2,p3:1,'black-rose':1}});
+   if(own) {
+    expect(bound(result)).toEqual(bound(before));expect(result.players.map(p=>p.cubes)).toEqual(before.players.map(p=>p.cubes));
+    expect(result.feedbackEvents).toEqual([]);
+   } else expect(result.feedbackEvents).toMatchObject([{kind:'CONVERT',sourceId:'p1',target:{kind,id},amount:1,total:4}]);
+   expect(result.activation).toMatchObject({actionsUsed:1,spellsCast:1});expect(player(result).actionTokens).toBe(2);
+   const active=structuredClone(result.ongoingSpells!);expect(active).toHaveLength(1);expect(active[0].card).toEqual(card);
+   expect(s).toEqual(before);expect(physicalCards(result)).toEqual(cards);conserved(result);
+   const controller=own?'p1':'p2';turn(result,controller);
+   result=applyAction(result,kind==='MAGE'?{type:'EXPLORE',playerId:controller}:{type:'ACTIVATE_EVOCATION',playerId:controller,evocationId:id});
+   const beforeStep=structuredClone(result);
+   const moved=applyAction(result,kind==='MAGE'?{type:'EXPLORE_STEP',playerId:controller,destination:{q:1,r:0}}:{type:'EVOCATION_STEP',playerId:controller,destination:{q:1,r:0}});
+   expect(result).toEqual(beforeStep);
+   expect(bound(moved)).toMatchObject({position:{q:1,r:0},damageCubes:4,damageByPlayer:own?{p1:1,p3:2,'black-rose':1}:{p1:4}});
+   expect(room(moved,east)).toMatchObject({instability:1,cubesByPlayer:{p1:1}});
+   const location=kind==='MAGE'?'onWizard':'onEvocations',converted=own?0:2;
+   expect(player(moved).cubes).toEqual({...player(beforeStep).cubes,available:player(beforeStep).cubes.available-converted-1,
+    onBoard:player(beforeStep).cubes.onBoard+1,[location]:player(beforeStep).cubes[location]+converted});
+   expect(player(moved,'p3').cubes.available).toBe(player(beforeStep,'p3').cubes.available+(own?0:1));
+   const triggered=moved.feedbackEvents!.slice(beforeStep.feedbackEvents!.length);
+   expect(triggered.map(e=>e.kind)).toEqual(own?['SPELL_TRIGGERED']:['SPELL_TRIGGERED','CONVERT']);
+   expect(triggered[0]).toMatchObject({kind:'SPELL_TRIGGERED',activeSpellId:active[0].id,ongoing:true,trigger:'ENTER_ROOM'});
+   if(!own)expect(triggered[1]).toMatchObject({kind:'CONVERT',sourceId:'p1',target:{kind,id},amount:2,total:4,interruptId:triggered[0].id});
+   expect(moved.ongoingSpells).toEqual(active);expect(moved.activeSpellOrder).toEqual([active[0].id]);
+   expect(physicalCards(moved)).toEqual(cards);conserved(moved);
+  });
+ }
  it('Runic Remedy heals immediately and on bound-mage room activation, including the own mage',()=>{
   let s=fixture();wound(s,'p1',{p2:3});s=arm(s,'Runic Remedy','p1',{targetPlayerId:'p1'});
   expect(player(s).wizard.damageCubes).toBe(2);turn(s,'p1');s=applyAction(s,{type:'EXPLORE',playerId:'p1',activateRoomAtStart:true});
@@ -470,13 +528,51 @@ describe('continuous bindings, expiry, immunities and physical ledgers',()=>{
   s=applyAction(s,{type:'PUNCH',playerId:'p4',targetId:'p1'});
   expect(player(s).wizard).toMatchObject({damageCubes:2,damageByPlayer:{p4:2}});expect(player(s).cubes.available).toBe(25);expect(player(s,'p3').cubes.available).toBe(25);conserved(s);
  });
- it('retains active zones across Cleanup/Black Rose while clearing used preparation references without duplicating cards',()=>{
+ it('settles legacy Cleanup active zones once while clearing used preparation references without duplicating cards',()=>{
   let s=arm(fixture(),'Threshold Snare','p1',{roomId:east});s=arm(s,"Pilgrim's Mark",'p2',{});
   const cards=physicalCards(s),readied=structuredClone(s.readiedSpells),ongoing=structuredClone(s.ongoingSpells);
   s.phase='CLEANUP';s.activation=null;s.currentPlayerId=null;s.eventDeck=[{id:'quiet',name:'Quiet',description:'Quiet',kind:'BLACK_DAMAGE',amount:0,rooms:0}];
   s=applyAction(s,{type:'ADVANCE_PHASE',playerId:'p1',expectedPhase:'CLEANUP',expectedRound:1});
-  expect(s.readiedSpells).toEqual(readied);expect(s.ongoingSpells).toEqual(ongoing);expect(player(s).prepared.rapid).toBeNull();
+  expect(s.readiedSpells).toEqual([]);expect(s.ongoingSpells).toEqual([]);expect(s.activeSpellOrder).toEqual([]);
+  expect(player(s).hand).toContainEqual(readied![0].card);
+  expect(s.library.find(d=>d.id==='enchantment')!.discard).toContainEqual(ongoing![0].card);
+  expect(player(s).prepared.rapid).toBeNull();expect(player(s,'p2').prepared.rapid).toBeNull();
   expect(physicalCards(s)).toEqual(cards);conserved(s);
+ });
+ it.each([1,3])('returns untriggered traps/protections to their owners and discards ongoing effects at actual round-%i Cleanup, including endgame',round=>{
+  let s=arm(fixture(),'Threshold Snare','p1',{roomId:east});
+  s=arm(s,'Mending Ward','p2',{targetPlayerId:'p3'});s=arm(s,"Pilgrim's Mark",'p3',{});
+  const cards=physicalCards(s),readied=structuredClone(s.readiedSpells!),ongoing=structuredClone(s.ongoingSpells!),events=structuredClone(s.feedbackEvents);
+  evoc(s,'last-model','p4');s.phase='EVOCATION';s.round=round;s.currentPlayerId='p4';s.activation=null;
+  s=applyAction(s,{type:'ACTIVATE_EVOCATION',playerId:'p4',evocationId:'last-model'});
+  s=applyAction(s,{type:'END_EVOCATION',playerId:'p4'});
+  expect(s.phase).toBe(round===3?'GAME_OVER':'CLEANUP');
+  expect(s.readiedSpells).toEqual([]);expect(s.ongoingSpells).toEqual([]);expect(s.activeSpellOrder).toEqual([]);
+  for(const active of readied) {
+   expect(player(s,active.playerId).hand.filter(c=>c.id===active.card.id)).toEqual([active.card]);
+   expect(s.library.flatMap(d=>d.discard).some(c=>c.id===active.card.id)).toBe(false);
+  }
+  expect(s.library.find(d=>d.id==='enchantment')!.discard).toContainEqual(ongoing[0].card);
+  expect(player(s,'p3').hand).not.toContainEqual(ongoing[0].card);
+  expect(s.feedbackEvents).toEqual(events);expect(physicalCards(s)).toEqual(cards);expect(new Set(physicalCards(s)).size).toBe(120);conserved(s);
+  if(round===1) {
+   const settled=structuredClone(s.library),hands=s.players.map(p=>structuredClone(p.hand));
+   s.eventDeck=[{id:'quiet',name:'Quiet',description:'No damage',kind:'INSTABILITY',amount:0,rooms:0}];
+   s=applyAction(s,{type:'ADVANCE_PHASE',playerId:'p1',expectedPhase:'CLEANUP',expectedRound:1});
+   expect(s.players.map(p=>p.hand)).toEqual(hands);expect(s.library).toEqual(settled);expect(physicalCards(s)).toEqual(cards);
+   expect(s.players.every(p=>Object.values(p.prepared).every(c=>c===null))).toBe(true);
+  }
+ });
+ it('returns the actual physical hidden card even above the hand limit, deferring overflow to Preparation',()=>{
+  let s=arm(fixture(),'Threshold Snare','p1',{roomId:east});
+  const active=s.readiedSpells![0];player(s).hand.push(...s.library[0].cards.splice(0,7));const cards=physicalCards(s);
+  evoc(s,'last-model','p4');s.phase='EVOCATION';s.activation=null;s.currentPlayerId='p4';
+  s=applyAction(s,{type:'ACTIVATE_EVOCATION',playerId:'p4',evocationId:'last-model'});
+  s=applyAction(s,{type:'END_EVOCATION',playerId:'p4'});
+  expect(player(s).hand).toHaveLength(8);expect(player(s).hand.at(-1)).toEqual(active.card);expect(s.activeSpellOrder).toEqual([]);
+  s.phase='PREPARATION';player(s).preparationDone=false;
+  reject(s,{type:'PREPARE_CARDS',playerId:'p1',preparedCardIds:player(s).hand.slice(0,2).map(c=>c.id)},/hand limit/);
+  expect(physicalCards(s)).toEqual(cards);expect(new Set(cards).size).toBe(120);conserved(s);
  });
  it('can replay a serialized one-shot state twice without reusing physical instance IDs or mutating history snapshots',()=>{
   const s=arm(fixture(),'Threshold Snare','p1',{roomId:east}),before=structuredClone(s);

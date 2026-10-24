@@ -104,7 +104,7 @@ function nextActionRound(g:GameState) {
  g=advance(g);g=advance(g);
  for(const id of ['p1','p2']) {
   g=applyAction(g,{type:'DRAW_STUDY',playerId:id,deckId:'cantrip'});
-  g=applyAction(g,{type:'DISCARD_STUDY',playerId:id,cardIds:player(g,id).hand.slice(0,2).map(c=>c.id)});
+  g=applyAction(g,{type:'DISCARD_STUDY',playerId:id,cardIds:player(g,id).studyCardIds!.slice(0,2)});
  }
  for(const id of ['p1','p2']) {
   const cards=player(g,id).hand.slice(0,4);
@@ -629,7 +629,7 @@ describe('free Evocation phase scheduling',()=>{
   g=advance(g);
   for(const id of ['p1','p2']) {
     g=applyAction(g,{type:'DRAW_STUDY',playerId:id,deckId:'cantrip'});
-   g=applyAction(g,{type:'DISCARD_STUDY',playerId:id,cardIds:player(g,id).hand.slice(0,2).map(c=>c.id)});
+  g=applyAction(g,{type:'DISCARD_STUDY',playerId:id,cardIds:player(g,id).studyCardIds!.slice(0,2)});
   }
   for(const id of ['p1','p2']) {
    const cards=player(g,id).hand.slice(0,4);
@@ -708,7 +708,7 @@ describe('reconstructed room specials',()=>{
   g.eventDeck=[{id:'quiet',name:'Quiet',description:'Quiet',kind:'INSTABILITY',amount:0,rooms:0}];g=advance(g);g=advance(g);
   for(const id of ['p1','p2']) {
     g=applyAction(g,{type:'DRAW_STUDY',playerId:id,deckId:'cantrip'});
-   g=applyAction(g,{type:'DISCARD_STUDY',playerId:id,cardIds:player(g,id).hand.slice(0,2).map(c=>c.id)});
+  g=applyAction(g,{type:'DISCARD_STUDY',playerId:id,cardIds:player(g,id).studyCardIds!.slice(0,2)});
   }
   for(const id of ['p1','p2']) {
    const cards=player(g,id).hand.slice(0,4);g=applyAction(g,{type:'PREPARE_CARDS',playerId:id,preparedCardIds:cards.slice(0,3).map(c=>c.id),rapidCardId:cards[3].id});

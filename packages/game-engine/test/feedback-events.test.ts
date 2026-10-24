@@ -178,6 +178,43 @@ describe('defeat recap scoring and actual returned cubes', () => {
  });
 });
 
+describe('actual healing feedback',()=>{
+ it.each(['SELF','MAGE','EVOCATION'] as const)('reports actual removed wounds for %s with canonical target/source/location, not printed healing',kind=>{
+  const s=fixture(),e=kind==='EVOCATION'?evoc(s,8):undefined,id=e?.id??(kind==='SELF'?'p1':'p2');
+  wound(s,id,{p3:1});prepare(s,kind==='SELF'?'Mending Light':e?"Summoner's Balm":'Renewing Word');
+  const target:FeedbackTarget=e?{kind:'EVOCATION',id:e.id,name:e.name,roomId:center}:mageTarget(s,id);
+  const result=cast(s,'p1',kind==='SELF'?{}:e?{targetEvocationId:e.id}:{targetPlayerId:'p2-wizard'});
+  expect(facts(result)).toEqual([{kind:'HEAL',target,sourceId:'p1',amount:1}]);
+  expect(player(result,'p3').cubes.available).toBe(25);expect(events(result)[0]).not.toHaveProperty('interruptId');conserved(result);
+ });
+ it('records each actually wounded occupant of a room, including friendly mages and evocations, in authoritative order',()=>{
+  const s=fixture(),e=evoc(s,8);e.playerId='p1';
+  wound(s,'p1',{p3:1});wound(s,'p2',{p3:3});wound(s,'p4',{},1);wound(s,e.id,{p2:1},0,2);
+  prepare(s,'Sanctuary');const result=cast(s,'p1',{roomId:center});
+  expect(ofKind(result,'HEAL').map(event=>[event.target.id,event.amount,event.sourceId,event.target.roomId])).toEqual([
+   ['p1',1,'p1',center],['p2',2,'p1',center],['p4',1,'p1',center],[e.id,2,'p1',center],
+  ]);
+  expect(ofKind(result,'HEAL').every(event=>!event.interruptId)).toBe(true);
+  expect(result.evocations[0]).toMatchObject({damageCubes:1,damageByPlayer:{}});conserved(result);
+ });
+ it('counts physical, neutral and unattributed wounds equally, returning only actual colored cubes',()=>{
+  const s=fixture();wound(s,'p1',{p2:1,[BLACK_ROSE_ID]:1},1,1);prepare(s,custom(s,{target:'SELF',heal:20}));
+  const result=cast(s);
+  expect(facts(result)).toEqual([{kind:'HEAL',target:mageTarget(s,'p1'),sourceId:'p1',amount:4}]);
+  expect(player(result).wizard).toMatchObject({damageCubes:0,damageByPlayer:{},blackDamage:0});
+  expect(player(result,'p2').cubes.available).toBe(25);conserved(result);
+ });
+ it.each(['SELF','MAGE','EVOCATION','ROOM'] as const)('never emits a zero-healing fact for healthy %s targets',kind=>{
+  const s=fixture(),e=evoc(s);prepare(s,kind==='SELF'?'Mending Light':kind==='MAGE'?'Renewing Word':kind==='EVOCATION'?"Summoner's Balm":'Sanctuary');
+  const selection=kind==='SELF'?{}:kind==='MAGE'?{targetPlayerId:'p2'}:kind==='EVOCATION'?{targetEvocationId:e.id}:{roomId:center};
+  const result=cast(s,'p1',selection);expect(events(result)).toEqual([]);conserved(result);
+ });
+ it('does not append healing or reveal feedback to the input when a cast is invalid',()=>{
+  const s=fixture();wound(s,'p2',{p3:1});player(s,'p2').wizard.position={q:1,r:1};prepare(s,'Renewing Word');
+  reject(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',targetPlayerId:'p2'},/range/);expect(events(s)).toEqual([]);conserved(s);
+ });
+});
+
 describe('conversion feedback', () => {
  it.each(['MAGE', 'EVOCATION', 'ROOM'] as const)('reports the actual %s target, converted amount and unchanged total', kind => {
   const s = fixture(); let target:FeedbackTarget; let selection:Selection; let name:string;
@@ -198,6 +235,31 @@ describe('conversion feedback', () => {
   const result = cast(s, 'p1', { targetPlayerId:'p2' });
   expect(facts(result)).toEqual([{ kind:'CONVERT', target:mageTarget(s, 'p2'), sourceId:'p1', amount:1, total:4 }]); conserved(result);
  });
+ for(const kind of ['MAGE','EVOCATION'] as const) {
+  it.each([0,1,25])(`never emits conversion or returns/spends cubes on an owned ${kind} with %i available cubes`,available=>{
+   const s=fixture(),e=kind==='EVOCATION'?evoc(s,8):undefined;
+   if(e)e.playerId='p1';const id=e?.id??'p1';
+   wound(s,id,{p3:2,[BLACK_ROSE_ID]:1},e?0:1,1);limitSupply(s,available);
+   const card=prepare(s,e?'Reclaimed Servant':"Mage's Due"),before=structuredClone(s);
+   const result=cast(s,'p1',e?{targetEvocationId:e.id}:{targetPlayerId:'p1-wizard'});
+   expect(events(result)).toEqual([]);expect(result.players.map(p=>p.wizard)).toEqual(before.players.map(p=>p.wizard));
+   expect(result.evocations).toEqual(before.evocations);expect(result.board).toEqual(before.board);
+   expect(result.players.map(p=>p.cubes)).toEqual(before.players.map(p=>p.cubes));
+   expect(result.activation).toMatchObject({actionsUsed:1,spellsCast:1});expect(player(result).actionTokens).toBe(2);
+   expect(player(result).prepared.rapid?.used).toBe(true);expect(result.library[1].discard).toContainEqual(card);
+   expect(s).toEqual(before);conserved(result);
+  });
+ }
+ it("Alchemist's Refuge reports only healing, returning the actual other-colored cubes without rewriting neutral wounds",()=>{
+  const s=fixture();wound(s,'p1',{p2:1,p3:2,[BLACK_ROSE_ID]:1},1);limitSupply(s,0);
+  prepare(s,"Alchemist's Refuge");const before=structuredClone(s),result=cast(s);
+  expect(facts(result)).toEqual([{kind:'HEAL',target:mageTarget(s,'p1'),sourceId:'p1',amount:2}]);
+  expect(player(result).wizard).toMatchObject({damageCubes:3,blackDamage:1,damageByPlayer:{p3:1,[BLACK_ROSE_ID]:1}});
+  expect(player(result).cubes).toEqual(player(before).cubes);
+  expect(player(result,'p2').cubes.available).toBe(player(before,'p2').cubes.available+1);
+  expect(player(result,'p3').cubes.available).toBe(player(before,'p3').cubes.available+1);
+  expect(result.activation).toMatchObject({actionsUsed:1,spellsCast:1});expect(s).toEqual(before);conserved(result);
+ });
  it.each(['empty', 'own-color', 'no-supply', 'unattributed', 'scored-room', 'reconstructed-room'] as const)('emits no event for a %s conversion', condition => {
   const s = fixture(); let selection:Selection = { targetPlayerId:'p2' };
   if (condition === 'own-color') wound(s, 'p2', { p1:4 });
@@ -215,6 +277,21 @@ describe('conversion feedback', () => {
   expect(events(result).map(e => e.kind)).toEqual(['CONVERT', 'DAMAGE']);
   expect(ofKind(result, 'CONVERT')[0]).toMatchObject({ amount:1, total:2 }); conserved(result);
  });
+ it('still interrupts a legal own-model conversion cast, then ignores the conversion after the reaction resumes',()=>{
+  let s=arm(fixture(),'Spell Leech','p2',{roomId:center});turn(s);
+  wound(s,'p1',{p3:1,[BLACK_ROSE_ID]:1});prepare(s,'Stolen Sigil');const before=structuredClone(s);
+  const result=cast(s,'p1',{targetPlayerId:'p1'}),trigger=ofKind(result,'SPELL_TRIGGERED')[0];
+  expect(facts(result)).toEqual([
+   {kind:'SPELL_TRIGGERED',activeSpellId:s.readiedSpells![0].id,ownerId:'p2',cardName:'Spell Leech',spellType:'TRAP',trigger:'SPELL_CAST',
+    target:mageTarget(s,'p1'),roomId:center,ongoing:false,effects:['Deal 2 damage to the acting model.']},
+   {kind:'DAMAGE',target:mageTarget(s,'p1'),sourceId:'p2',amount:2,interruptId:trigger.id},
+  ]);
+  expect(player(result).wizard).toMatchObject({damageCubes:4,damageByPlayer:{p3:1,[BLACK_ROSE_ID]:1,p2:2}});
+  expect(player(result).cubes).toEqual(player(before).cubes);
+  expect(player(result,'p2').cubes).toEqual({...player(before,'p2').cubes,available:23,onWizard:2});
+  expect(result.readiedSpells).toEqual([]);expect(result.activation).toMatchObject({actionsUsed:1,spellsCast:1});
+  expect(s).toEqual(before);conserved(result);
+ });
 });
 
 describe('trigger feedback follows reveal and instruction chronology', () => {
@@ -222,8 +299,8 @@ describe('trigger feedback follows reveal and instruction chronology', () => {
   const s = arm(fixture(), 'Threshold Snare'), active = s.readiedSpells![0]; expect(events(s)).toEqual([]);
   const result = enter(s);
   expect(facts(result)).toEqual([
-   { kind:'SPELL_TRIGGERED', activeSpellId:active.id, ownerId:'p1', cardName:'Threshold Snare', spellType:'TRAP', trigger:'ENTER_ROOM', target:mageTarget(s, 'p2', east), roomId:east, ongoing:false },
-   { kind:'DAMAGE', target:mageTarget(s, 'p2', east), sourceId:'p1', amount:2 },
+  { kind:'SPELL_TRIGGERED', activeSpellId:active.id, ownerId:'p1', cardName:'Threshold Snare', spellType:'TRAP', trigger:'ENTER_ROOM', target:mageTarget(s, 'p2', east), roomId:east, ongoing:false, effects:['Deal 2 damage to the triggering model.'] },
+  { kind:'DAMAGE', target:mageTarget(s, 'p2', east), sourceId:'p1', amount:2, interruptId:events(result)[0].id },
   ]);
   expect(result.readiedSpells).toEqual([]); expect(result.library[2].discard).toContainEqual(active.card);
   expect(JSON.stringify(events(result))).not.toMatch(/triggerEffects|rulesText|schoolId|targetPlayerId|targetEvocationId/);
@@ -240,16 +317,90 @@ describe('trigger feedback follows reveal and instruction chronology', () => {
   let s = arm(fixture(), 'Thorn Retort', 'p1', {}); s = arm(s, 'Thorn Retort', 'p2', {}); turn(s);
   const result = applyAction(s, { type:'PUNCH', playerId:'p1', targetId:'p2' });
   expect(events(result).map(e => e.kind === 'SPELL_TRIGGERED' ? [e.kind, e.ownerId] : [e.kind, 'sourceId' in e ? e.sourceId : ''])).toEqual([
-   ['DAMAGE', 'p1'], ['SPELL_TRIGGERED', 'p2'], ['DAMAGE', 'p2'], ['SPELL_TRIGGERED', 'p1'], ['DAMAGE', 'p1'],
+  ['DAMAGE', 'p1'], ['SPELL_TRIGGERED', 'p2'], ['HEAL', 'p2'], ['DAMAGE', 'p2'], ['SPELL_TRIGGERED', 'p1'], ['HEAL', 'p1'], ['DAMAGE', 'p1'],
   ]); conserved(result);
+ });
+ it('ignores conversion through owned EVENT_MODEL, EVENT_ACTOR and OWNER references but continues instability and healing',()=>{
+  let s=fixture();const e=evoc(s,8);e.playerId='p1';
+  wound(s,e.id,{p3:1,[BLACK_ROSE_ID]:1});wound(s,'p1',{p2:1,p3:1,[BLACK_ROSE_ID]:1});
+  s=arm(s,custom(s,{spellType:'TRAP',trigger:on('EVOCATION_ACTIVATED'),triggerEffects:[
+   instruction('CONVERT',3,'EVENT_MODEL'),instruction('CONVERT',3,'EVENT_ACTOR'),instruction('CONVERT',3,'OWNER'),
+   instruction('INSTABILITY',1,'BOUND_ROOM'),instruction('HEAL',1,'OWNER'),
+  ]}),'p1',{roomId:center});
+  turn(s);const before=structuredClone(s),active=s.readiedSpells![0];
+  const result=applyAction(s,{type:'ACTIVATE_EVOCATION',playerId:'p1',evocationId:e.id}),trigger=ofKind(result,'SPELL_TRIGGERED')[0];
+  expect(events(result).map(event=>[event.kind,event.interruptId])).toEqual([['SPELL_TRIGGERED',undefined],['HEAL',trigger.id]]);
+  expect(trigger).toMatchObject({activeSpellId:active.id,ongoing:false,trigger:'EVOCATION_ACTIVATED',target:{kind:'EVOCATION',id:e.id}});
+  expect(result.evocations[0]).toMatchObject({damageCubes:2,damageByPlayer:{p3:1,[BLACK_ROSE_ID]:1}});
+  expect(player(result).wizard).toMatchObject({damageCubes:2,damageByPlayer:{p3:1,[BLACK_ROSE_ID]:1}});
+  expect(room(result)).toMatchObject({instability:1,cubesByPlayer:{p1:1}});
+  expect(player(result).cubes).toEqual({available:24,onWizard:0,onBoard:1,onEvocations:0});
+  expect(player(result,'p2').cubes.available).toBe(25);expect(player(result,'p3').cubes).toEqual(player(before,'p3').cubes);
+  expect(result.readiedSpells).toEqual([]);expect(result.library[0].discard).toContainEqual(active.card);
+  expect(result.evocationActivation).toMatchObject({evocationId:e.id,playerId:'p1'});
+  expect(result.activation?.actionsUsed).toBe(1);expect(player(result).actionTokens).toBe(1);
+  expect(s).toEqual(before);conserved(result);
+ });
+ it('links nested instructions to the innermost reveal, restores the outer ID, and leaves siblings and subsequent root actions unlinked',()=>{
+  let s=fixture();wound(s,'p1',{p3:1});
+  s=arm(s,'Thorn Retort','p2',{});
+  s=arm(s,custom(s,{name:'Outer public rule',spellType:'TRAP',trigger:on('ENTER_ROOM'),triggerEffects:[
+   instruction('DAMAGE',2,'EVENT_MODEL'),instruction('CONVERT',1,'OWNER'),instruction('HEAL',1,'OWNER'),
+  ]}),'p1',{roomId:east});
+  s=arm(s,custom(s,{name:'Sibling public rule',spellType:'TRAP',trigger:on('ENTER_ROOM'),triggerEffects:[instruction('DAMAGE',1,'EVENT_MODEL')]}),'p4',{roomId:east});
+  turn(s,'p2');const before=structuredClone(s);
+  const result=enter(s),feed=events(result),[outer,inner,sibling]=ofKind(result,'SPELL_TRIGGERED');
+  expect(feed.map(event=>[event.kind,event.interruptId])).toEqual([
+   ['SPELL_TRIGGERED',undefined],['DAMAGE',outer.id],['SPELL_TRIGGERED',outer.id],['HEAL',inner.id],['DAMAGE',inner.id],
+   ['HEAL',outer.id],['SPELL_TRIGGERED',undefined],['DAMAGE',sibling.id],
+  ]);
+  expect(ofKind(result,'CONVERT')).toEqual([]);expect(player(result).wizard).toMatchObject({damageCubes:1,damageByPlayer:{p3:1}});
+  expect(player(result).cubes).toEqual({available:24,onWizard:1,onBoard:0,onEvocations:0});
+  expect(player(result,'p2').cubes.available).toBe(25);expect(s).toEqual(before);
+  expect(outer.effects).toEqual(['Deal 2 damage to the triggering model.','Convert up to 1 cube on the owner’s mage to the owner’s color.','Heal up to 1 wound on the owner’s mage.']);
+  expect(inner.effects).toEqual(['Heal up to 1 wound on the bound model.','Deal 1 damage to the acting model.']);
+  const returned=applyAction(result,{type:'EXPLORE_STEP',playerId:'p2',destination:{q:0,r:0}});
+  const punched=applyAction(returned,{type:'PUNCH',playerId:'p2',targetId:'p1'});
+  expect(events(punched).at(-1)).toMatchObject({kind:'DAMAGE',sourceId:'p2'});expect(events(punched).at(-1)).not.toHaveProperty('interruptId');
+  expect(JSON.stringify(punched)).not.toContain('instructionContexts');conserved(punched);
+ });
+ it('clears the interrupt context before the original cast resumes its printed healing',()=>{
+  let s=arm(fixture(),'Spell Leech','p1',{roomId:center});wound(s,'p2',{p3:1});turn(s,'p2');prepare(s,'Mending Light','p2');
+  s=cast(s,'p2');const trigger=ofKind(s,'SPELL_TRIGGERED')[0];
+  expect(events(s).map(event=>[event.kind,event.interruptId])).toEqual([['SPELL_TRIGGERED',undefined],['DAMAGE',trigger.id],['HEAL',undefined]]);
+  expect(ofKind(s,'HEAL')[0]).toMatchObject({sourceId:'p2',amount:3,target:mageTarget(s,'p2')});conserved(s);
+ });
+ it('reveals a readable public instability rule without inventing a numeric damage/heal/conversion event',()=>{
+  let s=arm(fixture(),'Cinder Seal','p1',{roomId:center});room(s).effect='DRAW_DISCARD';turn(s,'p2');
+  s=applyAction(s,{type:'EXPLORE',playerId:'p2',activateRoomAtStart:true});
+  expect(ofKind(s,'SPELL_TRIGGERED')[0]).toMatchObject({cardName:'Cinder Seal',effects:['Place up to 2 instability in the bound room.']});
+  expect(events(s)).toHaveLength(1);expect(room(s).cubesByPlayer).toEqual({p1:2});conserved(s);
+ });
+ it('correlates every actual triggered room-healing target with the reveal, omitting healthy occupants',()=>{
+  let s=fixture();const e=evoc(s,8);wound(s,'p1',{},1);wound(s,'p2',{p3:3});wound(s,e.id,{p3:1});
+  s=arm(s,custom(s,{spellType:'PROTECTION',trigger:on('ROOM_ACTIVATED'),triggerEffects:[instruction('HEAL',2,'BOUND_ROOM')]}),'p1',{roomId:center});
+  room(s).effect='DRAW_DISCARD';turn(s,'p2');s=applyAction(s,{type:'EXPLORE',playerId:'p2',activateRoomAtStart:true});
+  const trigger=ofKind(s,'SPELL_TRIGGERED')[0];
+  expect(ofKind(s,'HEAL').map(event=>[event.target.id,event.amount,event.sourceId,event.target.roomId,event.interruptId])).toEqual([
+   ['p1',1,'p1',center,trigger.id],['p2',2,'p1',center,trigger.id],[e.id,1,'p1',center,trigger.id],
+  ]);
+  expect(trigger.effects).toEqual(['Heal up to 2 wounds on the bound room.']);expect(events(s)).toHaveLength(4);conserved(s);
+ });
+ it('separates an ongoing spell’s immediate healing from a later public triggered heal',()=>{
+  let s=fixture();wound(s,'p2',{p3:3});s=arm(s,'Runic Remedy','p1',{targetPlayerId:'p2'});
+  room(s).effect='DRAW_DISCARD';turn(s,'p2');s=applyAction(s,{type:'EXPLORE',playerId:'p2',activateRoomAtStart:true});
+  const trigger=ofKind(s,'SPELL_TRIGGERED')[0];
+  expect(trigger).toMatchObject({ongoing:true,effects:['Heal up to 1 wound on the bound model.']});
+  expect(events(s).map(event=>[event.kind,event.interruptId])).toEqual([['HEAL',undefined],['SPELL_TRIGGERED',undefined],['HEAL',trigger.id]]);
+  expect(ofKind(s,'HEAL').every(event=>event.sourceId==='p1'&&event.amount===1&&event.target.id==='p2'&&event.target.roomId===center)).toBe(true);conserved(s);
  });
  it('marks repeat ongoing triggers public and true, without creating an arming popup', () => {
   let s = arm(fixture(), "Pilgrim's Mark", 'p1', {}); const active = s.ongoingSpells![0]; expect(events(s)).toEqual([]);
   Object.assign(room(s, east), { instability:2, cubesByPlayer:{ [BLACK_ROSE_ID]:2 } });
   s = enter(s, 'p1');
   expect(facts(s)).toEqual([
-   { kind:'SPELL_TRIGGERED', activeSpellId:active.id, ownerId:'p1', cardName:"Pilgrim's Mark", spellType:'CONTINGENCY', trigger:'ENTER_ROOM', target:mageTarget(s, 'p1', east), roomId:east, ongoing:true },
-   { kind:'CONVERT', target:roomTarget(s, east), sourceId:'p1', amount:1, total:2 },
+  { kind:'SPELL_TRIGGERED', activeSpellId:active.id, ownerId:'p1', cardName:"Pilgrim's Mark", spellType:'CONTINGENCY', trigger:'ENTER_ROOM', target:mageTarget(s, 'p1', east), roomId:east, ongoing:true, effects:['Convert up to 1 cube on the triggering room to the owner’s color.'] },
+  { kind:'CONVERT', target:roomTarget(s, east), sourceId:'p1', amount:1, total:2, interruptId:events(s)[0].id },
   ]);
   s = applyAction(s, { type:'EXPLORE_STEP', playerId:'p1', destination:{ q:0, r:0 } });
   expect(ofKind(s, 'SPELL_TRIGGERED')).toHaveLength(2); expect(ofKind(s, 'SPELL_TRIGGERED').every(e => e.ongoing && e.activeSpellId === active.id)).toBe(true);
@@ -276,6 +427,7 @@ describe('trigger feedback follows reveal and instruction chronology', () => {
   const c = custom(s, { spellType:'TRAP', trigger:on('ENTER_ROOM'), triggerEffects:[instruction('DAMAGE', 2, 'EVENT_MODEL'), instruction('CONVERT', 2, 'EVENT_MODEL'), instruction('DAMAGE', 2, 'EVENT_MODEL')] });
   s = arm(s, c); const result = enter(s);
   expect(events(result).map(e => e.kind)).toEqual(['SPELL_TRIGGERED', 'DAMAGE', 'MAGE_DEFEATED']);
+  expect(events(result).slice(1).every(event=>event.interruptId===events(result)[0].id)).toBe(true);
   expect(ofKind(result, 'DAMAGE')[0]).toMatchObject({ amount:1, target:mageTarget(s, 'p2', east) }); conserved(result);
  });
 });

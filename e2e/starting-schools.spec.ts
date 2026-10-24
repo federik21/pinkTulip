@@ -3,7 +3,7 @@ import { applyAction, createGame } from '../packages/game-engine/src/index';
 import type { Card, GameState } from '../packages/game-engine/src/index';
 import { ActionHistory } from '../apps/server/src/action-history';
 import { publicState } from '../apps/server/src/public-state';
-import { selectControlTab } from './layout-ui';
+import { expectReference, selectStudyDraw } from './layout-ui';
 
 // Observe genuine server projections; never intercept sockets or inject setup.
 function observeState(page: Page) {
@@ -22,6 +22,17 @@ async function dismissOverlay(page: Page) {
   const overlay = page.locator('.phase-overlay');
   if (await overlay.isVisible()) await overlay.click();
   await expect(overlay).toBeHidden();
+}
+
+async function expectNoStartingRecap(page: Page) {
+  await expect(page.locator('.starting-deck-panel')).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: /Starting (deck|grimoire)/i, includeHidden: true })).toHaveCount(0);
+  await expect(page.getByRole('region', { name: /Starting (deck|grimoire)/i, includeHidden: true })).toHaveCount(0);
+  for (const name of ['Starting grimoire counts', 'Starting personal discard']) {
+    await expect(page.getByRole('group', { name, exact: true, includeHidden: true })).toHaveCount(0);
+  }
+  // No recap card, concealed future draw, or empty placeholder card at setup.
+  await expect(page.locator('.spell')).toHaveCount(0);
 }
 
 const hiddenCard = (index: number): Card => ({ id: `hidden-${index}`, name: 'Hidden spell',
@@ -113,18 +124,9 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
         expect(state.library.map(deck => ({ id: deck.id, draw: deck.cards.length, discard: deck.discard.length })))
           .toEqual([{ id: 'cantrip', draw: 36, discard: 0 }, { id: 'transmutation', draw: 29, discard: 0 },
             { id: 'enchantment', draw: 29, discard: 0 }]);
-        // Match the semantic heading, not wording about future hidden identities.
-        const preview = page.locator('section').filter({ has: page.getByRole('heading', { name: /Starting (deck|grimoire)/i }) });
-        await expect(preview).toHaveCount(1);
-        const counts = preview.getByRole('group', { name: 'Starting grimoire counts', exact: true });
-        await expect(counts).toContainText(/Personal deck:\s*6\b/);
-        await expect(counts).toContainText(/Hand:\s*0\b/);
-        await expect(counts).toContainText(/Personal discard:\s*1\b/);
-        await expect(preview.locator('.spell')).toHaveCount(1);
-        await expect(preview.locator('.spell strong')).toHaveText(state.players[index].discard[0].name);
-        await expect(preview.locator('.spell:enabled')).toHaveCount(0);
-        await selectControlTab(page, 'More');
-        await expect(page.locator('.reference > .hint')).toContainText('Grimoire 6 · Hand 0/7 · Personal discard 1');
+        await expectNoStartingRecap(page);
+        await expectReference(page, 'Grimoire 6 · Hand 0/7 · Personal discard 1');
+        await expectNoStartingRecap(page);
         publicDiscards.push(state.players.flatMap(p => p.discard));
       }
       expect(publicDiscards[0]).toEqual(publicDiscards[1]);
@@ -149,6 +151,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
           expect(p.startingSchoolId).toBe(choices[seat]); expect(p.hand).toEqual([]);
           expect(p.personalDeck).toEqual(masked(6)); expect(p.discard).toEqual(beforeReconnect.players[seat].discard);
         }
+        await expectNoStartingRecap(page);
       }
 
       await pages[0].getByRole('button', { name: /^Receive quests & begin Study/ }).click();
@@ -167,8 +170,12 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
         for (const card of firstDraws[1 - index]) expect(JSON.stringify(state())).not.toContain(`"${card.id}"`);
       }
       for (const [index, page] of pages.entries()) {
-        await page.locator('.schools button[data-school-id="cantrip"]').click();
+        await selectStudyDraw(page, Array(4).fill('cantrip'));
         const cards = page.locator('.phase-panel .spell'); await expect(cards).toHaveCount(6);
+        await expect(page.locator('.phase-panel .spell:disabled')).toHaveCount(2);
+        await expect(page.locator('.phase-panel .spell:enabled')).toHaveCount(4);
+        expect(states[index]().players[index].studyCardIds).toEqual(states[index]().players[index].hand.slice(2).map(card => card.id));
+        expect(states[index]().players[1 - index]).not.toHaveProperty('studyCardIds');
         await cards.nth(4).click(); await cards.nth(5).click();
         await page.getByRole('button', { name: 'Discard selected (2/2)', exact: true }).click();
         await expect.poll(() => states[index]().players[index].hand.length).toBe(4);
@@ -255,21 +262,27 @@ for (const count of [2, 4]) {
       expect(p.personalDeck).toHaveLength(4); expect(p.discard).toHaveLength(1);
     }
     expect(physicalCards(game).map(card => card.id).sort()).toEqual(original);
-    // Starter cards retain their school origin: a normal Study discard goes
-    // back to that school, unlike the initial seventh-card personal discard.
+    // Only this Study's four library cards are eligible; the two personal
+    // draws remain held. New Study discards return to their own school.
     for (const p of game.players) {
       const initialDiscard = p.discard, startingDraw = p.hand;
       game = applyAction(game, { type: 'DRAW_STUDY', playerId: p.id, deckId: 'transmutation' });
       expect(game.players.find(seat => seat.id === p.id)!.hand).toHaveLength(6);
-      game = applyAction(game, { type: 'DISCARD_STUDY', playerId: p.id, cardIds: startingDraw.map(card => card.id) });
+      const drawn = game.players.find(seat => seat.id === p.id)!.hand.slice(2);
+      expect(game.players.find(seat => seat.id === p.id)!.studyCardIds).toEqual(drawn.map(card => card.id));
+      expect(() => applyAction(game, { type: 'DISCARD_STUDY', playerId: p.id, cardIds: startingDraw.map(card => card.id) }))
+        .toThrow('Discard only spells drawn from the library this Study');
+      game = applyAction(game, { type: 'DISCARD_STUDY', playerId: p.id, cardIds: drawn.slice(0, 2).map(card => card.id) });
       const own = game.players.find(seat => seat.id === p.id)!;
       expect(own.hand).toHaveLength(4); expect(own.personalDeck).toHaveLength(4);
       expect(own.discard).toEqual(initialDiscard);
-      expect(game.library.find(deck => deck.id === 'cantrip')!.discard).toEqual(expect.arrayContaining(startingDraw));
+      expect(own.hand.slice(0, 2)).toEqual(startingDraw);
+      expect(game.library.find(deck => deck.id === 'transmutation')!.discard).toEqual(expect.arrayContaining(drawn.slice(0, 2)));
       expect(physicalCards(game).map(card => card.id).sort()).toEqual(original);
     }
     expect(game.phase).toBe('PREPARATION');
-    expect(game.library.find(deck => deck.id === 'cantrip')!.discard).toHaveLength(count * 2);
+    expect(game.library.find(deck => deck.id === 'cantrip')!.discard).toHaveLength(0);
+    expect(game.library.find(deck => deck.id === 'transmutation')!.discard).toHaveLength(count * 2);
     for (const p of game.players) {
       game = applyAction(game, { type: 'PREPARE_CARDS', playerId: p.id,
         preparedCardIds: p.hand.slice(0, 3).map(card => card.id), rapidCardId: p.hand[3].id });

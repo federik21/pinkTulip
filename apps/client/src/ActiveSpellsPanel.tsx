@@ -52,11 +52,13 @@ export function ActiveSpellsPanel({game,viewerId}:{game:GameState;viewerId:strin
   <p className="hint">Conditions resolve automatically after the current instruction. Nested reactions finish before the interrupted effect resumes.</p>
   {readied.map(active=>{
    const own=active.playerId===viewerId;
+   const type=getSpellType(active.card);
+   const known=type==='TRAP'||type==='PROTECTION';
    return <article className={`active-spell readied-spell ${own?'own-spell':'hidden-spell'}`} data-active-spell-id={active.id} style={mageStyle(active.playerId)} key={active.id}>
-    <span className="spell-type" data-spell-type={own?getSpellType(active.card):undefined}>{own&&<SpellTypeIcon type={getSpellType(active.card)}/>} {own?`${SPELL_TYPE_LABELS[getSpellType(active.card)]} · Active`:'Face down · Active'}</span>
+    <span className="spell-type" data-spell-type={own||known?type:undefined}>{(own||known)&&<SpellTypeIcon type={type}/>} {own||known?`${SPELL_TYPE_LABELS[type]} · Active`:'Face down · Active'}</span>
     <strong>{own?active.card.name:'Hidden active spell'}</strong>
     <small>{ownerName(game,active.playerId)}{own?` · ${binding(game,active)}`:''}</small>
-    <p>{own?active.card.rulesText:'Its card, binding and trigger are hidden until it reveals.'}</p>
+    <p>{own?active.card.rulesText:'Only its type is public. Its name, binding and trigger stay hidden until it reveals.'}</p>
    </article>;
   })}
   {ongoing.map(active=><article className="active-spell ongoing-spell" data-active-spell-id={active.id} style={mageStyle(active.playerId)} key={active.id}>

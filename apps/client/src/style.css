@@ -70,8 +70,14 @@
 .active-spell small,.active-spell p{font-size:11px;color:var(--muted);line-height:1.6;margin:0}
 .hidden-spell{background:repeating-linear-gradient(135deg,#18121f,#18121f 7px,#211826 7px,#211826 8px)}
 .spell-type-icon{display:inline-block;width:1em;height:1em;vertical-align:-.15em;line-height:1}
-.spell-type .spell-type-icon{font-size:16px;margin-right:4px}
-.spell-rune .spell-type-icon{font-size:32px}
+.spell-type{display:inline-flex;align-items:center;gap:6px}
+.spell-type .spell-type-icon{font-size:16px;flex-shrink:0}
+.school-icon{display:inline-block;line-height:1}
+.school-icon[data-school-id="cantrip"]{color:var(--gold)}
+.school-icon[data-school-id="transmutation"]{color:#86d9c0}
+.school-icon[data-school-id="enchantment"]{color:#c4b5fd}
+.school-icon[data-school-id="forgotten"]{color:#dbb2f4}
+.school-icon[data-school-id="unaligned"]{color:var(--muted)}
 .spell-status{font-size:10px;font-weight:700;letter-spacing:.5px;color:#9dd9b7;margin-bottom:7px}
 .spell-status[data-spell-status="SPENT"]{color:var(--muted)}
 .starting-school-choice{padding:16px;border:1px solid var(--border);border-radius:8px;background:#18121f;margin:18px 0}
@@ -79,7 +85,6 @@
 .starting-school-choice .hint{margin-bottom:0}
 .seat-school{display:block;font-size:12px;color:var(--gold);margin-top:5px}
 .entry h1 .parody-marker{display:block;font:600 22px 'DM Sans',sans-serif;letter-spacing:2px;line-height:1.5;color:var(--gold)}
-.starting-deck-panel .spell:disabled{opacity:.95;cursor:default}
 
 /* Primary controls live above the board; tab switches never own the map. */
 .control-banner{padding:18px 20px;border-color:#6a5542;background:linear-gradient(120deg,#2d222b,#19171d 70%);min-width:0;max-width:100%}
@@ -120,12 +125,9 @@
 .control-banner .history-panel>p{grid-column:1/-1;margin:0;font-size:10px}
 .control-waiting h2{margin-top:0}
 .control-waiting p{margin-bottom:0}
-#controls-panel-more{max-height:420px;overflow-y:auto;overscroll-behavior-y:contain;scrollbar-color:#b09263 #18131d;scrollbar-width:thin;padding-right:4px}
-.more-panels{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(250px,100%),1fr));gap:14px;align-items:start}
-.more-panels>section{padding:16px;min-width:0}
-.more-panels>.reference{grid-column:1/-1}
-.more-panels h2{font-size:25px}
-.more-panels h3{margin:8px 0;font-size:23px}
+#controls-panel-spells>.phase-panel,#controls-panel-spells>.active-spells-panel,#controls-panel-spells>.powerful-panel,#controls-panel-quests>.quest-panel{padding:0;border:0;background:none}
+#controls-panel-spells>section+section{border-top:1px solid var(--border);padding-top:18px;margin-top:18px}
+.control-tabs>[role="tab"]{font-size:12px}
 
 /* Native per-mage disclosures keep only the combat essentials in the summary. */
 .players-panel>h2{font-size:25px;margin-bottom:8px}
@@ -159,6 +161,33 @@
 .mage-secondary .player-actions{margin-top:6px}
 .mage-secondary>p{font-size:10px}
 .players-panel .black-rose-score{padding:12px 0}
+.game-column>.players-panel{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(250px,100%),1fr));gap:14px;align-items:start}
+.game-column>.players-panel>.eyebrow,.game-column>.players-panel>h2,.game-column>.players-panel>.black-rose-score{grid-column:1/-1;margin:0}
+.game-column>.players-panel .player.mage-disclosure{margin:0}
+.remaining-spells{display:block;color:var(--gold);font-size:12px;margin:6px 0}
+.model-effects{display:flex;flex-wrap:wrap;gap:5px;margin:7px 0}
+.model-effect{--effect-color:#c4b5fd;color:var(--effect-color)}
+.model-effect[data-effect-kind="PROTECTION"]{--effect-color:#a8cfff}
+.model-effect[data-effect-kind="TRAP"]{--effect-color:#e6bc7c}
+.model-effects>.model-effect{display:inline-flex;align-items:center;gap:5px;padding:3px 6px;border:1px solid color-mix(in srgb,var(--effect-color) 45%,transparent);border-radius:5px;background:#18121f;font-size:10px;line-height:1.5}
+.model-effects .spell-type-icon,.ongoing-effect-icon{width:14px;height:14px;font-size:14px;flex-shrink:0}
+.model-effect-markers,.model-effect-markers *{pointer-events:none}
+.model-effect-markers{fill:none;stroke:none}
+.model-effect-markers .model-effect>circle{fill:#100c16;stroke:var(--effect-color);stroke-width:.45}
+.model-effect-markers svg{overflow:visible}
+.info-button{font-size:12px;padding:8px 12px;white-space:nowrap}
+.info-popup{color:#e5e0da;background:var(--panel);border:1px solid #806c4c;border-radius:14px;padding:0;width:min(760px,calc(100vw - 28px));max-height:85vh;box-shadow:0 22px 90px #000a}
+.info-popup::backdrop{background:#09070dc9;backdrop-filter:blur(4px)}
+.info-popup-content{padding:24px;overflow-wrap:anywhere}
+.popup-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;border-bottom:1px solid var(--border);padding-bottom:12px;margin-bottom:16px}
+.popup-heading h2{margin:0}.popup-heading button{font-size:12px;padding:8px 14px}
+.info-popup .reference{padding:0;border:0;background:none}.info-popup .reference>h2,.info-popup .reference>.eyebrow{display:none}
+.room-effect-reference{display:grid;grid-template-columns:auto 1fr;gap:10px 16px;font-size:13px;line-height:1.6}.room-effect-reference dt{text-transform:capitalize;color:var(--gold)}.room-effect-reference dd{margin:0;color:#b9b2bd}
+aside .log-panel{position:sticky;top:20px}aside .log{max-height:70vh}
+.school-choice{min-width:0}.school-choice>button[data-school-id]{width:100%;height:calc(100% - 38px);min-height:175px}
+.school-selected{display:block;margin-top:10px;font-size:12px;color:var(--gold)}
+.schools .remove-school{padding:7px 10px;margin-top:5px;min-height:0;width:100%;font-size:11px}
+.room-count-choice{padding:16px;border:1px solid var(--border);border-radius:8px;margin-top:18px;background:#18121f}
 @media(max-width:720px){
  .app main{display:grid;grid-template-columns:minmax(0,1fr);gap:16px;align-items:start}
  .app .game-column{display:flex;flex-direction:column;gap:16px}
@@ -173,7 +202,9 @@
  .control-banner .evocations-panel{grid-template-columns:minmax(0,1fr)}
  .control-banner .evocations-panel .evocation-card{padding:11px}
  .control-banner .evocation-controls button{display:block;width:100%;margin-right:0}
- #controls-panel-more{max-height:360px}
+ .control-tabs>[role="tab"]{font-size:11px;padding:10px 4px}
+ .header-meta .info-button{max-width:85px;font-size:10px;padding:7px}
+ .info-popup-content{padding:18px}
  .players-panel{order:initial}
  .players-panel .player.mage-disclosure{display:block;width:100%;padding:0}
 }

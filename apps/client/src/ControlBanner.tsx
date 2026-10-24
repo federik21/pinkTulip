@@ -1,22 +1,24 @@
 import React from 'react';
 
-export type ControlTab = 'actions' | 'evocations' | 'more';
+export type ControlTab = 'actions' | 'spells' | 'evocations' | 'quests';
 const tabs: {id: ControlTab; label: string}[] = [
- {id:'actions',label:'Actions'},
+ {id:'actions',label:'Physical actions'},
+ {id:'spells',label:'Spells'},
  {id:'evocations',label:'Evocations'},
- {id:'more',label:'More'},
+ {id:'quests',label:'Quests'},
 ];
 
 type Props = {
  selected: ControlTab;
  onSelect: (tab: ControlTab) => void;
  actions: React.ReactNode;
+ spells: React.ReactNode;
  evocations: React.ReactNode;
- more: React.ReactNode;
+ quests: React.ReactNode;
  history: React.ReactNode;
 };
 
-export function ControlBanner({selected,onSelect,actions,evocations,more,history}: Props) {
+export function ControlBanner({selected,onSelect,actions,spells,evocations,quests,history}: Props) {
  const onKeyDown=(event:React.KeyboardEvent<HTMLButtonElement>,index:number)=>{
   let next:number;
   switch(event.key) {
@@ -36,8 +38,9 @@ export function ControlBanner({selected,onSelect,actions,evocations,more,history
    {tabs.map((tab,index)=><button key={tab.id} type="button" role="tab" id={`controls-tab-${tab.id}`} aria-controls={`controls-panel-${tab.id}`} aria-selected={selected===tab.id} tabIndex={selected===tab.id?0:-1} onClick={()=>onSelect(tab.id)} onKeyDown={event=>onKeyDown(event,index)}>{tab.label}</button>)}
   </div>
   <div className="control-panel" role="tabpanel" id="controls-panel-actions" aria-labelledby="controls-tab-actions" tabIndex={0} hidden={selected!=='actions'}>{actions}</div>
+    <div className="control-panel" role="tabpanel" id="controls-panel-spells" aria-labelledby="controls-tab-spells" tabIndex={0} hidden={selected!=='spells'}>{spells}</div>
   <div className="control-panel" role="tabpanel" id="controls-panel-evocations" aria-labelledby="controls-tab-evocations" tabIndex={0} hidden={selected!=='evocations'}>{evocations}</div>
-  <div className="control-panel" role="tabpanel" id="controls-panel-more" aria-labelledby="controls-tab-more" tabIndex={0} hidden={selected!=='more'}>{more}</div>
+    <div className="control-panel" role="tabpanel" id="controls-panel-quests" aria-labelledby="controls-tab-quests" tabIndex={0} hidden={selected!=='quests'}>{quests}</div>
   {history}
  </section>;
 }

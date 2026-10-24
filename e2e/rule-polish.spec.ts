@@ -1,7 +1,7 @@
 import { test, expect, Page, WebSocketRoute } from '@playwright/test';
 import { BLACK_ROSE_ID, Card, Evocation, GameAction, GameState, MAGE_COLORS, applyAction, createGame } from '../packages/game-engine/src/index';
 import { expectSpellIcon, expectSpellType } from './spell-ui';
-import { selectControlTab, viewRetinue } from './layout-ui';
+import { expectReference, selectControlTab, selectSpells, viewRetinue } from './layout-ui';
 
 const errors=new WeakMap<Page,string[]>();
 test.beforeEach(async ({page})=>{
@@ -43,6 +43,7 @@ async function mount(page:Page,game:GameState) {
  await page.getByRole('button',{name:'Create room',exact:true}).click();
  await expect(page.locator('.app')).toBeVisible();
  await dismissOverlay(page);
+ if(game.phase==='ACTION'&&(Object.values(game.players[0].prepared).some(Boolean)||game.players[0].hand.some(card=>card.powerful)))await selectSpells(page);
  return {
   commands,
   update:(state:GameState)=>socket.send(JSON.stringify({type:'STATE',state})),
@@ -112,8 +113,7 @@ for(const viewport of [{width:1440,height:1200},{width:390,height:844}]) {
   expect(physicalCardIds(game)).toEqual(beforeIds);
   const retained=hand.filter((_,index)=>!discardIndices.includes(index));
   await expect(page.locator('.phase-panel .spell strong')).toHaveText(retained.map(card=>card.name));
-  await selectControlTab(page,'More');
-  await expect(page.locator('.reference > .hint')).toContainText('Hand 7/7 · Personal discard 3');
+  await expectReference(page,'Hand 7/7 · Personal discard 3');
   for(let index=0;index<4;index++)await page.locator('.phase-panel .spell').nth(index).click();
   await page.getByRole('button',{name:'Prepare spells',exact:true}).click();
   await expect.poll(()=>wire.commands.length).toBe(2);
@@ -157,31 +157,41 @@ for(const viewport of [{width:1440,height:1200},{width:390,height:844}]) {
    await expect(button).toContainText('36 draw · 0 discard');
    await expect(button).toBeEnabled();
   }
-  await expect(panel).toContainText('Choose a school to draw 4 spells. Each school has 12 spells with 3 copies of each, for 36 cards.');
+  await expect(panel).toContainText('Each school has 12 spells with 3 copies each.');
   await expect(chosen).toContainText(schoolId==='transmutation'?'Heal wounds · Convert cubes':'Damage · Instability');
   await testInfo.attach(`schools-${schoolId}-${viewport.width}`,{body:await panel.screenshot({path:testInfo.outputPath('schools.png')}),contentType:'image/png'});
 
   // Availability is per school, never the combined stock or opponents' hands.
   game.players[1].hand.push(...deck.cards.splice(3));wire.update(game);
   await expect(chosen).toContainText('3 draw · 0 discard');
-  await expect(chosen).toBeDisabled();await expect(other).toBeEnabled();
+  await expect(chosen).toBeEnabled();await expect(other).toBeEnabled();
   game.players[2].hand.push(...otherDeck.cards.splice(3));wire.update(game);
-  await expect(other).toBeDisabled();
+  await expect(other).toBeEnabled();
+  const draw=panel.getByRole('button',{name:/^Draw selected cards/});
+  for(let index=0;index<3;index++)await chosen.click();
+  await expect(chosen).toBeDisabled();await expect(other).toBeEnabled();
+  await expect(draw).toBeDisabled();expect(wire.commands).toEqual([]);
   deck.discard.push(game.players[1].hand.pop()!);wire.update(game);
   await expect(chosen).toContainText('3 draw · 1 discard');
-  await expect(chosen).toBeEnabled();await expect(other).toBeDisabled();
+  await expect(chosen).toBeEnabled();await expect(other).toBeEnabled();
   const untouched=structuredClone(game.library.filter(d=>d.id!==schoolId));
   const schoolIds=game.library.map(d=>d.id);
   await chosen.click();
+  expect(wire.commands).toEqual([]);
+  await expect(draw).toBeEnabled();await draw.click();
   await expect.poll(()=>wire.commands.length).toBe(1);
-  expect(wire.commands[0].action).toEqual({type:'DRAW_STUDY',playerId:'p1',deckId:schoolId});
+  expect(wire.commands[0].action).toEqual({type:'DRAW_STUDY',playerId:'p1',deckIds:Array(4).fill(schoolId)});
   await expect(chosen).toBeDisabled();
   game=applyAction(game,wire.commands[0].action);wire.update(game);wire.ack();
   expect(physicalCardIds(game)).toEqual(beforeIds);
   expect(game.players[0].hand.filter(c=>c.schoolId===schoolId)).toHaveLength(4);
   expect(game.library.filter(d=>d.id!==schoolId)).toEqual(untouched);
   await expect(panel.locator('.spell')).toHaveCount(6);
-  await expect(panel).toContainText('Shared spells return to their own school’s discard');
+  await expect(panel.locator('.spell:enabled')).toHaveCount(4);
+  await expect(panel.locator('.spell:disabled')).toHaveCount(2);
+  expect(game.players[0].studyCardIds).toEqual(game.players[0].hand.slice(2).map(card=>card.id));
+  await expect(panel).toContainText('Discard exactly 2 of the 4 new library cards.');
+  await expectReference(page,'Normal school discards return to their school; forced hand-limit discards are the exception.');
   await expect(panel.locator('.schools')).toHaveCount(0);
 
   const discards=game.players[0].hand.filter(c=>c.schoolId===schoolId).slice(0,2);
@@ -361,8 +371,9 @@ test('Preparation permits powers in slots and explains permanent removal and ret
  const power=game.powerfulDeck[0];
  game.players[0].hand=[power,...[1,2,3].map(n=>({...preparedSpell,id:`prepare-${n}`,name:`Study ${n}`}))];
  const wire=await mount(page,game);
- const panel=page.locator('.phase-panel').filter({has:page.getByRole('heading',{name:'Three ordered spells. One wild card.'})});
- await expect(panel).toContainText('never cast from hand');await expect(panel).toContainText('unused prepared forgotten spells return to hand');
+ const panel=page.locator('.phase-panel').filter({has:page.getByRole('heading',{name:'Prepare 2–4 spells',exact:true})});
+ await expect(panel).toContainText('Forgotten spells must be prepared before casting.');
+ await expectReference(page,'Prepared forgotten spells cost one turn action and are permanently removed on casting; unused preparations return to hand next round.');
  for(const card of game.players[0].hand)await panel.getByRole('button').filter({has:page.getByText(card.name,{exact:true})}).click();
  await page.getByRole('button',{name:'Prepare spells',exact:true}).click();
  await expect.poll(()=>wire.commands.length).toBe(1);
@@ -422,6 +433,7 @@ test('active own evocation can attack or finish with mage details and opponent r
  game.evocations=[model('active-own','p1',2)];
  game.evocationActivation={evocationId:'active-own',playerId:'p1',movesRemaining:2,returnToAction:false};
  const wire=await mount(page,game);
+ for(const summary of await page.locator('.player summary').all())await summary.click();
  await expect(page.locator('.player[open]')).toHaveCount(0);
  await expect(page.locator('#retinue-p1')).toBeVisible();
  await expect(page.locator('#retinue-p2')).toBeHidden();
@@ -548,9 +560,8 @@ test('Black Rose score, first player and Black Rose game-over winner are public 
  await expect(page.locator('.black-rose-score')).toContainText('35 VP');
  await expect(page.locator('.black-rose-score')).toContainText('3 kills');
  await expect(player(page,'p1').getByRole('img',{name:'First player',exact:true})).toBeVisible();
- await selectControlTab(page,'More');
- await expect(page.locator('.reference')).toContainText('round 3');
- for(const text of ['4 cubes · 2 / 1 / 0 VP','5 cubes · 4 / 2 / 1 VP','6 cubes · 5 / 3 / 1 VP','10 cubes · 6 / 3 / 1 VP','(not) Black Rose competes for kills, not quests'])await expect(page.locator('.reference')).toContainText(text);
+ await expectReference(page,'round 3');
+ for(const text of ['4 cubes · 2 / 1 / 0 VP','5 cubes · 4 / 2 / 1 VP','6 cubes · 5 / 3 / 1 VP','10 cubes · 6 / 3 / 1 VP','(not) Black Rose competes for kills, not quests'])await expectReference(page,text);
  game.phase='GAME_OVER';game.currentPlayerId=null;game.activation=null;game.winner=BLACK_ROSE_ID;game.endgameScored=true;wire.update(game);await dismissOverlay(page);
  await expect(page.locator('.victory h2')).toHaveText('♛ (not) Black Rose wins');
  await expect(page.locator('.victory')).toContainText('(not) Black Rose: 35 VP · 3 kills');
@@ -587,12 +598,18 @@ test(`glossary, Ready versus Active and accessible spell-type icons at ${viewpor
  await expect(page.locator('.black-rose-score')).toHaveAttribute('aria-label','(not) Black Rose score');
  await expect(page.locator('.black-rose-score')).toContainText('(not) Black Rose');
  await expect(player(page,'p2').locator('.damage-contributions')).toContainText('(not) Black Rose: 1');
- await expect(page.locator('.mage-legend')).toContainText('(not) Black Rose · neutral');
+ await expect(page.locator('.board-panel .room-legend,.board-panel .mage-legend')).toHaveCount(0);
+ await page.getByRole('button',{name:'Lodge information',exact:true}).click();
+ const information=page.getByRole('dialog',{name:'Lodge information',exact:true});
+ await expect(information.locator('.mage-legend')).toBeVisible();
+ await expect(information.locator('.mage-legend')).toContainText('(not) Black Rose · neutral');
+ await information.getByRole('button',{name:'Close',exact:true}).click();
+ await expect(information).toBeHidden();
  await hex(page,'room-0,0').click();
  await expect(page.locator('.room-detail .contributions')).toContainText('(not) Black Rose: 1');
  await expect(page.locator('.powerful-panel').getByRole('heading',{name:'Forgotten spells',exact:true})).toBeVisible();
- await selectControlTab(page,'More');
- await expect(page.locator('.reference')).toContainText('Forgotten spells:');
+ await expectReference(page,'Forgotten spells:');
+ await selectSpells(page);
  await expect(page.locator('.app')).not.toContainText(/Central powers|Black Rose spells|Readied & ongoing|Readied and ongoing|Hidden ready spell|Ready secretly|Offensive/);
  expect(await page.locator('.app').textContent()).not.toMatch(/(?<!\(not\) )Black Rose/i);
  for(const item of cases) {
@@ -608,10 +625,13 @@ test(`glossary, Ready versus Active and accessible spell-type icons at ${viewpor
  await expect(active.locator('.own-spell strong')).toHaveText(own.name);
  const hidden=active.locator('.hidden-spell');
  await expect(hidden.locator('strong')).toHaveText('Hidden active spell');
- await expect(hidden.locator('.spell-type')).toHaveText('Face down · Active');
- await expect(hidden.getByRole('img')).toHaveCount(0);
+ await expect(hidden.locator('.spell-type')).toHaveAttribute('data-spell-type','PROTECTION');
+ await expectSpellType(hidden.locator('.spell-type'),'Protection · Active');
+ await expectSpellIcon(hidden,'Protection');
+ await expect(hidden.locator('small')).toHaveText('Blue Seer');
+ await expect(hidden.locator('p')).toHaveText('Only its type is public. Its name, binding and trigger stay hidden until it reveals.');
  const markup=await hidden.evaluate(element=>element.outerHTML);
- for(const secret of [foreign.id,foreign.name,foreign.rulesText!,'Protection spell'])expect(markup).not.toContain(secret);
+ for(const secret of [foreign.id,foreign.name,foreign.rulesText!,'targetPlayerId','DAMAGE_TAKEN','BOUND_MODEL'])expect(markup).not.toContain(secret);
  await expect(active.locator('.ongoing-spell strong')).toHaveText(ongoing.name);
  await expectSpellType(active.locator('.ongoing-spell .spell-type'),'Contingency · Ongoing');
  await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);

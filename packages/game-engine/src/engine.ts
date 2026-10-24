@@ -78,7 +78,14 @@ const requireActivation = (s: GameState, id: string): Activation => {
  return s.activation!;
 };
 
-export function createDemoBoard(): Board {
+export function getDefaultRoomsPerColor(playerCount:number):1|2|3 {
+ assert(Number.isInteger(playerCount)&&playerCount>=1&&playerCount<=MAX_MAGES,'Choose between 1 and 4 mages');
+ // A host-only Lobby may preview the two-mage minimum before another seat joins.
+ return Math.max(1,playerCount-1) as 1|2|3;
+}
+
+export function createDemoBoard(roomsPerColor:1|2|3=3): Board {
+ assert([1,2,3].includes(roomsPerColor),'Choose 1, 2 or 3 rooms per color');
  const names=shuffle([
   'Ember Vault','Moonlit Gallery','Thorn Garden','Whispering Library','Ashen Forge','Silver Observatory',
   'Hollow Chapel','Crimson Atelier','Veiled Archive','Gilded Reliquary','Echoing Crypt','Starlit Hall',
@@ -86,19 +93,23 @@ export function createDemoBoard(): Board {
   'Raven Belfry','Glass Labyrinth','Ivied Vestibule','Candlelit Refuge',
  ]);
  const startingRooms = [
-  {playerId:'p1',position:{q:3,r:-2}},
-  {playerId:'p2',position:{q:-3,r:2}},
-  {playerId:'p3',position:{q:-1,r:-2}},
-  {playerId:'p4',position:{q:1,r:2}},
+  {playerId:'p1',position:roomsPerColor===1?{q:2,r:-1}:{q:3,r:-2}},
+  {playerId:'p2',position:roomsPerColor===1?{q:-2,r:1}:{q:-3,r:2}},
+  {playerId:'p3',position:roomsPerColor===1?{q:-1,r:-1}:{q:-1,r:-2}},
+  {playerId:'p4',position:roomsPerColor===1?{q:1,r:1}:{q:1,r:2}},
  ];
  const tiles: Hex[] = [];
- for (let r=-2;r<=2;r++) for(let q=-2;q<=2;q++) if(hexDistance({q,r},{q:0,r:0})<=2) tiles.push({q,r});
+ for (let r=-2;r<=2;r++) for(let q=-2;q<=2;q++) {
+  const distance=hexDistance({q,r},{q:0,r:0});
+  // Ring 1 is connected on its own; six ring-2 corners add one of each color.
+  if(distance<=1 || (distance===2 && (roomsPerColor===3 || (roomsPerColor===2 && (q===0 || r===0 || q+r===0)))))tiles.push({q,r});
+ }
  tiles.push(...startingRooms.map(start=>start.position));
  let colorIndex=0;
  const rooms: Room[] = tiles.map(h => {
-  const regular=hexDistance(h,{q:0,r:0})>0 && hexDistance(h,{q:0,r:0})<=2;
+  const regular=hexDistance(h,{q:0,r:0})>0 && !startingRooms.some(start=>hexKey(start.position)===hexKey(h));
   const index=regular?colorIndex++%6:-1;
-  // Three repeats: twelve capacity-5 rooms, three capacity-4 and three capacity-6.
+  // Each color retains its printed capacity/effect at every board size.
   const capacity=h.q===0 && h.r===0?10:index===4?4:index===5?6:5;
   return {
   id: `room-${h.q},${h.r}`, name: h.q===0 && h.r===0 ? '(not) Black Rose Chamber' : names.pop()!,
@@ -122,7 +133,7 @@ function createMage(board:Board,id:PlayerId):Player {
   wizard: { id: `${id}-wizard`, playerId: id, health: 10, attack: 2, movement: 2, damageCubes: 0, blackDamage: 0, damageByPlayer: {}, position: {...start.tiles[0]}, startingRoomId: start.id, alive: true },
   personalDeck: [], hand: [], discard: [], prepared: emptyPrepared(),
   cubes: { available:25, onWizard:0, onBoard:0, onEvocations:0 }, actionTokens:PHYSICAL_TOKENS_PER_ROUND, victoryPoints:0,
-  questsCompleted:0, kills:0, quest:null, additionalQuests:[], studyDrawn:false, studyDone:false, preparationDone:false, passed:false, cardLimit:7, questLimit:2,
+  questsCompleted:0, kills:0, quest:null, additionalQuests:[], studyDrawn:false, studyDone:false, studyCardIds:[], preparationDone:false, passed:false, cardLimit:7, questLimit:2,
  };
 }
 
@@ -214,15 +225,18 @@ function drawQuest(s:GameState) {
 // stored in GameState; a root action remains a single clone/commit boundary.
 type ModelSnapshot = { id:string; playerId:string; kind:'MAGE'|'EVOCATION'; generation:number };
 type SpellEvent = { event:TriggerEvent; model?:ModelSnapshot; actor?:ModelSnapshot; roomId?:string; target?:FeedbackTarget };
-type InstructionContext = { generations:Map<string,number>; bindings:Map<string,ModelSnapshot>; resolutions:number };
+type InstructionContext = { generations:Map<string,number>; bindings:Map<string,ModelSnapshot>; resolutions:number; interruptId?:string };
 const instructionContexts=new WeakMap<GameState,InstructionContext>();
 const context=(s:GameState)=>instructionContexts.get(s)!;
 const roomAt=(s:GameState,position:Hex)=>s.board.rooms.find(r=>r.tiles.some(h=>hexKey(h)===hexKey(position)));
 type FeedbackPayload = { [K in GameFeedbackEvent['kind']]: Omit<Extract<GameFeedbackEvent,{kind:K}>,'id'|'round'> }[GameFeedbackEvent['kind']];
 function appendFeedback(s:GameState,event:FeedbackPayload) {
  const events=s.feedbackEvents??=[];
- events.push({...event,id:crypto.randomUUID(),round:s.round});
+ const interruptId=context(s).interruptId;
+ const fact={...event,id:crypto.randomUUID(),round:s.round,...(interruptId?{interruptId}:{})} as GameFeedbackEvent;
+ events.push(fact);
  if(events.length>FEEDBACK_EVENT_LIMIT)events.splice(0,events.length-FEEDBACK_EVENT_LIMIT);
+ return fact;
 }
 function roomFeedbackTarget(room:Room):FeedbackTarget {
  return {kind:'ROOM',id:room.id,name:room.name,roomId:room.id};
@@ -300,8 +314,10 @@ function resolveInstruction(s:GameState,owner:Player,instruction:TriggeredInstru
     if(target.mage)damage(s,target.mage,instruction.amount,owner,actor);
     else damageEvocation(s,target.evocation!,instruction.amount,owner,actor);
     break;
-  case 'HEAL':healModel(s,target.model,target.location,instruction.amount);break;
+  case 'HEAL':healModel(s,target.model,target.location,instruction.amount,owner.id,modelFeedbackTarget(s,ref)!);break;
   case 'CONVERT':
+    // Owned models ignore damage conversion, including triggered instructions.
+    if(ref!.playerId===owner.id)break;
    convertCubes(s,owner,target.model.damageByPlayer,target.location,instruction.amount,target.model.damageCubes,modelFeedbackTarget(s,ref)!,target.model);
    break;
   }
@@ -333,23 +349,38 @@ function emitEvent(s:GameState,event:SpellEvent) {
   const roomId=event.roomId??eventTarget?.roomId??active.roomId;
   const room=roomId?s.board.rooms.find(r=>r.id===roomId):undefined;
   const target=modelFeedbackTarget(s,bound)??eventTarget??(room?roomFeedbackTarget(room):undefined);
-  appendFeedback(s,{kind:'SPELL_TRIGGERED',activeSpellId:active.id,ownerId:owner.id,
+  const instructions=ongoing?active.card.ongoing!.effects:active.card.triggerEffects??[];
+  const trigger=appendFeedback(s,{kind:'SPELL_TRIGGERED',activeSpellId:active.id,ownerId:owner.id,
    cardName:active.card.name,spellType:getSpellType(active.card),trigger:event.event,ongoing,
-   ...(target?{target}:{}),...(roomId?{roomId}:{})});
+   effects:instructions.map(describeInstruction),...(target?{target}:{}),...(roomId?{roomId}:{})});
   const ownerRef=snapshot(s,owner.id);
-  for(const instruction of ongoing?active.card.ongoing!.effects:active.card.triggerEffects??[]) {
-   let ref:ModelSnapshot|undefined,roomId:string|undefined;
-   switch(instruction.target) {
-    case 'BOUND_MODEL':ref=bound;break;
-    case 'BOUND_ROOM':roomId=active.roomId;break;
-    case 'EVENT_MODEL':ref=event.model;break;
-    case 'EVENT_ACTOR':ref=event.actor;break;
-    case 'EVENT_ROOM':roomId=event.roomId;break;
-    case 'OWNER':ref=ownerRef;break;
+  const previousInterruptId=context(s).interruptId;
+  context(s).interruptId=trigger.id;
+  try {
+   for(const instruction of instructions) {
+    let ref:ModelSnapshot|undefined,roomId:string|undefined;
+    switch(instruction.target) {
+     case 'BOUND_MODEL':ref=bound;break;
+     case 'BOUND_ROOM':roomId=active.roomId;break;
+     case 'EVENT_MODEL':ref=event.model;break;
+     case 'EVENT_ACTOR':ref=event.actor;break;
+     case 'EVENT_ROOM':roomId=event.roomId;break;
+     case 'OWNER':ref=ownerRef;break;
+    }
+    resolveInstruction(s,owner,instruction,ref,roomId,ownerRef);
    }
-   resolveInstruction(s,owner,instruction,ref,roomId,ownerRef);
-  }
+  } finally { context(s).interruptId=previousInterruptId; }
   s.log.push(`Resume ${event.event} after ${active.card.name}.`);
+ }
+}
+function describeInstruction(instruction:TriggeredInstruction):string {
+ const targets:Record<TriggeredInstruction['target'],string>={BOUND_MODEL:'the bound model',BOUND_ROOM:'the bound room',EVENT_MODEL:'the triggering model',EVENT_ACTOR:'the acting model',EVENT_ROOM:'the triggering room',OWNER:'the owner’s mage'};
+ const target=targets[instruction.target];
+ switch(instruction.effect) {
+  case 'DAMAGE':return `Deal ${instruction.amount} damage to ${target}.`;
+  case 'HEAL':return `Heal up to ${instruction.amount} ${instruction.amount===1?'wound':'wounds'} on ${target}.`;
+  case 'CONVERT':return `Convert up to ${instruction.amount} ${instruction.amount===1?'cube':'cubes'} on ${target} to the owner’s color.`;
+  case 'INSTABILITY':return `Place up to ${instruction.amount} instability in ${target}.`;
  }
 }
 function modelEvent(s:GameState,event:TriggerEvent,ref:ModelSnapshot,actor=ref,roomId?:string) {
@@ -489,8 +520,8 @@ function convertCubes(s:GameState,p:Player,ledger:Record<PlayerId,number>,locati
 
 // Healing returns colored cubes in seat order (including safe own-color legacy
 // ledgers), then removes (not) Black Rose cubes, then any unattributed wounds.
-function healModel(s:GameState,model:WoundedModel,location:Exclude<CubeLocation,'onBoard'>,amount:number) {
- const healed=Math.min(amount,model.damageCubes);
+function healModel(s:GameState,model:WoundedModel,location:Exclude<CubeLocation,'onBoard'>,amount:number,sourceId:string,target:FeedbackTarget) {
+ const healed=Math.max(0,Math.min(amount,model.damageCubes));
  let remaining=healed;
  for(const owner of s.players) {
   const n=Math.min(remaining,model.damageByPlayer[owner.id]??0);
@@ -503,7 +534,10 @@ function healModel(s:GameState,model:WoundedModel,location:Exclude<CubeLocation,
  if(black>0){removeCubes(model.damageByPlayer,BLACK_ROSE_ID,black);remaining-=black;}
  if(model.blackDamage!==undefined)model.blackDamage-=Math.min(remaining,model.blackDamage);
  model.damageCubes-=healed;
- if(healed>0)s.log.push(`Healing removes ${healed} wounds and returns their physical cubes.`);
+ if(healed>0) {
+  s.log.push(`Healing removes ${healed} wounds and returns their physical cubes.`);
+  appendFeedback(s,{kind:'HEAL',target,sourceId,amount:healed});
+ }
 }
 
 function mageAttackTarget(s:GameState,p:Player,id:string) {
@@ -534,10 +568,21 @@ function placeInstability(s: GameState, room: Room, amount: number, source?: Pla
  return actual;
 }
 
+function expireRoundSpells(s:GameState) {
+ for(const active of [...s.readiedSpells!]) {
+  removeActiveSpell(s,active);
+  getPlayer(s,active.playerId).hand.push(active.card);
+ }
+ for(const active of [...s.ongoingSpells!])retireActiveSpell(s,active);
+ s.activeSpellOrder=[];
+}
+
 function startBlackRose(s: GameState) {
+ // Also settle legacy Cleanup snapshots, without returning a card twice.
+ expireRoundSpells(s);
  s.round++; s.phase='BLACK_ROSE'; s.blackRoseResolved=false; s.currentPlayerId=null; s.activation=null;s.evocationActivation=null;
  for(const p of s.players) {
-  p.actionTokens=PHYSICAL_TOKENS_PER_ROUND; p.passed=false; p.studyDrawn=false; p.studyDone=false; p.preparationDone=false;
+  p.actionTokens=PHYSICAL_TOKENS_PER_ROUND; p.passed=false; p.studyDrawn=false; p.studyDone=false; p.studyCardIds=[]; p.preparationDone=false;
   // Powerful spells stay with the mage until cast, including uncast preparations.
   for(const key of ['rapid',...slots] as const) {
    const prepared=p.prepared[key];
@@ -566,7 +611,7 @@ function beginStudyIfQuestsFit(s:GameState) {
   while(drawn<2 && p.personalDeck.length+p.discard.length>0) {p.hand.push(drawOne(p.personalDeck,p.discard));drawn++;}
   if(drawn<2)s.log.push(`${p.name} draws ${drawn} grimoire spells; the remaining personal spells are already held.`);
  }
- s.phase='STUDY'; s.log.push('STUDY — each mage draws 2 grimoire spells, chooses a library school, then discards 2.');
+ s.phase='STUDY'; s.log.push('STUDY — draw 2 grimoire spells, choose 4 blind library draws across schools, then discard 2 of those library spells.');
 }
 
 function finishBlackRose(s: GameState) {
@@ -729,6 +774,7 @@ function startActivation(s: GameState, p: Player) {
 
 function cleanup(s: GameState) {
  s.phase='CLEANUP'; s.activation=null; s.currentPlayerId=null;s.evocationActivation=null;
+ expireRoundSpells(s);
  s.log.push('CLEANUP — rebuild completed rooms, score contributions and return physical cubes.');
  for(const room of s.board.rooms) {
   room.specialUsed=false;
@@ -907,9 +953,24 @@ export function applyAction(state: GameState, action: GameAction): GameState {
    requirePhase(s,'LOBBY');assert(p.connected,'Join the room first');
    if(action.ready)assert(typeof p.startingSchoolId==='string' && s.library.some(d=>d.id===p.startingSchoolId),'Choose a valid starting school before becoming ready');
    p.ready=action.ready;break;
+  case 'SET_ROOM_COUNT': {
+   requirePhase(s,'LOBBY');assert(p.id===s.hostId,'Only the creator can configure rooms');assert(p.connected,'Join the room first');
+   assert(action.roomsPerColor===null || (Number.isInteger(action.roomsPerColor)&&[1,2,3].includes(action.roomsPerColor)),'Choose 1, 2 or 3 rooms per color, or null for automatic');
+   const value=action.roomsPerColor===null?undefined:action.roomsPerColor;
+   if(s.roomsPerColor!==value) {
+    if(value===undefined)delete s.roomsPerColor;else s.roomsPerColor=value;
+    for(const mage of s.players)mage.ready=false;
+   }
+   break;
+  }
   case 'START_GAME':
    requirePhase(s,'LOBBY'); assert(p.id===s.hostId,'Only the creator can start');
    assert(canStartGame(s),'At least 2 mages must join and everyone must be ready with a valid starting school and enough school supply');
+    s.board=createDemoBoard(s.roomsPerColor??getDefaultRoomsPerColor(s.players.length));
+    for(const mage of s.players) {
+     const start=s.board.rooms.find(r=>r.startingFor===mage.id)!;
+     mage.wizard.startingRoomId=start.id;mage.wizard.position={...start.tiles[0]};
+    }
    for(const mage of s.players) {
     const deck=s.library.find(d=>d.id===mage.startingSchoolId)!;
     // These seven physical school cards are the entire starting grimoire.
@@ -929,18 +990,29 @@ export function applyAction(state: GameState, action: GameAction): GameState {
    break;
   case 'DRAW_STUDY': {
    requirePhase(s,'STUDY'); assert(!p.studyDrawn,'Already drew library spells');
-   const deck=s.library.find(d=>d.id===action.deckId); assert(deck,'School not found');
-  assert(deck!.cards.length+deck!.discard.length>=4,`${deck!.name} has fewer than 4 available spells`);
-   for(let i=0;i<4;i++) p.hand.push(drawOne(deck!.cards,deck!.discard));
-   p.studyDrawn=true; s.log.push(`${p.name} draws 4 spells from ${deck!.name}.`); break;
+    const hasDeckId=Object.prototype.hasOwnProperty.call(action,'deckId'),hasDeckIds=Object.prototype.hasOwnProperty.call(action,'deckIds');
+    assert(hasDeckId!==hasDeckIds,'Choose either deckId or deckIds, not both');
+    assert(!('cardIds' in action),'Study draws select schools, never hidden card IDs');
+    assert(hasDeckId?typeof action.deckId==='string':Array.isArray(action.deckIds)&&action.deckIds.length===4&&Array.from(action.deckIds).every(id=>typeof id==='string'),'Choose exactly 4 school entries');
+    const ids=hasDeckId?Array<string>(4).fill(action.deckId!):action.deckIds!;
+    const decks=ids.map(id=>{const deck=s.library.find(d=>d.id===id);assert(deck,'School not found');return deck!;});
+    for(const deck of new Set(decks)) {
+     const required=decks.filter(d=>d===deck).length;
+     assert(deck.cards.length+deck.discard.length>=required,`${deck.name} has fewer than ${required} available spells`);
+    }
+    const drawn=decks.map(deck=>drawOne(deck.cards,deck.discard));
+    p.hand.push(...drawn);p.studyCardIds=drawn.map(c=>c.id);
+    p.studyDrawn=true;s.log.push(`${p.name} draws 4 library spells from ${[...new Set(decks.map(d=>d.name))].join(', ')}.`);break;
   }
   case 'DISCARD_STUDY': {
    requirePhase(s,'STUDY'); assert(p.studyDrawn && !p.studyDone,'Draw library spells before discarding');
-   assert(action.cardIds.length===2 && new Set(action.cardIds).size===2,'Discard exactly 2 different spells');
+    assert(Array.isArray(action.cardIds) && action.cardIds.length===2 && new Set(action.cardIds).size===2,'Discard exactly 2 different spells');
    assert(action.cardIds.every(id=>p.hand.some(c=>c.id===id)),'Spell not in hand');
-  for(const id of action.cardIds) discardCard(s,p,p.hand.splice(p.hand.findIndex(c=>c.id===id),1)[0]);
+    assert(action.cardIds.every(id=>!p.hand.find(c=>c.id===id)!.powerful),'Forgotten spells cannot be discarded during Study');
+    assert(Array.isArray(p.studyCardIds) && p.studyCardIds.length===4 && new Set(p.studyCardIds).size===4 && action.cardIds.every(id=>p.studyCardIds!.includes(id)),'Discard only spells drawn from the library this Study');
+    for(const id of action.cardIds) discardCard(s,p,p.hand.splice(p.hand.findIndex(c=>c.id===id),1)[0]);
    p.studyDone=true;
-   if(s.players.every(p=>p.studyDone)) { s.phase='PREPARATION'; s.log.push('PREPARATION — choose spells 1 → 2 → 3 and one flexible spell.'); }
+  if(s.players.every(p=>p.studyDone)) { s.phase='PREPARATION'; s.log.push('PREPARATION — choose 2 to 4 spells: up to 3 ordered and 1 optional flexible spell.'); }
    break;
   }
   case 'DISCARD_QUESTS': {
@@ -971,12 +1043,14 @@ export function applyAction(state: GameState, action: GameAction): GameState {
   case 'PREPARE_CARDS': {
    requirePhase(s,'PREPARATION'); assert(!p.preparationDone,'Already prepared');
    assert(p.hand.length<=p.cardLimit,'Discard down to the hand limit before preparing cards');
-   const ids=[...action.preparedCardIds,action.rapidCardId];
-   assert(action.preparedCardIds.length===3 && new Set(ids).size===4,'Choose 3 ordered spells and 1 flexible spell');
+    assert(Array.isArray(action.preparedCardIds),'Choose ordered spells');
+    assert(action.rapidCardId===undefined || typeof action.rapidCardId==='string','Flexible spell must be a card ID');
+    const ids=[...action.preparedCardIds,...(action.rapidCardId===undefined?[]:[action.rapidCardId])];
+    assert(action.preparedCardIds.length<=3 && ids.length>=2 && ids.length<=4 && new Set(ids).size===ids.length,'Choose 2 to 4 different spells, at most 3 ordered and 1 flexible');
    assert(ids.every(id=>p.hand.some(c=>c.id===id)),'Spell not in hand');
    for(const [i,id] of ids.entries()) {
     const card=p.hand.splice(p.hand.findIndex(c=>c.id===id),1)[0];
-    p.prepared[i===3 ? 'rapid' : slots[i]]={card,used:false};
+    p.prepared[i===action.preparedCardIds.length ? 'rapid' : slots[i]]={card,used:false};
    }
    p.preparationDone=true;
   if(s.players.every(p=>p.preparationDone)) { s.phase='ACTION'; s.log.push('ACTION — up to 2 total actions per turn, including spell casts and discard-to-move; at most one numbered spell per turn.'); startActivation(s,s.players[0]); }

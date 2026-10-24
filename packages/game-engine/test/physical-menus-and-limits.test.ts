@@ -96,10 +96,11 @@ describe('agreed client interfaces and defaults',()=>{
   conserved(g);
   for(const id of ['p1','p2']) {
    g=applyAction(g,{type:'DRAW_STUDY',playerId:id,deckId:'cantrip'});expect(player(g,id).hand).toHaveLength(6);
-   g=applyAction(g,{type:'DISCARD_STUDY',playerId:id,cardIds:player(g,id).hand.slice(0,2).map(c=>c.id)});
+    g=applyAction(g,{type:'DISCARD_STUDY',playerId:id,cardIds:player(g,id).studyCardIds!.slice(0,2)});
    expect(player(g,id).hand).toHaveLength(4);expect(player(g,id).personalDeck).toHaveLength(4);expect(player(g,id).discard).toHaveLength(1);conserved(g);
   }
-  expect(g.phase).toBe('PREPARATION');expect(g.library[0].discard).toEqual([startingCards[0],startingCards[1],startingCards[7],startingCards[8]]);
+  expect(g.phase).toBe('PREPARATION');
+  expect(g.library[0].discard.map(c=>c.id)).toEqual(g.players.flatMap(p=>p.studyCardIds!.slice(0,2)));
   for(const id of ['p1','p2']) {
    rejected(g,{type:'DISCARD_HAND_LIMIT',playerId:id,cardIds:[]},/No cards over the hand limit/);
    g=applyAction(g,prepareAction(g,id));

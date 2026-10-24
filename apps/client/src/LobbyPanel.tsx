@@ -1,5 +1,5 @@
 import React from 'react';
-import { GameAction, GameState, MAX_MAGES, MIN_MAGES, Player, STARTING_SCHOOL_CARDS } from '@brw/game-engine';
+import { GameAction, GameState, MAX_MAGES, MIN_MAGES, Player, STARTING_SCHOOL_CARDS, getDefaultRoomsPerColor } from '@brw/game-engine';
 import { MAGE_COLOR_NAMES, MAGE_SYMBOLS, mageStyle } from './presentation';
 
 export function LobbyPanel({game,me,connected,pending,send}:{game:GameState;me:Player;connected:boolean;pending:boolean;send:(action:GameAction)=>void}) {
@@ -12,6 +12,7 @@ export function LobbyPanel({game,me,connected,pending,send}:{game:GameState;me:P
   <div className="lobby-seats">{game.players.map(p=><div className="seat" style={mageStyle(p.id)} data-player-id={p.id} key={p.id}>
    <span className="mage-icon" aria-hidden="true">{MAGE_SYMBOLS[p.id]}</span><div><strong>{p.name}</strong><small>{MAGE_COLOR_NAMES[p.id]} · {p.id===game.hostId?'Creator · ':''}{!p.connected?'Disconnected · waiting to rejoin':p.ready?'✓ Ready':'Not ready'}</small><span className="seat-school">{game.library.find(deck=>deck.id===p.startingSchoolId)?.name??'Choose a starting school'}</span></div>
   </div>)}</div>
+  <div className="room-count-choice"><label className="action-setting">Rooms per color<select aria-label="Rooms per color" value={game.roomsPerColor??'auto'} disabled={!connected||pending||game.hostId!==me.id} onChange={event=>send({type:'SET_ROOM_COUNT',playerId:me.id,roomsPerColor:event.target.value==='auto'?null:Number(event.target.value) as 1|2|3})}><option value="auto">Automatic · {getDefaultRoomsPerColor(joinedCount)} per color</option><option value="1">1 per color · 6 colored rooms</option><option value="2">2 per color · 12 colored rooms</option><option value="3">3 per color · 18 colored rooms</option></select></label><p className="hint">The host chooses the lodge size. Defaults: 2 mages → 1, 3 mages → 2, 4 mages → 3 rooms per color. Changes reset everyone's readiness; the board is built when the battle starts.</p></div>
   <div className="starting-school-choice">
    <label className="action-setting">Starting magic school<select aria-label="Starting magic school" value={school?.id??''} disabled={!connected||pending} onChange={e=>send({type:'SELECT_STARTING_SCHOOL',playerId:me.id,schoolId:e.target.value})}>
     <option value="" disabled>Choose your school</option>{game.library.map(deck=><option value={deck.id} key={deck.id}>{deck.name}</option>)}

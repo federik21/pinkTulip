@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
-import { openMageDetails, selectControlTab, viewRetinue } from './layout-ui';
+import { openMageDetails, selectControlTab, selectSpells, viewRetinue } from './layout-ui';
 import { applyAction, BLACK_ROSE_ID, createGame, MAGE_COLORS } from '../packages/game-engine/src/index';
 import type { Card, Evocation, GameAction, GameState, Hex, Room } from '../packages/game-engine/src/index';
 
@@ -114,6 +114,7 @@ async function mount(page: Page, initial: GameState) {
   const overlay = page.locator('.phase-overlay');
   if (await overlay.isVisible()) await overlay.click();
   await expect(overlay).toBeHidden();
+  if (game.phase === 'ACTION') await selectSpells(page);
   return { replies, get state() { return game; }, update(state: GameState) {
     conserved(state); game = structuredClone(state); publish(game);
   } };
@@ -200,6 +201,7 @@ async function cast(page: Page, wire: Wire, expected: Cast) {
     await expect(page.locator('.prepared .spell:enabled')).toHaveCount(0);
   }
   conserved(after); await expectModels(page, after);
+  await selectSpells(page);
   return after;
 }
 async function expectRoomCubes(page: Page, room: Room) {
@@ -250,6 +252,10 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
         expect(after.players[0].cubes.available).toBe(25);
         expect(after.players.slice(1).map(p => p.wizard)).toEqual(outside.players.slice(1).map(p => p.wizard));
         expect(after.evocations).toEqual(outside.evocations);
+        expect((after.feedbackEvents ?? []).map(event => [event.kind, 'amount' in event ? event.amount : null])).toEqual([
+          ['HEAL', card.heal],
+        ]); // Alchemist's Refuge skips its own CONVERT, then heals the original owners' cubes.
+        expect(after.board).toEqual(outside.board);
       });
     }
 
@@ -269,6 +275,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
         const wire = await mount(page, game);
         await expectModels(page, wire.state);
         for (const [index, id] of scenario.choices.entries()) {
+          await selectSpells(page);
           const slot: Slot = index === 0 ? 'slot1' : 'rapid';
           const button = prepared(page, scenario.name, slot);
           const amount = card[scenario.effect]!;
@@ -278,14 +285,27 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
           await expectOptions(page, [...scenario.ids]); await expect(targetSelect(page)).toHaveValue('');
           await targetSelect(page).selectOption(id);
           const before = wire.state, mage = before.players.some(p => p.id === id);
-          const initial = modelAt(before, id).damageCubes, changed = Math.min(initial, amount);
+          const initial = modelAt(before, id).damageCubes;
+          const ownConversion = scenario.effect === 'convert' && (mage ? id === 'p1' : before.evocations.find(e => e.id === id)!.playerId === 'p1');
+          const changed = ownConversion ? 0 : Math.min(initial, amount);
           const after = await cast(page, wire, { type: 'CAST_SPELL', playerId: 'p1', slot,
             ...(mage ? { targetPlayerId: id } : { targetEvocationId: id }) });
           expect(modelAt(after, id)).toMatchObject({ damageCubes: scenario.effect === 'heal' ? initial - changed : initial });
           expect(modelAt(after, id).damageByPlayer).toEqual({ ...(initial > changed ? { p3: initial - changed } : {}),
-            ...(scenario.effect === 'convert' ? { p1: changed } : {}) });
+            ...(scenario.effect === 'convert' && changed ? { p1: changed } : {}) });
           expect(after.players[2].cubes.available).toBe(before.players[2].cubes.available + changed);
           expect(after.players[0].cubes.available).toBe(before.players[0].cubes.available - (scenario.effect === 'convert' ? changed : 0));
+          const known = new Set((before.feedbackEvents ?? []).map(event => event.id));
+          const facts = (after.feedbackEvents ?? []).filter(event => !known.has(event.id));
+          if (ownConversion) {
+            expect(modelAt(after, id)).toEqual(modelAt(before, id));
+            expect(after.players.map(p => p.cubes)).toEqual(before.players.map(p => p.cubes));
+            expect(facts).toEqual([]);
+            await expect(page.locator('.feedback-pulse[data-feedback-kind="CONVERT"]')).toHaveCount(0);
+          } else {
+            expect(facts).toEqual([expect.objectContaining({ kind: scenario.effect === 'convert' ? 'CONVERT' : 'HEAL',
+              sourceId: 'p1', amount: changed, target: expect.objectContaining({ id, kind: mage ? 'MAGE' : 'EVOCATION' }) })]);
+          }
           for (const p of before.players.filter(p => p.id !== id)) expect(after.players.find(t => t.id === p.id)!.wizard).toEqual(p.wizard);
           for (const e of before.evocations.filter(e => e.id !== id)) expect(after.evocations.find(t => t.id === e.id)).toEqual(e);
           expect(after.board).toEqual(before.board);
@@ -364,6 +384,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       wound(game, 'own-one', { p4: 1 }); wound(game, 'enemy-one', { p3: 1 });
       game.evocations.push(evocation('outside', 'p2', { q: 0, r: 1 }, 2)); wound(game, 'outside', { p4: 1 }); syncCubes(game);
       const wire = await mount(page, game); await expectModels(page, game);
+      await selectSpells(page);
       await prepared(page, 'Sanctuary').click(); await noDummy(page); await hex(page).click();
       await expect(targetSelect(page)).toHaveCount(0);
       await expect(prepared(page, 'Sanctuary').locator('.heal-effect')).toHaveText('♥ 2 heal');
@@ -385,6 +406,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
         room.reconstructed = room.scored = status === 'rebuilt';
         wound(game, 'p2', { p4: 2 }); wound(game, 'own-one', { p3: 1 }); syncCubes(game);
         const wire = await mount(page, game); await expectModels(page, game);
+        await selectSpells(page);
         await prepared(page, 'Rewrite the Lodge').click(); await noDummy(page); await hex(page).click();
         await expect(targetSelect(page)).toHaveCount(0);
         await expect(prepared(page, 'Rewrite the Lodge').locator('.convert-effect')).toHaveText('↻ 3 convert · room cubes');

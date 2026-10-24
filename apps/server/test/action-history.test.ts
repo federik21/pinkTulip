@@ -250,7 +250,7 @@ describe('turn ownership, branching, validation and phase barriers', () => {
   reject(history, game, redo, /No action available/);
  });
 
- it.each(['SELECT_STARTING_SCHOOL', 'SET_READY', 'DRAW_STUDY', 'DISCARD_STUDY', 'DISCARD_HAND_LIMIT', 'PREPARE_CARDS', 'DISCARD_QUESTS', 'ADVANCE_PHASE'] as const)(
+ it.each(['SELECT_STARTING_SCHOOL', 'SET_ROOM_COUNT', 'SET_READY', 'DRAW_STUDY', 'DISCARD_STUDY', 'DISCARD_HAND_LIMIT', 'PREPARE_CARDS', 'DISCARD_QUESTS', 'ADVANCE_PHASE'] as const)(
   'treats successful %s as a barrier even without a phase change', type => {
    const history = new ActionHistory(); let initial = fixture();
    if (type === 'SET_READY') {
@@ -264,13 +264,16 @@ describe('turn ownership, branching, validation and phase barriers', () => {
    switch (type) {
     case 'SELECT_STARTING_SCHOOL':
      game.phase = 'LOBBY'; action = { type, playerId:'p1', schoolId:game.library[0].id }; break;
+    case 'SET_ROOM_COUNT':
+     game.phase = 'LOBBY'; action = { type, playerId:'p1', roomsPerColor:2 }; break;
     case 'SET_READY':
      game.phase = 'LOBBY';
      action = { type, playerId:'p1', ready:true }; break;
     case 'DRAW_STUDY': game.phase = 'STUDY'; action = { type, playerId:'p1', deckId:game.library[0].id }; break;
     case 'DISCARD_STUDY':
      game.phase = 'STUDY'; game.players[0].studyDrawn = true;
-    game.players[0].hand = game.players[0].personalDeck.splice(0, 4);
+      game.players[0].hand = game.library[0].cards.splice(0, 4);
+      game.players[0].studyCardIds = game.players[0].hand.map(c => c.id);
      action = { type, playerId:'p1', cardIds:game.players[0].hand.slice(0, 2).map(c => c.id) }; break;
     case 'DISCARD_HAND_LIMIT':
      game.phase = 'PREPARATION'; game.players[0].hand = game.players[0].personalDeck.splice(0, 8);

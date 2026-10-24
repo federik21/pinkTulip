@@ -215,22 +215,26 @@ describe('atomic physical starting-school grimoire allocation',()=>{
   expect(before.players[0].hand).toEqual([]);
   expect(s.players[0].hand).toEqual(before.players[0].personalDeck.slice(0,2));
   expect(s.players[0].personalDeck).toEqual(before.players[0].personalDeck.slice(2));
-  const starting=s.players[0].hand[0],stock=s.library[0].cards;
+  const starting=[...s.players[0].hand],stock=s.library[0].cards;
   s=applyAction(s,{type:'DRAW_STUDY',playerId:'p1',deckId:'cantrip'});
   expect(s.players[0].hand).toHaveLength(6);expect(s.players[0].hand.slice(-4)).toEqual(stock.slice(0,4));
-  s=applyAction(s,{type:'DISCARD_STUDY',playerId:'p1',cardIds:[starting.id,stock[0].id]});
+  reject(s,{type:'DISCARD_STUDY',playerId:'p1',cardIds:[starting[0].id,stock[0].id]},/this Study/);
+  s=applyAction(s,{type:'DISCARD_STUDY',playerId:'p1',cardIds:stock.slice(0,2).map(c=>c.id)});
   expect(s.players[0].hand).toHaveLength(4);expect(s.players[0].discard).toEqual(before.players[0].discard);
   expect(s.players[0].personalDeck).toHaveLength(4);
-  expect(s.library.find(d=>d.id==='transmutation')!.discard).toEqual([starting]);
-  expect(s.library.find(d=>d.id==='cantrip')!.discard).toEqual([stock[0]]);
+  expect(s.players[0].hand).toEqual([...starting,...stock.slice(2,4)]);
+  expect(s.library.find(d=>d.id==='transmutation')!.discard).toEqual([]);
+  expect(s.library.find(d=>d.id==='cantrip')!.discard).toEqual(stock.slice(0,2));
   expect(physicalCards(s).map(c=>c.id).sort()).toEqual(physicalCards(before).map(c=>c.id).sort());
  });
- it('deals before the existing event resolution consumes randomness',()=>{
+ it('builds rooms before dealing, then deals before event resolution consumes randomness',()=>{
   const s=readyLobby(),stock=[...s.library[0].cards];
   s.library[0].discard.push(...s.library[0].cards.splice(0));
   // The first random choice swaps the deck's endpoints; subsequent choices
   // leave their positions untouched. An event-first shuffle would consume it.
-  const random=vi.spyOn(Math,'random').mockReturnValue(0.999999).mockReturnValueOnce(0);
+  // The 22-name board shuffle consumes 21 choices before any card allocation.
+  let choices=0;
+  const random=vi.spyOn(Math,'random').mockImplementation(()=>++choices===22?0:0.999999);
   try {
    const result=start(s),shuffled=[...stock];
    [shuffled[0],shuffled[35]]=[shuffled[35],shuffled[0]];

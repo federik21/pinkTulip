@@ -178,13 +178,19 @@ describe('room completion and Cleanup reconstruction',()=>{
   expect(player(g,'p2').victoryPoints).toBe(legacy.rewards[0]);conservation(g);
  });
  it('keeps Black Rose event completions pending and excludes already-full rooms from future event placements',()=>{
-  let g=createGame(2);const [full,almost]=g.board.rooms.filter(r=>r.color==='crimson');
+  let g=createGame(2);
+  for(const p of g.players)p.connected=true;
+  g=applyAction(g,{type:'SET_ROOM_COUNT',playerId:'p1',roomsPerColor:3});
+  for(const p of g.players){g=applyAction(g,{type:'SELECT_STARTING_SCHOOL',playerId:p.id,schoolId:'cantrip'});g=applyAction(g,{type:'SET_READY',playerId:p.id,ready:true});}
+  g.eventDeck=[{id:'quiet',name:'Quiet',description:'No effect',kind:'INSTABILITY',amount:0,rooms:0}];
+  g=applyAction(g,{type:'START_GAME',playerId:'p1'});
+  const [full,almost]=g.board.rooms.filter(r=>r.color==='crimson');
   for(const r of g.board.rooms)if(!r.startingFor&&r.id!==full.id&&r.id!==almost.id){r.reconstructed=true;r.scored=true;}
   placeLedger(g,full,{[BLACK_ROSE_ID]:full.instabilityLimit});placeLedger(g,almost,{[BLACK_ROSE_ID]:almost.instabilityLimit-1});
-  for(const p of g.players)p.connected=true;
-  for(const p of g.players){g=applyAction(g,{type:'SELECT_STARTING_SCHOOL',playerId:p.id,schoolId:'cantrip'});g=applyAction(g,{type:'SET_READY',playerId:p.id,ready:true});}
-  g.eventDeck=[{id:'event-fill',name:'Fill',description:'Instability',kind:'INSTABILITY',amount:3,rooms:99}];
-  g=applyAction(g,{type:'START_GAME',playerId:'p1'});
+  // START builds a fresh board. Isolate a later event boundary to retain the
+  // pre-existing full/incomplete-room regression without overwriting that setup.
+  g.phase='CLEANUP';g.eventDeck=[{id:'event-fill',name:'Fill',description:'Instability',kind:'INSTABILITY',amount:3,rooms:99}];
+  g=applyAction(g,{type:'ADVANCE_PHASE',playerId:'p1',expectedPhase:'CLEANUP',expectedRound:1});
   expect(room(g,full.id)).toMatchObject({reconstructed:false,scored:false,instability:full.instabilityLimit});
   expect(room(g,almost.id)).toMatchObject({reconstructed:false,scored:false,instability:almost.instabilityLimit});
   expect(g.log.filter(l=>l.includes('places 1 instability'))).toHaveLength(1);expect(g.blackRose.victoryPoints).toBe(0);

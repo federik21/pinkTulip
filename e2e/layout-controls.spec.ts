@@ -1,6 +1,7 @@
 import { test, expect, type Page, type WebSocketRoute } from '@playwright/test';
 import { createGame, type Card, type Evocation, type GameAction, type GameState } from '../packages/game-engine/src/index';
-import { selectControlTab, viewRetinue } from './layout-ui';
+import { selectControlTab, selectSpells, viewRetinue } from './layout-ui';
+import { expectSpellIcon, expectSpellType } from './spell-ui';
 
 const faults = new WeakMap<Page, string[]>();
 test.beforeEach(async ({ page }) => {
@@ -27,6 +28,10 @@ function fixture(): GameState {
   game.activation = { playerId: 'p1', actionsUsed: 0, exploring: 0, sequencedSpellUsed: false,
     spellsCast: 0, discardedExit: false, roomEffectUsed: false, physicalAction: null };
   game.players[0].prepared.slot1 = { card: take(game, 'Arcane Bolt'), used: false };
+  game.players[1].prepared.slot1 = { card: take(game, 'Renewing Word'), used: false };
+  const spent = take(game, 'Mending Light');
+  game.players[1].prepared.slot2 = { card: spent, used: true };
+  game.library.find(deck => deck.id === spent.schoolId)!.discard.push(spent);
   game.players.forEach((p, index) => {
     p.name = ['Rose Warden', 'Blue Seer'][index]; p.connected = p.ready = true;
     p.wizard.position = { q: 0, r: 0 };
@@ -84,20 +89,24 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
   test.describe(`layout controls at ${viewport.width}px`, () => {
     test.use({ viewport, reducedMotion: 'reduce' });
 
-    test('accessible keyboard tabs wrap with arrows/Home/End, stay above the map and leave board/prepared/Chronicle independent', async ({ page }, info) => {
+    test('four accessible keyboard tabs wrap; Spells owns magic while the map, roster, history and Chronicle remain independent', async ({ page }, info) => {
       const game = fixture(), wire = await mount(page, game);
       const tabs = page.getByRole('tablist', { name: 'Lodge controls', exact: true });
       await expect(tabs).toHaveAttribute('aria-orientation', 'horizontal');
-      await expect(tabs.getByRole('tab')).toHaveText(['Actions', 'Evocations', 'More']);
-      await expect(tab(page, 'Actions')).toHaveAttribute('aria-selected', 'true');
-      await tab(page, 'Actions').focus();
-      for (const [key, name] of [['ArrowRight', 'Evocations'], ['ArrowRight', 'More'], ['ArrowRight', 'Actions'],
-        ['ArrowLeft', 'More'], ['Home', 'Actions'], ['End', 'More'], ['ArrowLeft', 'Evocations']] as const) {
+      await expect(tabs.getByRole('tab')).toHaveText(['Physical actions', 'Spells', 'Evocations', 'Quests']);
+      await expect(tab(page, 'Physical actions')).toHaveAttribute('aria-selected', 'true');
+      for (const [name, id] of [['Physical actions', 'actions'], ['Spells', 'spells'], ['Evocations', 'evocations'], ['Quests', 'quests']]) {
+        await expect(tab(page, name)).toHaveAttribute('id', `controls-tab-${id}`);
+        await expect(tab(page, name)).toHaveAttribute('aria-controls', `controls-panel-${id}`);
+      }
+      await tab(page, 'Physical actions').focus();
+      for (const [key, name] of [['ArrowRight', 'Spells'], ['ArrowRight', 'Evocations'], ['ArrowRight', 'Quests'],
+        ['ArrowRight', 'Physical actions'], ['ArrowLeft', 'Quests'], ['Home', 'Physical actions'], ['End', 'Quests'], ['ArrowLeft', 'Evocations']] as const) {
         await page.keyboard.press(key);
         await expect(tab(page, name)).toBeFocused();
         await expect(tab(page, name)).toHaveAttribute('aria-selected', 'true');
         await expect(tab(page, name)).toHaveAttribute('tabindex', '0');
-        await expect(tabs.locator('[aria-selected="false"][tabindex="-1"]')).toHaveCount(2);
+        await expect(tabs.locator('[aria-selected="false"][tabindex="-1"]')).toHaveCount(3);
         await expect(page.getByRole('tabpanel')).toHaveCount(1);
         await expect(page.getByRole('tabpanel', { name, exact: true })).toBeVisible();
         const controls = await tab(page, name).getAttribute('aria-controls');
@@ -106,62 +115,67 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       }
       await page.keyboard.press('Tab');
       await expect(page.getByRole('tabpanel', { name: 'Evocations', exact: true })).toBeFocused();
+      await selectSpells(page);
       await page.locator('.prepared .spell').click();
       await expect(page.locator('.prepared .spell.chosen')).toHaveCount(1);
-      for (const name of ['Actions', 'Evocations', 'More'] as const) {
+      for (const name of ['Physical actions', 'Spells', 'Evocations', 'Quests'] as const) {
         await selectControlTab(page, name);
         await expect(page.locator('.board-panel')).toBeVisible();
-        await expect(page.locator('.prepared .spell.chosen')).toBeVisible();
+        await expect(page.locator('.prepared .spell.chosen')).toBeVisible({ visible: name === 'Spells' });
+        await expect(page.locator('#controls-panel-spells .prepared .spell.chosen')).toHaveCount(1);
         await expect(page.getByRole('log')).toContainText(game.log[0]);
+        await expect(page.locator('aside .log-panel')).toHaveCount(1);
+        await expect(page.locator('aside .players-panel')).toHaveCount(0);
+        await expect(page.locator('main .players-panel')).toBeVisible();
         await expect(page.locator('.history-panel')).toBeVisible();
         await expect(page.locator('.control-banner .history-panel')).toHaveCount(1);
         await expect(page.getByRole('button', { name: 'Undo action', exact: true })).toBeEnabled();
-        await expect(page.locator('.control-panel .board-panel, .control-panel .prepared, .control-panel .log-panel, .control-panel .history-panel')).toHaveCount(0);
+        await expect(page.locator('.control-panel .board-panel, .control-panel .players-panel, .control-panel .log-panel, .control-panel .history-panel')).toHaveCount(0);
         const bounds = await page.locator('.control-banner').evaluate(banner => {
           const box = banner.getBoundingClientRect(), map = document.querySelector('.board-panel')!.getBoundingClientRect();
+          const roster = document.querySelector('.players-panel')!.getBoundingClientRect();
           return { above: box.bottom <= map.top, left: box.left, right: box.right, viewport: innerWidth,
-            overflow: document.documentElement.scrollWidth > innerWidth };
+            rosterBelow: roster.top >= map.bottom, overflow: document.documentElement.scrollWidth > innerWidth };
         });
         expect(bounds.above).toBe(true); expect(bounds.left).toBeGreaterThanOrEqual(0);
+        expect(bounds.rosterBelow).toBe(true);
         expect(bounds.right).toBeLessThanOrEqual(bounds.viewport); expect(bounds.overflow).toBe(false);
         await expect(page.locator('#retinue-p1')).toBeVisible({ visible: name === 'Evocations' });
-        await expect(page.locator('.reference')).toBeVisible({ visible: name === 'More' });
-        await expect(page.locator('.quest-panel')).toBeVisible({ visible: name === 'More' });
-        await expect(page.locator('.active-spells-panel')).toBeVisible({ visible: name === 'More' });
+        await expect(page.locator('.reference')).toBeHidden();
+        await expect(page.locator('.quest-panel')).toBeVisible({ visible: name === 'Quests' });
+        await expect(page.locator('.active-spells-panel')).toBeVisible({ visible: name === 'Spells' });
         await page.locator('.control-banner').screenshot({path:info.outputPath(`controls-${name.toLowerCase()}.png`),animations:'disabled'});
       }
-      const more = page.getByRole('tabpanel', { name: 'More', exact: true });
-      expect(await more.evaluate(element => element.clientHeight)).toBeLessThanOrEqual(420);
-      expect(await more.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
       await expect(page.locator('.quest-panel h3')).toHaveText(`◇ ${game.players[0].quest!.name}`);
-      await expect(page.locator('.reference')).toContainText('2 actions total per turn.');
-      // The board remains keyboard-operable while More is selected, without losing the prepared target.
+      // Switching tabs must preserve the prepared target and keyboard-operable map.
       const center = page.locator('.hex[data-room-id="room-0,0"]');
       await center.focus(); await page.keyboard.press('Enter');
       await expect(page.locator('.room-detail')).toBeVisible();
-      await expect(tab(page, 'More')).toHaveAttribute('aria-selected', 'true');
+      await expect(tab(page, 'Quests')).toHaveAttribute('aria-selected', 'true');
       await expect(page.locator('.prepared .spell.chosen')).toHaveCount(1);
+      wire.update(structuredClone(game));
+      await expect(tab(page, 'Quests')).toHaveAttribute('aria-selected', 'true');
       expect(wire.commands).toEqual([]);
-      await info.attach(`layout-more-${viewport.width}`, { body: await page.locator('.control-banner').screenshot(), contentType: 'image/png' });
+      await info.attach(`layout-quests-${viewport.width}`, { body: await page.locator('.control-banner').screenshot(), contentType: 'image/png' });
       await page.locator('.players-panel').screenshot({path:info.outputPath('mage-summaries.png'),animations:'disabled'});
     });
 
-    test('Evocation auto-selects even on a peer turn; own active controls survive closed mage/opponent disclosures and paid activations return to Actions', async ({ page }) => {
+    test('Evocation auto-selects even on a peer turn; own active controls survive closed mage/opponent disclosures and paid activations return to Physical actions', async ({ page }) => {
       const game = fixture(), wire = await mount(page, game);
-      await selectControlTab(page, 'More');
+      await selectControlTab(page, 'Quests');
       const peer = structuredClone(game); peer.phase = 'EVOCATION'; peer.activation = null; peer.currentPlayerId = 'p2';
       wire.update(peer); await expect(page.locator('.phase-track .current span')).toHaveText('Evocation'); await dismissOverlay(page);
       await expect(tab(page, 'Evocations')).toHaveAttribute('aria-selected', 'true');
       await expect(page.locator('.evocation-phase')).toContainText('Blue Seer is controlling their evocations.');
       await expect(page.locator('#retinue-p1')).toBeVisible(); await expect(ownActivation(page)).toBeDisabled();
       await expect(page.locator('#retinue-p2')).toBeHidden();
-      await expect(page.locator('.player[open]')).toHaveCount(0);
+      await expect(page.locator('.player[open]')).toHaveCount(2);
       const activePeer = structuredClone(peer);
       activePeer.evocationActivation = { playerId: 'p2', evocationId: 'peer-model', movesRemaining: 2, returnToAction: false };
       wire.update(activePeer); await expect(page.locator('.evocation-controls')).toHaveCount(0);
       const own = structuredClone(peer); own.currentPlayerId = 'p1';
       own.evocationActivation = { playerId: 'p1', evocationId: 'own-model', movesRemaining: 2, returnToAction: false };
-      await selectControlTab(page, 'More'); wire.update(own);
+      await selectSpells(page); wire.update(own);
       await expect(tab(page, 'Evocations')).toHaveAttribute('aria-selected', 'true');
       await expect(page.locator('.evocation-controls')).toContainText('2 movement remaining.');
       await expect(page.locator('.evocation-controls').getByRole('button', { name: /^Cadaver attack Blue Seer/ })).toBeEnabled();
@@ -182,7 +196,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       await expect(page.locator('.evocation-controls')).toBeVisible();
       await expect(page.getByRole('button', { name: 'Finish evocation', exact: true })).toBeEnabled();
       wire.update(game); await expect(page.locator('.phase-track .current span')).toHaveText('Action'); await dismissOverlay(page);
-      await expect(tab(page, 'Actions')).toHaveAttribute('aria-selected', 'true');
+      await expect(tab(page, 'Physical actions')).toHaveAttribute('aria-selected', 'true');
       await selectControlTab(page, 'Evocations'); await ownActivation(page).click();
       await expect.poll(() => wire.commands.length).toBe(1);
       expect(wire.commands[0].action).toEqual({ type: 'ACTIVATE_EVOCATION', playerId: 'p1', evocationId: 'own-model' });
@@ -195,19 +209,19 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       await expect.poll(() => wire.commands.length).toBe(2);
       expect(wire.commands[1].action).toEqual({ type: 'END_EVOCATION', playerId: 'p1' });
       paid.evocationActivation = null; wire.update(paid); wire.ack();
-      await expect(tab(page, 'Actions')).toHaveAttribute('aria-selected', 'true');
+      await expect(tab(page, 'Physical actions')).toHaveAttribute('aria-selected', 'true');
       await expect(page.getByRole('button', { name: /^Explore/ })).toBeEnabled();
       await expect(page.locator('.board-panel')).toBeVisible();
     });
 
-    test('Actions and history stay in the top banner; pending, peer-disconnected and offline states cannot issue duplicate commands', async ({ page }) => {
+    test('Physical actions and history stay in the top banner; pending, peer-disconnected and offline states cannot issue duplicate commands', async ({ page }) => {
       const game = fixture(), wire = await mount(page, game);
       const explore = page.getByRole('button', { name: /^Explore/ });
       await expect(page.locator('.control-banner .actions-panel')).toHaveCount(1);
       await explore.click(); await expect.poll(() => wire.commands.length).toBe(1);
       expect(wire.commands[0].action).toEqual({ type: 'BEGIN_PHYSICAL_ACTION', playerId: 'p1', kind: 'EXPLORE' });
       await expect(explore).toBeDisabled(); await expect(page.locator('.prepared .spell')).toBeDisabled();
-      for (const name of ['Evocations', 'More', 'Actions'] as const) {
+      for (const name of ['Evocations', 'Spells', 'Quests', 'Physical actions'] as const) {
         await selectControlTab(page, name);
         await expect(page.getByRole('button', { name: 'Undo action', exact: true })).toBeDisabled();
         await expect(page.getByRole('button', { name: 'Redo action', exact: true })).toBeDisabled();
@@ -221,7 +235,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       physical.activation!.actionsUsed = 1; physical.players[0].actionTokens = 1;
       wire.update(physical); wire.ack();
       await expect(page.getByRole('button', { name: /^Perform 2 movements/ })).toBeEnabled();
-      await selectControlTab(page, 'More'); await selectControlTab(page, 'Actions');
+      await selectControlTab(page, 'Quests'); await selectControlTab(page, 'Physical actions');
       await expect(page.locator('.physical-effects')).toHaveAttribute('data-physical-kind', 'EXPLORE');
       await expect(page.getByRole('button', { name: 'Skip remaining effects', exact: true })).toBeEnabled();
       const disconnected = structuredClone(game); disconnected.players[1].connected = false;
@@ -230,7 +244,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       await expect(page.locator('.actions-panel button:enabled, .prepared .spell:enabled')).toHaveCount(0);
       await selectControlTab(page, 'Evocations'); await expect(ownActivation(page)).toBeDisabled();
       await expect(page.getByRole('button', { name: 'Undo action', exact: true })).toBeDisabled();
-      wire.update(game); await selectControlTab(page, 'Actions'); await expect(explore).toBeEnabled();
+      wire.update(game); await selectControlTab(page, 'Physical actions'); await expect(explore).toBeEnabled();
       const peerTurn = structuredClone(game); peerTurn.currentPlayerId = 'p2'; peerTurn.activation!.playerId = 'p2';
       wire.update(peerTurn); await expect(page.locator('.control-waiting')).toContainText('Blue Seer is acting.');
       await expect(page.getByRole('button', { name: 'Undo action', exact: true })).toBeEnabled();
@@ -238,7 +252,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       wire.close(); await expect(page.locator('.header-meta')).toContainText('Offline');
       await expect(page.locator('.actions-panel button:enabled, .prepared .spell:enabled')).toHaveCount(0);
       await selectControlTab(page, 'Evocations'); await expect(ownActivation(page)).toBeDisabled();
-      for (const name of ['More', 'Actions'] as const) {
+      for (const name of ['Spells', 'Quests', 'Physical actions'] as const) {
         await selectControlTab(page, name);
         await expect(page.getByRole('button', { name: 'Undo action', exact: true })).toBeDisabled();
         await expect(page.getByRole('button', { name: 'Redo action', exact: true })).toBeDisabled();
@@ -247,9 +261,9 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       await expect(page.getByRole('alert')).toContainText('Connection closed.');
     });
 
-    test('closed compact rosters expose cards/damage/tokens and own Trap/Protection types, but foreign unmasked cards reveal only hidden counts', async ({ page }) => {
+    test('default-open full rosters expose public types and unused-spell counts without foreign card identities or bindings', async ({ page }) => {
       const game = fixture(), wire = await mount(page, game);
-      await expect(page.locator('.player')).toHaveCount(2); await expect(page.locator('.player[open]')).toHaveCount(0);
+      await expect(page.locator('.player')).toHaveCount(2); await expect(page.locator('.player[open]')).toHaveCount(2);
       for (const p of game.players) {
         const mage = page.locator(`.player[data-player-id="${p.id}"]`), summary = mage.locator('summary');
         await expect(summary.locator('.critical-attributes dt')).toHaveText('Cards');
@@ -257,40 +271,54 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
         await expect(summary.locator('.player-stats')).toHaveText('⚡ 2 tokens');
         await expect(summary.getByRole('meter')).toBeVisible();
         await expect(summary.getByRole('meter')).toHaveAttribute('aria-valuenow', String(p.wizard.damageCubes));
-        await expect(mage.locator('.mage-secondary')).toBeHidden();
+        await expect(mage.locator('.mage-secondary')).toBeVisible();
         await expect(mage.locator('.secondary-attributes, .cube-pool, [title="Available cubes"]')).toHaveCount(3);
-        await expect(summary.locator('.active-magic-counts')).toHaveText(p.id === 'p1' ? 'Trap: 1 · Protection: 1' : 'Hidden active: 2');
+        await expect(summary.locator('.active-magic-counts')).toHaveText('Trap: 1 · Protection: 1');
+        await expect(mage.locator('.remaining-spells')).toHaveAttribute('aria-label', `${p.name} spells remaining`);
+        await expect(mage.getByLabel(`${p.name} spells remaining`, { exact: true })).toHaveText('Spells left: 1');
         if (p.id === 'p2') {
           const markup = await mage.evaluate(element => element.outerHTML);
-          expect(markup).not.toMatch(/Trap|Protection|spell-type|data-spell-type|Mending Ward|Cinder Seal|BOUND_MODEL|DAMAGE_TAKEN/);
+          expect(markup).not.toMatch(/Mending Ward|Cinder Seal|BOUND_MODEL|DAMAGE_TAKEN|room-0,1|targetPlayerId/);
           for (const active of game.readiedSpells!.filter(active => active.playerId === p.id)) {
             for (const secret of [active.card.id, active.card.name, active.card.rulesText!]) expect(markup).not.toContain(secret);
           }
         }
-        await summary.focus(); await page.keyboard.press('Enter');
-        await expect(mage).toHaveAttribute('open', '');
         await expect(mage.locator('.secondary-attributes dt')).toHaveText(['Max HP', 'Attack', 'Movement', 'Quest limit']);
         await expect(mage.locator('.secondary-attributes dd')).toHaveText(['10', '2', '2', '2']);
         await expect(mage.locator('[title="Available cubes"]')).toHaveText(`◆ ${p.cubes.available} available`);
         await expect(mage.locator('.cube-pool')).toContainText(`On mages: ${p.cubes.onWizard}`);
-        await page.keyboard.press('Space'); await expect(mage).not.toHaveAttribute('open');
+        await summary.focus(); await page.keyboard.press('Space'); await expect(mage).not.toHaveAttribute('open');
+        await expect(mage.locator('.mage-secondary')).toBeHidden();
+        await expect(mage.getByLabel(`${p.name} spells remaining`, { exact: true })).toBeVisible();
+        await page.keyboard.press('Enter'); await expect(mage).toHaveAttribute('open', '');
       }
-      await selectControlTab(page, 'More');
+      await selectSpells(page);
       await expect(page.locator('.own-spell strong')).toHaveText(['Threshold Snare', 'Thorn Retort']);
       await expect(page.locator('.hidden-spell strong')).toHaveText(['Hidden active spell', 'Hidden active spell']);
-      await expect(page.locator('.hidden-spell [data-spell-type], .hidden-spell [role="img"]')).toHaveCount(0);
+      for (const [id, type, label] of [['foreign-protection', 'PROTECTION', 'Protection'], ['foreign-trap', 'TRAP', 'Trap']] as const) {
+        const hidden = page.locator(`.hidden-spell[data-active-spell-id="${id}"]`);
+        await expect(hidden.locator('.spell-type')).toHaveAttribute('data-spell-type', type);
+        await expectSpellType(hidden.locator('.spell-type'), `${label} · Active`);
+        await expectSpellIcon(hidden, label);
+        await expect(hidden.locator('small')).toHaveText('Blue Seer');
+      }
       const foreignMarkup = await page.locator('.hidden-spell').evaluateAll(elements => elements.map(element => element.outerHTML).join('\n'));
+      expect(foreignMarkup).not.toMatch(/BOUND_MODEL|DAMAGE_TAKEN|ROOM_ACTIVATED|room-0,1|targetPlayerId/);
       for (const active of game.readiedSpells!.filter(active => active.playerId === 'p2')) {
         for (const secret of [active.card.id, active.card.name, active.card.rulesText!]) expect(foreignMarkup).not.toContain(secret);
       }
       const changed = structuredClone(game);
       changed.readiedSpells = changed.readiedSpells!.filter(active => active.id !== 'foreign-trap' && active.id !== 'own-trap');
+      changed.players[0].prepared.slot1!.used = true;
+      changed.players[1].prepared.slot1!.used = true;
       changed.players[1].hand.pop(); changed.players[1].actionTokens = 1; wire.update(changed);
       await expect(page.getByLabel('Rose Warden active magic', { exact: true })).toHaveText('Trap: 0 · Protection: 1');
-      await expect(page.getByLabel('Blue Seer active magic', { exact: true })).toHaveText('Hidden active: 1');
+      await expect(page.getByLabel('Blue Seer active magic', { exact: true })).toHaveText('Trap: 0 · Protection: 1');
+      await expect(page.getByLabel('Rose Warden spells remaining', { exact: true })).toHaveText('Spells left: 0');
+      await expect(page.getByLabel('Blue Seer spells remaining', { exact: true })).toHaveText('Spells left: 0');
       await expect(page.locator('.player[data-player-id="p2"] summary .critical-attributes dd')).toHaveText('2/7');
       await expect(page.locator('.player[data-player-id="p2"] summary .player-stats')).toHaveText('⚡ 1 tokens');
-      await expect(page.locator('.player[open]')).toHaveCount(0); expect(wire.commands).toEqual([]);
+      await expect(page.locator('.player[open]')).toHaveCount(2); expect(wire.commands).toEqual([]);
     });
   });
 }

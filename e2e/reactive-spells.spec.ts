@@ -4,7 +4,7 @@ import type { ActiveSpell, Card, Evocation, GameAction, GameState, Room, SpellTy
 import { ActionHistory } from '../apps/server/src/action-history';
 import { publicState } from '../apps/server/src/public-state';
 import { expectSpellIcon, expectSpellType } from './spell-ui';
-import { openMageDetails, selectControlTab } from './layout-ui';
+import { openMageDetails, selectControlTab, selectSpells, viewRetinue } from './layout-ui';
 
 type Cast = Extract<GameAction, { type: 'CAST_SPELL' }>;
 type Slot = Cast['slot'];
@@ -92,18 +92,22 @@ function expectPrivacy(game: GameState, history: ActionHistory) {
     expect(visible.log).toEqual(game.log);
     expect(visible.readiedSpells).toEqual(game.readiedSpells?.map((active, i) => active.playerId === viewer
       ? active : { id: active.id, playerId: active.playerId, card: { id: `hidden-${i}`, name: 'Hidden spell',
-        kind: 'SPELL', damage: 0, instability: 0, range: 0, target: 'MODEL' } }));
+        kind: 'SPELL', damage: 0, instability: 0, range: 0, target: 'MODEL',
+        ...(active.card.spellType ? { spellType: active.card.spellType } : {}) } }));
     for (const active of visible.readiedSpells ?? []) if (active.playerId !== viewer) {
       expect(Object.keys(active).sort()).toEqual(['card', 'id', 'playerId']);
-      expect(JSON.stringify(active)).not.toMatch(/schoolId|spellType|rulesText|trigger|roomId|targetPlayerId|targetEvocationId/);
+      expect(JSON.stringify(active)).not.toMatch(/schoolId|rulesText|trigger|roomId|targetPlayerId|targetEvocationId/);
       const original = game.readiedSpells!.find(a => a.id === active.id)!;
+      expect(active.card.spellType).toBe(original.card.spellType);
       expect(JSON.stringify(visible)).not.toContain(`"${original.card.id}"`);
+      expect(JSON.stringify(active)).not.toContain(original.card.name);
+      expect(active.card).not.toHaveProperty('triggerEffects');
     }
   }
   expect(game).toEqual(before);
 }
 
-async function mount(page: Page, initial: GameState, options: { unmaskedReadied?: boolean } = {}) {
+async function mount(page: Page, initial: GameState, options: { unmaskedReadied?: boolean; recordHistory?: boolean } = {}) {
   let game = structuredClone(initial), visible: GameState | undefined;
   const history = new ActionHistory(), replies: Reply[] = [], cards = physicalCards(game);
   let publish: () => void = () => { throw new Error('Fixture socket is not connected'); };
@@ -111,15 +115,16 @@ async function mount(page: Page, initial: GameState, options: { unmaskedReadied?
   // Both browser commands and simulated peer/root commands use this exact reducer.
   // Never reduce a public projection: it deliberately lacks future/hidden cards.
   const reduce = (action: GameAction): Reply => {
-    const before = game, after = applyAction(before, action);
+    const before = game, after = options.recordHistory
+      ? history.apply(before, action, action.playerId) : applyAction(before, action);
     conserved(after, cards); game = after;
     return { action, before, after };
   };
   await page.routeWebSocket('**', route => {
     publish = () => {
       visible = publicState(game, 'p1', history);
-      // Deliberately bypass only the fixture's readied-zone projection in one
-      // defense-in-depth case. ActiveSpellsPanel must still protect foreign cards.
+      // Deliberately bypass only the fixture's readied-zone projection in these
+      // defense-in-depth cases. Panels and bound markers must protect foreign cards.
       if (options.unmaskedReadied) visible.readiedSpells = structuredClone(game.readiedSpells);
       route.send(JSON.stringify({ type: 'STATE', state: visible }));
     };
@@ -146,7 +151,9 @@ async function mount(page: Page, initial: GameState, options: { unmaskedReadied?
   const overlay = page.locator('.phase-overlay');
   if (await overlay.isVisible()) await overlay.click();
   await expect(overlay).toBeHidden();
+  if (game.phase === 'ACTION') await selectSpells(page);
   return { replies, history, get state() { return game; }, get visible() { return visible!; },
+    update(state: GameState) { conserved(state, cards); game = structuredClone(state); publish(); },
     dispatch(action: GameAction) { const reply = reduce(action); publish(); return reply; } };
 }
 type Wire = Awaited<ReturnType<typeof mount>>;
@@ -207,6 +214,68 @@ async function expectRoomContributions(page: Page, expected: Room) {
   }
 }
 
+type EffectCounts = Partial<Record<'TRAP' | 'PROTECTION' | 'ONGOING', number>>;
+const boardEffects = (page: Page, id: string) => page.locator(`.board .model-effect-markers[data-model-id="${id}"]`);
+const htmlEffects = (container: Locator, id: string) => container.locator(`.model-effects[data-model-id="${id}"]`);
+async function expectEffects(zone: Locator, expected: EffectCounts, html = false) {
+  await expect(zone.locator('.model-effect')).toHaveCount(Object.keys(expected).length);
+  for (const [kind, count] of Object.entries(expected)) {
+    const marker = zone.locator(`.model-effect[data-effect-kind="${kind}"]`);
+    await expect(marker).toHaveCount(1);
+    await expect(marker).toBeVisible();
+    await expect(marker).toHaveAttribute('data-effect-count', String(count));
+    if (html) {
+      await expect(marker).toContainText(new RegExp(kind, 'i'));
+      await expect(marker).toContainText(new RegExp(`\\b${count}\\b`));
+      expect(await marker.evaluate(element => !!element.closest('[aria-hidden="true"]'))).toBe(false);
+    }
+  }
+}
+function bindEffect(game: GameState, name: string, owner: string,
+  binding: Pick<ActiveSpell, 'targetPlayerId' | 'targetEvocationId' | 'roomId'>, ongoing = false) {
+  const card = take(game, name), active: ActiveSpell = { id: `marker-${card.id}`, playerId: owner, card, ...binding };
+  (ongoing ? game.ongoingSpells ??= [] : game.readiedSpells ??= []).push(active);
+  (game.activeSpellOrder ??= []).push(active.id);
+  return active;
+}
+async function expectMarkerGeometry(page: Page) {
+  await page.evaluate(() => document.fonts.ready);
+  const markers = page.locator('.board .model-effect-markers');
+  await expect(markers).not.toHaveCount(0);
+  for (const group of await markers.all()) {
+    await group.scrollIntoViewIfNeeded();
+    await expect(group).toHaveCSS('pointer-events', 'none');
+    await expect(group.locator('a, button, [role="button"], [tabindex]')).toHaveCount(0);
+    const measurements = await group.evaluate(element => {
+      const group = element as SVGGraphicsElement;
+      const hex = group.closest('.hex')!;
+      const polygon = hex.querySelector<SVGPolygonElement>('polygon')!;
+      const id = group.getAttribute('data-model-id')!;
+      const token = hex.querySelector<SVGCircleElement>(`[data-mage-id="${id}"] .mage-token-disc, [data-evocation-id="${id}"] .mage-token-disc`)!;
+      const disc = token.getBoundingClientRect(), bounds = group.getBoundingClientRect();
+      const local = group.getBBox(), transform = polygon.getScreenCTM()!.inverse().multiply(group.getScreenCTM()!);
+      const corners = [[local.x, local.y], [local.x + local.width, local.y],
+        [local.x, local.y + local.height], [local.x + local.width, local.y + local.height]]
+        .map(([x, y]) => new DOMPoint(x, y).matrixTransform(transform));
+      return { id, inside: corners.every(point => polygon.isPointInFill(point)),
+        width: bounds.width, height: bounds.height,
+        distance: Math.hypot(bounds.x + bounds.width / 2 - disc.x - disc.width / 2,
+          bounds.y + bounds.height / 2 - disc.y - disc.height / 2) / disc.width,
+        transparent: [...group.querySelectorAll('*')].every(child => getComputedStyle(child).pointerEvents === 'none'),
+        hits: [...group.querySelectorAll('.model-effect')].map(marker => {
+          const bounds = marker.getBoundingClientRect();
+          return document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)?.closest('.hex') === hex;
+        }) };
+    });
+    expect(measurements.width, measurements.id).toBeGreaterThan(0);
+    expect(measurements.height, measurements.id).toBeGreaterThan(0);
+    expect(measurements.inside, `${measurements.id}: markers stay in their model's room`).toBe(true);
+    expect(measurements.distance, `${measurements.id}: markers stay near the token`).toBeLessThan(3);
+    expect(measurements.transparent, measurements.id).toBe(true);
+    expect(measurements.hits.every(Boolean), `${measurements.id}: room remains hit-testable through every icon`).toBe(true);
+  }
+}
+
 const readiness: { name: string; label: string; target: Card['target']; selection: Selection; options?: string[]; binding?: string }[] = [
   { name: 'Threshold Snare', label: 'Trap', target: 'ROOM', selection: { roomId: east } },
   { name: 'Hearth Ward', label: 'Protection', target: 'ROOM', selection: { roomId: east } },
@@ -218,6 +287,136 @@ const readiness: { name: string; label: string; target: Card['target']; selectio
 for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844 }]) {
   test.describe(`${viewport.width}px reactive spells`, () => {
     test.use({ viewport, reducedMotion: 'reduce' });
+
+    test('bound model icons aggregate only known bindings, remain private for unmasked foreign cards and do not intercept the map', async ({ page }, testInfo) => {
+      const game = fixture();
+      game.evocations = [servant('own-one', 'p1'), servant('enemy-one', 'p2')];
+      const alias = mage(game).wizard.id;
+      // Synthetic bindings only, with real conserved cards: current canonical
+      // traps target rooms. Do not broaden casting/dummy rules for these tests.
+      const trap = bindEffect(game, 'Threshold Snare', 'p1', { targetPlayerId: 'p1' });
+      const otherTrap = bindEffect(game, 'Threshold Snare', 'p1', { targetPlayerId: alias });
+      bindEffect(game, 'Mending Ward', 'p1', { targetPlayerId: alias, roomId: east });
+      bindEffect(game, 'Thorn Retort', 'p1', { targetPlayerId: 'p1' });
+      bindEffect(game, "Pilgrim's Mark", 'p1', { targetPlayerId: 'p1' }, true);
+      bindEffect(game, 'Thorned Path', 'p2', { targetPlayerId: alias }, true);
+      bindEffect(game, "Servant's Safeguard", 'p1', { targetEvocationId: 'own-one' });
+      bindEffect(game, 'Thorned Path', 'p2', { targetEvocationId: 'own-one' }, true);
+      bindEffect(game, 'Tripwire', 'p1', { targetEvocationId: 'enemy-one' });
+      bindEffect(game, 'Thorned Path', 'p2', { targetEvocationId: 'enemy-one' }, true);
+      bindEffect(game, 'Runic Remedy', 'p2', { targetPlayerId: 'p2' }, true);
+      // Room effects must not attach to any of the four occupants.
+      bindEffect(game, 'Threshold Snare', 'p1', { roomId: center });
+      bindEffect(game, 'Hearth Ward', 'p1', { roomId: center });
+      // These full foreign bindings reach the browser but are NOT markers.
+      const hidden = [bindEffect(game, 'Spell Leech', 'p2', { targetPlayerId: 'p1' }),
+        bindEffect(game, 'Mending Ward', 'p2', { targetPlayerId: 'p2' }),
+        bindEffect(game, "Servant's Safeguard", 'p2', { targetEvocationId: 'own-one' }),
+        bindEffect(game, 'Tripwire', 'p2', { targetEvocationId: 'enemy-one' })];
+      const wire = await mount(page, game, { unmaskedReadied: true });
+      for (const active of hidden) expect(wire.visible.readiedSpells).toContainEqual(active);
+      const expected: Record<string, EffectCounts> = {
+        p1: { TRAP: 2, PROTECTION: 2, ONGOING: 2 }, p2: { ONGOING: 1 },
+        'own-one': { PROTECTION: 1, ONGOING: 1 }, 'enemy-one': { TRAP: 1, ONGOING: 1 },
+      };
+      await expect(page.locator('.board .model-effect-markers')).toHaveCount(4);
+      for (const [id, counts] of Object.entries(expected)) await expectEffects(boardEffects(page, id), counts);
+      for (const id of ['p1', 'p2']) await expectEffects(htmlEffects(player(page, id), id), expected[id], true);
+      for (const [owner, id] of [['p1', 'own-one'], ['p2', 'enemy-one']]) {
+        const retinue = await viewRetinue(page, owner);
+        await expectEffects(htmlEffects(retinue.locator(`.evocation-card[data-evocation-id="${id}"]`), id), expected[id], true);
+        await screenshot(testInfo, `bound-${id}-card-${viewport.width}`, retinue);
+      }
+      const markup = await page.locator('.model-effect-markers, .model-effects').evaluateAll(elements => elements.map(el => el.outerHTML).join('\n'));
+      for (const active of hidden) {
+        for (const secret of [active.id, active.card.id, active.card.name, active.card.rulesText!]) expect(markup).not.toContain(secret);
+      }
+      await selectSpells(page);
+      await page.locator('.board-viewport').evaluate(element => { element.scrollLeft = element.scrollWidth; });
+      await expectMarkerGeometry(page);
+      const icon = boardEffects(page, 'p1').locator('.model-effect').first();
+      await icon.scrollIntoViewIfNeeded();
+      const bounds = (await icon.boundingBox())!;
+      await page.mouse.click(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+      await expect(hex(page)).toHaveClass(/selected/);
+      await expect(page.locator('.room-detail')).toContainText(room(game).name);
+      expect(wire.replies).toEqual([]);
+      await screenshot(testInfo, `bound-model-map-${viewport.width}`, page.locator('.board-viewport'));
+      await screenshot(testInfo, `bound-mage-roster-${viewport.width}`, page.locator('.players-panel'));
+
+      // Subsequent STATEs decrement the aggregate and remove the last category,
+      // rather than retaining the first mounted list or inferring room occupancy.
+      for (const [active, remaining] of [[trap, 1], [otherTrap, 0]] as const) {
+        const next = structuredClone(wire.state);
+        next.readiedSpells = next.readiedSpells!.filter(effect => effect.id !== active.id);
+        next.activeSpellOrder = next.activeSpellOrder!.filter(id => id !== active.id);
+        school(next).discard.push(active.card); wire.update(next);
+        const counts: EffectCounts = { PROTECTION: 2, ONGOING: 2, ...(remaining ? { TRAP: remaining } : {}) };
+        await expectEffects(boardEffects(page, 'p1'), counts);
+        await expectEffects(htmlEffects(player(page, 'p1'), 'p1'), counts, true);
+      }
+      const moved = structuredClone(wire.state);
+      moved.evocations.find(model => model.id === 'own-one')!.position = { q: 1, r: 0 };
+      wire.update(moved);
+      await expect(hex(page).locator('.model-effect-markers[data-model-id="own-one"]')).toHaveCount(0);
+      await expectEffects(hex(page, east).locator('.model-effect-markers[data-model-id="own-one"]'), { PROTECTION: 1, ONGOING: 1 });
+      const retinue = await viewRetinue(page, 'p1');
+      await expectEffects(htmlEffects(retinue, 'own-one'), { PROTECTION: 1, ONGOING: 1 }, true);
+      await expect(retinue.locator('.evocation-card > small')).toContainText(room(moved, east).name);
+    });
+
+    test('model protections track arming undo/redo snapshots and evocation defeat on the board and HTML cards', async ({ page }) => {
+      const game = fixture(); game.evocations = [servant('own-one', 'p1')];
+      prepare(game, 'Mending Ward'); prepare(game, "Servant's Safeguard", 'rapid');
+      const wire = await mount(page, game, { recordHistory: true });
+      await expect(page.locator('.board .model-effect-markers, .model-effects .model-effect')).toHaveCount(0);
+      await prepared(page, 'Mending Ward').click(); await hex(page).click();
+      await targetSelect(page).selectOption('p1');
+      await command(page, wire, () => confirm(page).click(),
+        { type: 'CAST_SPELL', playerId: 'p1', slot: 'slot1', targetPlayerId: 'p1' });
+      const first = structuredClone(wire.state.readiedSpells);
+      await expectEffects(boardEffects(page, 'p1'), { PROTECTION: 1 });
+      await expectEffects(htmlEffects(player(page, 'p1'), 'p1'), { PROTECTION: 1 }, true);
+      await selectControlTab(page, 'Physical actions');
+      await command(page, wire, () => page.getByRole('button', { name: 'Undo action', exact: true }).click(),
+        { type: 'UNDO_ACTION', playerId: 'p1' });
+      await expect(page.locator('.board .model-effect-markers, .model-effects .model-effect')).toHaveCount(0);
+      await command(page, wire, () => page.getByRole('button', { name: 'Redo action', exact: true }).click(),
+        { type: 'REDO_ACTION', playerId: 'p1' });
+      expect(wire.state.readiedSpells).toEqual(first);
+      await expectEffects(boardEffects(page, 'p1'), { PROTECTION: 1 });
+      await expectEffects(htmlEffects(player(page, 'p1'), 'p1'), { PROTECTION: 1 }, true);
+      await selectSpells(page); await prepared(page, "Servant's Safeguard", 'rapid').click();
+      await hex(page).click(); await targetSelect(page).selectOption('own-one');
+      await command(page, wire, () => confirm(page).click(),
+        { type: 'CAST_SPELL', playerId: 'p1', slot: 'rapid', targetEvocationId: 'own-one' });
+      const both = structuredClone(wire.state.readiedSpells);
+      await expectEffects(boardEffects(page, 'own-one'), { PROTECTION: 1 });
+      await viewRetinue(page, 'p1');
+      const evoc = htmlEffects(page.locator('.evocation-card[data-evocation-id="own-one"]'), 'own-one');
+      await expectEffects(evoc, { PROTECTION: 1 }, true);
+      for (const type of ['UNDO_ACTION', 'REDO_ACTION'] as const) {
+        await selectControlTab(page, 'Physical actions');
+        await command(page, wire, () => page.getByRole('button', { name: type === 'UNDO_ACTION' ? 'Undo action' : 'Redo action', exact: true }).click(),
+          { type, playerId: 'p1' });
+        const restored = type === 'REDO_ACTION';
+        expect(wire.state.readiedSpells).toEqual(restored ? both : first);
+        await expectEffects(boardEffects(page, 'p1'), { PROTECTION: 1 });
+        await expectEffects(boardEffects(page, 'own-one'), restored ? { PROTECTION: 1 } : {});
+        await viewRetinue(page, 'p1'); // Assert the owning tab, never a hidden-panel false positive.
+        await expectEffects(evoc, restored ? { PROTECTION: 1 } : {}, true);
+      }
+      // Defeat is authoritative, not a manually removed DOM/model fixture.
+      // A lethal hit expires the bound safeguard; it cannot revive the model.
+      wire.dispatch({ type: 'PUNCH', playerId: 'p2', targetId: 'own-one' });
+      expect(wire.state.evocations).toEqual([]);
+      expect(wire.state.readiedSpells).toEqual(first);
+      expect(school(wire.state).discard.map(card => card.name)).toEqual(["Servant's Safeguard"]);
+      await expect(boardEffects(page, 'own-one')).toHaveCount(0);
+      await viewRetinue(page, 'p1');
+      await expect(page.locator('.evocation-card[data-evocation-id="own-one"]')).toHaveCount(0);
+      await expectEffects(boardEffects(page, 'p1'), { PROTECTION: 1 });
+    });
 
     test('Enchantment is a separate named 12-pattern school with its own draw and discard supply', async ({ page }, testInfo) => {
       const game = fixture(); game.phase = 'STUDY'; game.currentPlayerId = null; game.activation = null;
@@ -239,11 +438,18 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       await expect(tile).toBeEnabled(); await expect(tile).toContainText('36 draw · 0 discard');
       await expect(tile).toContainText('Hidden traps · Protections · Ongoing effects');
       await screenshot(testInfo, `enchantment-school-${viewport.width}`, panel);
-      await command(page, wire, () => tile.click(), { type: 'DRAW_STUDY', playerId: 'p1', deckId: 'enchantment' });
+      const draw = panel.getByRole('button', { name: /^Draw selected cards/ });
+      for (let index = 0; index < 4; index++) {
+        await tile.click();
+        expect(wire.replies).toHaveLength(0);
+        if (index < 3) await expect(draw).toBeDisabled();
+      }
+      await command(page, wire, () => draw.click(), { type: 'DRAW_STUDY', playerId: 'p1', deckIds: Array(4).fill('enchantment') });
       expect(mage(wire.state).hand.filter(card => card.schoolId === 'enchantment')).toEqual(drawn);
       expect(school(wire.state).cards).toHaveLength(32);
       expect(wire.state.library.filter(d => d.id !== 'enchantment')).toEqual(others);
       await expect(panel.locator('.spell')).toHaveCount(6);
+      await expect(panel.locator('.spell:disabled')).toHaveCount(2);
       for (const card of drawn.slice(0, 2)) await panel.locator('.spell').filter({ has: page.getByText(card.name, { exact: true }) }).click();
       await command(page, wire, () => panel.getByRole('button', { name: 'Discard selected (2/2)', exact: true }).click(),
         { type: 'DISCARD_STUDY', playerId: 'p1', cardIds: drawn.slice(0, 2).map(card => card.id) });
@@ -332,7 +538,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
         await expect(prepared(page, 'Runic Remedy', 'slot2')).toBeDisabled();
         await expect(prepared(page, "Pilgrim's Mark", 'rapid')).toBeEnabled();
         await expect(page.locator('.phase-panel .badge')).toHaveText('1 turn actions left');
-        await selectControlTab(page, 'More');
+        await selectSpells(page);
         const own = readied(page, active);
         await expect(own).toHaveClass(/own-spell/);
         await expect(own.locator('strong')).toHaveText(card.name);
@@ -363,22 +569,27 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       const foreign = game.readiedSpells!.find(active => active.playerId === 'p2')!;
       // A passing assertion here cannot be explained by server masking alone.
       expect(wire.visible.readiedSpells!.find(active => active.id === foreign.id)).toEqual(foreign);
-      await selectControlTab(page, 'More');
+      await selectSpells(page);
       const hidden = readied(page, foreign), known = readied(page, own);
       await expect(hidden).toHaveClass(/hidden-spell/);
       await expect(hidden.locator('strong')).toHaveText('Hidden active spell');
-      await expect(hidden.locator('.spell-type')).toHaveText('Face down · Active');
-      await expect(hidden.getByRole('img')).toHaveCount(0);
+      await expect(hidden.locator('.spell-type')).toHaveAttribute('data-spell-type', 'PROTECTION');
+      await expectSpellType(hidden.locator('.spell-type'), 'Protection · Active');
+      await expectSpellIcon(hidden, 'Protection');
       await expect(hidden.locator('small')).toHaveText('Blue Seer');
-      await expect(hidden.locator('p')).toHaveText('Its card, binding and trigger are hidden until it reveals.');
+      await expect(hidden.locator('p')).toHaveText('Only its type is public. Its name, binding and trigger stay hidden until it reveals.');
       const markup = await hidden.evaluate(el => el.outerHTML);
-      for (const secret of [foreign.card.name, foreign.card.rulesText!, foreign.card.id, room(game, foreign.roomId).name]) expect(markup).not.toContain(secret);
+      for (const secret of [foreign.card.name, foreign.card.rulesText!, foreign.card.id, room(game, foreign.roomId).name, 'targetPlayerId', 'DAMAGE_TAKEN', 'BOUND_MODEL']) expect(markup).not.toContain(secret);
       await expect(page.locator('.app')).not.toContainText(foreign.card.name);
       await expect(known).toHaveClass(/own-spell/);
       await expect(known.locator('strong')).toHaveText(own.card.name);
       await expect(known.locator('p')).toHaveText(own.card.rulesText!);
       await expect(known.locator('small')).toHaveText(`Rose Warden · ${room(game, east).name}`);
       await expect(activeZone(page).locator('.ongoing-spell strong')).toHaveText("Pilgrim's Mark");
+      await expectEffects(boardEffects(page, 'p1'), { ONGOING: 1 });
+      await expectEffects(htmlEffects(player(page, 'p1'), 'p1'), { ONGOING: 1 }, true);
+      await expectEffects(boardEffects(page, 'p2'), {});
+      await expectEffects(htmlEffects(player(page, 'p2'), 'p2'), {}, true);
       await screenshot(testInfo, `reactive-active-zone-${viewport.width}`, activeZone(page));
       expect(wire.replies).toHaveLength(0);
     });
@@ -389,9 +600,13 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       game = applyAction(game, { type: 'END_ACTIVATION', playerId: 'p2' });
       const wire = await mount(page, game), active = game.readiedSpells![0];
       expectPrivacy(wire.state, wire.history);
-      await selectControlTab(page, 'More');
+      await selectSpells(page);
       await expect(readied(page, active).locator('strong')).toHaveText('Hidden active spell');
+      await expect(readied(page, active).locator('.spell-type')).toHaveAttribute('data-spell-type', 'TRAP');
+      await expectSpellType(readied(page, active).locator('.spell-type'), 'Trap · Active');
+      await expectSpellIcon(readied(page, active), 'Trap');
       await expect(page.locator('.app')).not.toContainText(card.name);
+      await expect(page.locator('.board .model-effect-markers, .model-effects .model-effect')).toHaveCount(0);
       await beginExplore(page, wire);
       expect(wire.state.readiedSpells).toHaveLength(1); // Beginning movement is not entry.
       await command(page, wire, () => hex(page, east).click(),
@@ -402,7 +617,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       expect(wire.state.activation).toMatchObject({ actionsUsed: 1, spellsCast: 0, exploring: 1,
         physicalAction: { kind: 'EXPLORE', movementStarted: true, mainEffectUsed: false } });
       expect(mage(wire.state).actionTokens).toBe(1);
-      await selectControlTab(page, 'More');
+      await selectSpells(page);
       await expect(activeZone(page)).toHaveCount(0);
       await expect(player(page, 'p1').getByRole('meter')).toHaveAttribute('aria-valuenow', '2');
       await selectControlTab(page, 'Actions');
@@ -437,9 +652,12 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       game = applyAction(game, { type: 'CAST_SPELL', playerId: 'p2', slot: 'slot1', targetPlayerId: 'p2' });
       game = applyAction(game, { type: 'END_ACTIVATION', playerId: 'p2' });
       const wire = await mount(page, game); expectPrivacy(wire.state, wire.history);
-      await selectControlTab(page, 'More');
+      await selectSpells(page);
       await expect(activeZone(page).locator('.own-spell strong')).toHaveText('Thorn Retort');
       await expect(activeZone(page).locator('.hidden-spell strong')).toHaveText('Hidden active spell');
+      await expectEffects(boardEffects(page, 'p1'), { PROTECTION: 1 });
+      await expectEffects(htmlEffects(player(page, 'p1'), 'p1'), { PROTECTION: 1 }, true);
+      await expectEffects(boardEffects(page, 'p2'), {});
       await selectControlTab(page, 'Actions');
       await command(page, wire, () => page.locator('.actions-panel').getByRole('button', { name: /^Attack/ }).click(),
         { type: 'BEGIN_PHYSICAL_ACTION', playerId: 'p1', kind: 'ATTACK' });
@@ -458,8 +676,9 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       expect(mage(wire.state).actionTokens).toBe(1);
       expect(wire.state.readiedSpells).toEqual([]); expect(wire.state.activeSpellOrder).toEqual([]);
       expect(school(wire.state).discard).toEqual([enemyCard, ownCard]);
-      await selectControlTab(page, 'More');
+      await selectSpells(page);
       await expect(activeZone(page)).toHaveCount(0);
+      await expect(page.locator('.board .model-effect-markers, .model-effects .model-effect')).toHaveCount(0);
       await expect(player(page, 'p1').getByRole('meter')).toHaveAttribute('aria-valuenow', '0');
       await expect(player(page, 'p2').getByRole('meter')).toHaveAttribute('aria-valuenow', '2');
       await expectChronicle(page, wire.state);
@@ -489,11 +708,14 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       expect(wire.state.readiedSpells).toEqual([]); expect(school(wire.state).discard).toEqual([]);
       expect(wire.state.activation).toMatchObject({ actionsUsed: 1, spellsCast: 1 });
       expect(mage(wire.state).actionTokens).toBe(2);
-      await selectControlTab(page, 'More');
+      await selectSpells(page);
       const effect = ongoing(page, active);
       await expect(effect.locator('strong')).toHaveText(card.name);
       await expectSpellType(effect.locator('.spell-type'), 'Contingency · Ongoing');
       await expect(effect.locator('p')).toHaveText(card.rulesText!);
+      await expectEffects(boardEffects(page, 'p1'), { ONGOING: 1 });
+      await expectEffects(htmlEffects(player(page, 'p1'), 'p1'), { ONGOING: 1 }, true);
+      await expect(hex(page).locator('.model-effect-markers[data-model-id="p1"]')).toHaveCount(1);
       expectPrivacy(wire.state, wire.history);
       await screenshot(testInfo, `pilgrims-mark-ongoing-${viewport.width}`, activeZone(page));
       // A SELF ongoing effect is bound to the mage, not its original chamber.
@@ -502,13 +724,16 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       await beginExplore(page, wire);
       await command(page, wire, () => hex(page, east).click(),
         { type: 'EXPLORE_STEP', playerId: 'p1', destination: { q: 1, r: 0 } });
+      await expect(hex(page).locator('.model-effect-markers[data-model-id="p1"]')).toHaveCount(0);
+      await expectEffects(hex(page, east).locator('.model-effect-markers[data-model-id="p1"]'), { ONGOING: 1 });
+      await expectEffects(htmlEffects(player(page, 'p1'), 'p1'), { ONGOING: 1 }, true);
       expect(room(wire.state, east)).toMatchObject({ instability: 3, cubesByPlayer: { p1: 1, p2: 1, [BLACK_ROSE_ID]: 1 } });
       // Inspecting the already occupied hex selects details without taking a step.
       await hex(page, east).click(); await expectRoomContributions(page, room(wire.state, east));
       await openMageDetails(page, 'p1'); await openMageDetails(page, 'p2');
       await expect(player(page, 'p1').locator('.cube-pool')).toContainText('In rooms: 1');
       await expect(player(page, 'p2').locator('.cube-pool')).toContainText('In rooms: 3');
-      await selectControlTab(page, 'More');
+      await selectSpells(page);
       await expect(effect.locator('small'), 'Ongoing binding follows the mage after movement')
         .toHaveText('Rose Warden · Bound to Rose Warden');
       expect(wire.state.ongoingSpells).toEqual([active]);
@@ -516,6 +741,8 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       await expect(page.locator('.movement-progress strong')).toHaveText('1 movement remaining');
       await command(page, wire, () => hex(page).click(),
         { type: 'EXPLORE_STEP', playerId: 'p1', destination: { q: 0, r: 0 } });
+      await expect(hex(page, east).locator('.model-effect-markers[data-model-id="p1"]')).toHaveCount(0);
+      await expectEffects(hex(page).locator('.model-effect-markers[data-model-id="p1"]'), { ONGOING: 1 });
       expect(room(wire.state)).toMatchObject({ instability: 2, cubesByPlayer: { p1: 1, [BLACK_ROSE_ID]: 1 } });
       await hex(page).click(); await expectRoomContributions(page, room(wire.state));
       await expect(player(page, 'p1').locator('.cube-pool')).toContainText('In rooms: 2');
@@ -533,8 +760,10 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       expect(school(wire.state).discard).toEqual([card]); expect(mage(wire.state, 'p2').kills).toBe(1);
       expect(mage(wire.state).wizard.position).toEqual(room(wire.state, mage(wire.state).wizard.startingRoomId).tiles[0]);
       expect(mage(wire.state).wizard.damageCubes).toBe(0);
-      await selectControlTab(page, 'More');
+      await selectSpells(page);
       await expect(activeZone(page)).toHaveCount(0);
+      await expect(boardEffects(page, 'p1')).toHaveCount(0);
+      await expectEffects(htmlEffects(player(page, 'p1'), 'p1'), {}, true);
       await expect(player(page, 'p1').getByRole('meter')).toHaveAttribute('aria-valuenow', '0');
       await expect(chronicle(page).locator(':scope > div').filter({ hasText: "Pilgrim's Mark expires with its bound model." })).toHaveCount(1);
       expectPrivacy(wire.state, wire.history);
@@ -546,8 +775,10 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       expect(room(wire.state, exit.id).cubesByPlayer).toEqual({ p2: 1 });
       expect(school(wire.state).discard).toEqual([card]); expect(wire.state.ongoingSpells).toEqual([]);
       expect(wire.state.log.filter(entry => entry.includes('reacts with Pilgrim\'s Mark'))).toHaveLength(2);
-      await selectControlTab(page, 'More');
+      await selectSpells(page);
       await expect(activeZone(page)).toHaveCount(0);
+      await expect(boardEffects(page, 'p1')).toHaveCount(0);
+      await expectEffects(htmlEffects(player(page, 'p1'), 'p1'), {}, true);
     });
   });
 }

@@ -14,6 +14,72 @@ const physicalCards = (game: GameState) => [
 ];
 
 describe('starting personal-deck public projection', () => {
+ it('keeps all four mixed-school Study eligibility IDs owner-only before and after discarding', () => {
+  const history = new ActionHistory(); let game = createGame();
+  for (const p of game.players) p.connected = true;
+  for (const p of game.players) {
+   game = history.apply(game, { type:'SELECT_STARTING_SCHOOL', playerId:p.id, schoolId:'cantrip' }, p.id);
+  }
+  for (const p of game.players) game = history.apply(game, { type:'SET_READY', playerId:p.id, ready:true }, p.id);
+  game = history.apply(game, { type:'ADVANCE_PHASE', playerId:'p1', expectedPhase:'BLACK_ROSE', expectedRound:1 }, 'p1');
+  const oldHand = structuredClone(game.players[0].hand);
+  game = history.apply(game, { type:'DRAW_STUDY', playerId:'p1', deckIds:['cantrip', 'transmutation', 'enchantment', 'transmutation'] }, 'p1');
+  const ids = [...game.players[0].studyCardIds!], authoritative = structuredClone(game);
+  expect(ids).toHaveLength(4); expect(new Set(ids).size).toBe(4);
+  expect(ids.map(id => game.players[0].hand.find(card => card.id === id)!.schoolId))
+   .toEqual(['cantrip', 'transmutation', 'enchantment', 'transmutation']);
+  expect(oldHand.every(card => !ids.includes(card.id))).toBe(true);
+  const check = (state: GameState, beforeDiscard: boolean) => {
+   for (const viewer of ['p1', 'p2', null]) {
+    const projected = publicState(state, viewer, history);
+    const wire = JSON.parse(JSON.stringify(projected)) as GameState;
+    for (const p of wire.players) {
+     if (p.id === viewer) expect(p.studyCardIds).toEqual(state.players.find(actual => actual.id === viewer)!.studyCardIds);
+     else expect(p).not.toHaveProperty('studyCardIds');
+    }
+    if (viewer === 'p1') expect(wire.players[0].studyCardIds).toEqual(ids);
+    else if (beforeDiscard) for (const id of ids) expect(JSON.stringify(wire)).not.toContain(`"${id}"`);
+    for (const p of wire.players) expect(p.personalDeck).toEqual(p.personalDeck.map((_, i) => hidden(i)));
+    for (const deck of wire.library) expect(deck.cards).toEqual(deck.cards.map((_, i) => hidden(i)));
+    expect(wire.history).toEqual({ canUndo:false, canRedo:false });
+    if (projected.players[0].studyCardIds) projected.players[0].studyCardIds!.push('viewer-mutation');
+   }
+  };
+  check(game, true); expect(game).toEqual(authoritative);
+  const discardedIds = [ids[1], ids[2]];
+  game = history.apply(game, { type:'DISCARD_STUDY', playerId:'p1', cardIds:discardedIds }, 'p1');
+  check(game, false);
+  expect(game.players[0].studyCardIds).toEqual(ids); // Record all four, not just the two retained cards.
+  expect(game.players[0].hand.slice(0, 2)).toEqual(oldHand);
+  for (const id of discardedIds) expect(game.library.flatMap(deck => deck.discard).some(card => card.id === id)).toBe(true);
+ });
+
+ it.each([2, 3, 4])('reveals only occupancy and used flags, never types or metadata of %i uncast preparations', count => {
+  const history = new ActionHistory(), game = createGame(); game.phase = 'PREPARATION';
+  for (const p of game.players) p.connected = true;
+  const cards = game.library.find(deck => deck.id === 'enchantment')!.cards.splice(0, 4);
+  game.players[0].hand.push(...cards);
+  const after = history.apply(game, { type:'PREPARE_CARDS', playerId:'p1',
+   preparedCardIds:cards.slice(0, Math.min(count, 3)).map(card => card.id),
+   ...(count === 4 ? { rapidCardId:cards[3].id } : {}) }, 'p1');
+  for (const viewer of ['p1', 'p2', null]) {
+   const projected = publicState(after, viewer, history), own = projected.players[0];
+   expect(Object.values(own.prepared).filter(slot => slot && !slot.used)).toHaveLength(count);
+   expect(own.hand).toHaveLength(4 - count);
+   if (viewer === 'p1') expect(own.prepared).toEqual(after.players[0].prepared);
+   else {
+    for (const slot of Object.values(own.prepared)) if (slot) expect(slot).toEqual({ card:hidden(0), used:false });
+    expect(JSON.stringify(own.prepared)).not.toMatch(/spellType|rulesText|schoolId|trigger|ongoing/);
+    for (const card of cards) expect(JSON.stringify(projected)).not.toContain(`"${card.id}"`);
+   }
+  }
+  after.players[0].prepared.slot1!.used = true;
+  Object.assign(after.players[0].prepared.slot1!, { privateMetadata:cards[0] });
+  const foreign = publicState(after, 'p2', history).players[0];
+  expect(foreign.prepared.slot1).toEqual({ card:hidden(0), used:true });
+  expect(Object.values(foreign.prepared).filter(slot => slot && !slot.used)).toHaveLength(count - 1);
+ });
+
  it.each(['cantrip', 'transmutation', 'enchantment'])('keeps exact %s identities hidden from every viewer until drawn', schoolId => {
   const history = new ActionHistory(); let game = createGame(4);
   const original = physicalCards(game).map(card => card.id).sort();

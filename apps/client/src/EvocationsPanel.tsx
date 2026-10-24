@@ -2,6 +2,7 @@ import React from 'react';
 import { areInSameRoom, evocationAttack, GameAction, GameState, Hex, isInStartingRoom, hexKey } from '@brw/game-engine';
 import { evocationNumber, mageStyle, ownerName, roomNameAt } from './presentation';
 import { DamageBar } from './DamageBar';
+import { ModelEffects } from './ModelEffects';
 
 export type TargetModel = {id:string;playerId:string;name:string;position:Hex;evocation:boolean};
 export function targetModels(game:GameState):TargetModel[] {
@@ -26,6 +27,7 @@ export function EvocationsPanel({game,playerId,viewerId,enabled,pending,send}:Pr
   {evocations.map(e=><div className={`evocation-card ${e.id===active?.evocationId?'active-model':''}`} style={mageStyle(e.playerId)} data-owned={isOwn} data-owner-id={e.playerId} data-evocation-id={e.id} key={e.id}>
     <strong className="evocation-heading"><span className="evocation-portrait" aria-hidden="true">☠</span><span>{e.name} <span className="evocation-number">#{evocationNumber(game,e)}</span></span></strong>
    <small>{owner.name} · Undead · {roomNameAt(game,e.position)}</small>
+  <ModelEffects game={game} viewerId={viewerId} modelId={e.id}/>
    <div className="model-stats"><span>↝ {e.movement} movement</span><span>⚔ {evocationAttack(e)} attack</span></div>
    <DamageBar game={game} {...e} name={`${owner.name} ${e.name} #${evocationNumber(game,e)}`}/>
     <p className="hint">Wounded Fury: +1 attack per damage taken. Attack one enemy model in the same room.</p>

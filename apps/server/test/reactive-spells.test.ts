@@ -85,7 +85,7 @@ function privacy(game: GameState, history: ActionHistory) {
   expect(visible.history).toEqual(history.status(game, viewer));
   expect(Object.keys(visible.history!).every(key => ['canUndo', 'canRedo', 'undoLabel', 'redoLabel'].includes(key))).toBe(true);
   expect(visible.readiedSpells).toEqual(game.readiedSpells?.map((active, i) => active.playerId === viewer
-   ? active : { id:active.id, playerId:active.playerId, card:hidden(i) }));
+    ? active : { id:active.id, playerId:active.playerId, card:{ ...hidden(i), spellType:active.card.spellType } }));
   expect(visible.ongoingSpells).toEqual(game.ongoingSpells);
   expect(visible.activeSpellOrder).toEqual(game.activeSpellOrder);
   expect(visible.log).toEqual(game.log);
@@ -109,9 +109,11 @@ function privacy(game: GameState, history: ActionHistory) {
    expect(p.discard).toEqual(actual.discard);
    if (p.id === viewer) {
     expect(p.hand).toEqual(actual.hand); expect(p.prepared).toEqual(actual.prepared);
+    expect(p.studyCardIds).toEqual(actual.studyCardIds);
     expect(p.quest).toEqual(actual.quest); expect(p.additionalQuests).toEqual(actual.additionalQuests);
    } else {
     expect(p.hand).toEqual(actual.hand.map((_, j) => hidden(j)));
+    expect(p).not.toHaveProperty('studyCardIds');
     expect(p.quest).toBeNull(); expect(p.additionalQuests).toEqual([]);
     for (const slot of ['rapid', 'slot1', 'slot2', 'slot3'] as const) expect(p.prepared[slot]).toEqual(
      actual.prepared[slot] ? { card:hidden(0), used:actual.prepared[slot]!.used } : null);
@@ -139,7 +141,7 @@ function pendingAttack(history: ActionHistory, game: GameState, id = 'p1') {
 }
 
 describe('readied-spell wire privacy', () => {
- it('masks whole adversarial instances for two viewers and a spectator while keeping ongoing cards public', () => {
+ it('publishes only active types on whole masked adversarial instances, with public ongoing cards', () => {
   const history = new ActionHistory(); let game = fixture(); evoc(game, 'p1');
   game = arm(game, 'Threshold Snare', 'p1', { roomId:east });
   game = arm(game, "Servant's Safeguard", 'p2', { targetEvocationId:'p1-servant' });
@@ -154,7 +156,7 @@ describe('readied-spell wire privacy', () => {
   }
   prepare(game, 'Renewing Word', 'p1'); prepare(game, 'Mending Light', 'p2');
   for (const active of game.readiedSpells!) Object.assign(active, {
-   name:`private-${active.id}`, schoolId:'private-school', spellType:active.card.spellType,
+    name:`private-${active.id}`, schoolId:'private-school', spellType:'COMBAT',
    trigger:active.card.trigger, triggerEffects:active.card.triggerEffects,
    payload:{ targetPlayerId:'private-mage', targetEvocationId:'private-model', roomId:'private-room',
     nested:{ card:active.card, trigger:active.card.trigger } },
@@ -165,7 +167,12 @@ describe('readied-spell wire privacy', () => {
    const projected = publicState(game, viewer, history), json = JSON.stringify(projected);
    const opponents = projected.readiedSpells!.filter(active => active.playerId !== viewer);
    for (const active of opponents) expect(Object.keys(active).sort()).toEqual(['card', 'id', 'playerId']);
-   expect(JSON.stringify(opponents)).not.toMatch(/private-|trigger|spellType|schoolId|targetPlayerId|targetEvocationId|roomId/);
+  expect(JSON.stringify(opponents)).not.toMatch(/private-|trigger|schoolId|targetPlayerId|targetEvocationId|roomId|rulesText/);
+  for (const active of opponents) {
+   const actual = game.readiedSpells!.find(a => a.id === active.id)!;
+   expect(active.card).toEqual({ ...hidden(game.readiedSpells!.indexOf(actual)), spellType:actual.card.spellType });
+   expect(['TRAP', 'PROTECTION']).toContain(active.card.spellType);
+  }
    for (const active of game.readiedSpells!.filter(a => a.playerId !== viewer)) expect(json).not.toContain(`private-${active.id}`);
    // Active ordering contains only instance UUIDs, not physical IDs or bindings.
    expect(projected.activeSpellOrder).toEqual([...game.readiedSpells!, ...game.ongoingSpells!].map(a => a.id));
@@ -221,6 +228,33 @@ describe('secret arming snapshots', () => {
 });
 
 describe('reveals and expiry are irreversible information barriers', () => {
+ it('returns untriggered readied cards privately at Cleanup, discards ongoing cards and cannot undo either expiry', () => {
+  const history = new ActionHistory(); let game = arm(fixture(), 'Threshold Snare', 'p1', { roomId:east });
+  game = arm(game, 'Mending Ward', 'p2', { targetPlayerId:'p2' });
+  game = arm(game, "Pilgrim's Mark", 'p1', {}); turn(game);
+  prepare(game, 'Renewing Word', 'p1', 'slot1');
+  const readied = structuredClone(game.readiedSpells!), ongoing = game.ongoingSpells![0], cards = physicalCards(game);
+  const feedback = structuredClone(game.feedbackEvents);
+  for (const p of game.players) p.actionTokens = 0;
+  game = apply(history, game, { type:'CAST_SPELL', playerId:'p1', slot:'slot1', targetPlayerId:'p1' });
+  expect(game.phase).toBe('CLEANUP');
+  expect(game.readiedSpells).toEqual([]); expect(game.ongoingSpells).toEqual([]); expect(game.activeSpellOrder).toEqual([]);
+  expect(game.feedbackEvents).toEqual(feedback);
+  expect(game.library[2].discard).toEqual([ongoing.card]);
+  for (const p of game.players) expect(p.hand).toEqual(readied.filter(a => a.playerId === p.id).map(a => a.card));
+  conserved(game, cards); barrier(game, history);
+  for (const viewer of ['p1', 'p2', null]) {
+   const visible = publicState(game, viewer, history);
+   for (const p of visible.players) expect(p.hand).toEqual(p.id === viewer
+    ? player(game, p.id).hand : player(game, p.id).hand.map((_, i) => hidden(i)));
+  }
+  const hands = game.players.map(p => p.hand);
+  game = apply(history, game, { type:'ADVANCE_PHASE', playerId:'p1', expectedPhase:'CLEANUP', expectedRound:1 });
+  expect(game.players.map(p => p.hand)).toEqual(hands); // No second return at Black Rose.
+  expect(game.players.every(p => p.studyCardIds?.length === 0)).toBe(true);
+  conserved(game, cards); barrier(game, history);
+ });
+
  it('clears both stacks on enemy entry, publishes only the completed interrupt, and allows only post-reveal undo', () => {
   const history = new ActionHistory(); let game = arm(fixture(), 'Threshold Snare', 'p1', { roomId:east });
   turn(game, 'p2'); const cards = physicalCards(game), active = structuredClone(game.readiedSpells![0]);
@@ -326,6 +360,39 @@ describe('public ongoing snapshots and normal information barriers', () => {
   expect(game).toEqual(after); conserved(game, cards); privacy(game, history);
  });
 
+ it('commits own-target Thorned Path and its ongoing binding even though base damage conversion is ignored', () => {
+  const initial = fixture(), history = new ActionHistory();
+  Object.assign(player(initial).wizard, { damageCubes:4, blackDamage:1, damageByPlayer:{ p2:2, [BLACK_ROSE_ID]:1 } });
+  syncCubes(initial);
+  const card = prepare(initial, 'Thorned Path'), cards = physicalCards(initial), before = structuredClone(initial);
+  let game = apply(history, initial, { type:'CAST_SPELL', playerId:'p1', slot:'rapid', targetPlayerId:'p1-wizard' });
+  const afterCast = structuredClone(game), active = game.ongoingSpells![0];
+  expect(initial).toEqual(before); expect(game.players.map(p => p.wizard)).toEqual(before.players.map(p => p.wizard));
+  expect(game.players.map(p => p.cubes)).toEqual(before.players.map(p => p.cubes));
+  expect(game.board).toEqual(before.board); expect(game.feedbackEvents).toEqual(before.feedbackEvents);
+  expect(game.ongoingSpells).toEqual([{ id:expect.any(String), playerId:'p1', card, targetPlayerId:'p1', roomId:center }]);
+  expect(game.activeSpellOrder).toEqual([active.id]); expect(game.readiedSpells).toEqual([]);
+  expect(game.library[2].discard).toEqual([]); expect(player(game).prepared.rapid).toEqual({ card, used:true });
+  expect(game.activation).toMatchObject({ actionsUsed:1, spellsCast:1 }); expect(player(game).actionTokens).toBe(2);
+  conserved(game, cards); privacy(game, history);
+  game = undo(history, game); expect(game).toEqual(before); conserved(game, cards); privacy(game, history);
+  const uuid = vi.spyOn(crypto, 'randomUUID').mockImplementation(() => { throw new Error('UUID regenerated'); });
+  try { game = redo(history, game); } finally { uuid.mockRestore(); }
+  expect(game).toEqual(afterCast); conserved(game, cards); privacy(game, history);
+  game = apply(history, game, { type:'BEGIN_PHYSICAL_ACTION', playerId:'p1', kind:'EXPLORE' });
+  game = apply(history, game, { type:'PERFORM_MOVEMENT', playerId:'p1' });
+  const beforeEntry = structuredClone(game);
+  game = apply(history, game, { type:'EXPLORE_STEP', playerId:'p1', destination:{ q:1, r:0 } });
+  const afterEntry = structuredClone(game);
+  expect(room(game, east)).toMatchObject({ instability:1, cubesByPlayer:{ p1:1 } });
+  expect(game.ongoingSpells).toEqual(afterCast.ongoingSpells);
+  expect(player(game).wizard.damageByPlayer).toEqual(before.players[0].wizard.damageByPlayer);
+  expect((game.feedbackEvents ?? []).map(event => event.kind)).toEqual(['SPELL_TRIGGERED']);
+  conserved(game, cards); privacy(game, history);
+  game = undo(history, game); expect(game).toEqual(beforeEntry); conserved(game, cards);
+  game = redo(history, game); expect(game).toEqual(afterEntry); conserved(game, cards); privacy(game, history);
+ });
+
  it('undoes/redoes ongoing entry conversion, movement, pending effects, turn counters and cross-zone chronology exactly', () => {
   const initial = fixture(), history = new ActionHistory();
   Object.assign(room(initial, east), { instability:3, cubesByPlayer:{ p2:2, [BLACK_ROSE_ID]:1 } }); syncCubes(initial);
@@ -375,8 +442,13 @@ describe('public ongoing snapshots and normal information barriers', () => {
    expect(history.status(game, 'p1').canUndo).toBe(true);
    game = apply(history, game, { type:'EXPLORE', playerId:'p1', activateRoomAtStart:true });
    expect(player(game).hand).toHaveLength(1); expect(player(game).hand[0].powerful).toBe(true);
-  } else expect(game.phase).toBe('CLEANUP');
-  expect(game.ongoingSpells).toHaveLength(1); conserved(game, cards); barrier(game, history);
+   expect(game.ongoingSpells).toHaveLength(1);
+  } else {
+   expect(game.phase).toBe('CLEANUP'); expect(game.ongoingSpells).toEqual([]);
+   expect(game.activeSpellOrder).toEqual([]);
+   expect(game.library[2].discard.some(c => c.name === "Pilgrim's Mark")).toBe(true);
+  }
+  conserved(game, cards); barrier(game, history);
  });
 
  it('preserves both history stacks and every supply/log entry when nested resolution aborts atomically', () => {

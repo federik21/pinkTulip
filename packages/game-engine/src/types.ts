@@ -6,11 +6,12 @@ export type SpellTarget = 'SELF' | 'ROOM' | 'MAGE' | 'EVOCATION' | 'MODEL';
 export type SpellType = 'COMBAT' | 'CONTINGENCY' | 'TRAP' | 'PROTECTION';
 export type TriggerEvent = 'ENTER_ROOM' | 'DAMAGE_TAKEN' | 'SPELL_CAST' | 'ROOM_ACTIVATED' | 'EVOCATION_ACTIVATED' | 'MAGE_ATTACK' | 'EVOCATION_ATTACK';
 export type FeedbackTarget = { kind: 'MAGE' | 'EVOCATION' | 'ROOM'; id: string; name: string; roomId?: string };
-export type GameFeedbackEvent = { id: string; round: number } & (
+export type GameFeedbackEvent = { id: string; round: number; interruptId?: string } & (
  | { kind: 'DAMAGE'; target: FeedbackTarget; sourceId: string; amount: number }
+ | { kind: 'HEAL'; target: FeedbackTarget; sourceId: string; amount: number }
  | { kind: 'CONVERT'; target: FeedbackTarget; sourceId: string; amount: number; total: number }
  | { kind: 'MAGE_DEFEATED'; target: FeedbackTarget; sourceId: string; contributions: Record<string, number>; awards: Array<{ playerId: string; cubes: number; rank: number; tied: boolean; points: number }>; bonusPlayerId?: string; returnedCubes: Record<string, number>; respawnRoomId: string }
- | { kind: 'SPELL_TRIGGERED'; activeSpellId: string; ownerId: string; cardName: string; spellType: SpellType; trigger: TriggerEvent; target?: FeedbackTarget; roomId?: string; ongoing: boolean }
+ | { kind: 'SPELL_TRIGGERED'; activeSpellId: string; ownerId: string; cardName: string; spellType: SpellType; trigger: TriggerEvent; target?: FeedbackTarget; roomId?: string; ongoing: boolean; effects?: string[] }
 );
 export type TriggerCondition = { event: TriggerEvent; relation: 'ENEMY' | 'SELF' | 'ANY'; scope: 'BOUND_MODEL' | 'BOUND_ROOM' | 'ANY' };
 export type TriggeredInstruction = { effect: 'DAMAGE' | 'HEAL' | 'CONVERT' | 'INSTABILITY'; amount: number; target: 'BOUND_MODEL' | 'BOUND_ROOM' | 'EVENT_MODEL' | 'EVENT_ACTOR' | 'EVENT_ROOM' | 'OWNER' };
@@ -38,6 +39,8 @@ export type Player = {
  wizard: Wizard; personalDeck: Card[]; hand: Card[]; discard: Card[]; prepared: PreparedCards;
  cubes: { available: number; onWizard: number; onBoard: number; onEvocations: number }; actionTokens: number; victoryPoints: number;
  questsCompleted: number; kills: number; quest: Quest | null; additionalQuests: Quest[]; studyDrawn: boolean; studyDone: boolean;
+ // Actual library draws this Study, private to the owner; never personal/old hand cards.
+ studyCardIds?: string[];
  preparationDone: boolean; passed: boolean; cardLimit: number; questLimit: number;
 };
 export type Room = {
@@ -54,6 +57,8 @@ export type PhysicalAction = { kind: 'EXPLORE' | 'ATTACK'; mainEffectUsed: boole
 export type Activation = { playerId: PlayerId; actionsUsed: number; exploring: number; sequencedSpellUsed: boolean; spellsCast: number; discardedExit: boolean; roomEffectUsed: boolean; physicalAction?: PhysicalAction | null };
 export type GameState = {
  gameId: string; hostId: PlayerId; round: number; phase: Phase; players: Player[]; board: Board;
+ // Undefined selects the roster-based default at START_GAME, not during play.
+ roomsPerColor?: 1 | 2 | 3;
  blackRose: { victoryPoints: number; kills: number }; firstPlayerId: PlayerId | null; endgameScored: boolean;
  // Server-owned, per-viewer metadata only. Undo/redo snapshots are private to the
  // server and must never be added to this shared/wire schema.
@@ -75,13 +80,14 @@ export type GameAction =
  | { type: 'REDO_ACTION'; playerId: PlayerId }
  | { type: 'SELECT_STARTING_SCHOOL'; playerId: PlayerId; schoolId: string }
  | { type: 'SET_READY'; playerId: PlayerId; ready: boolean }
+ | { type: 'SET_ROOM_COUNT'; playerId: PlayerId; roomsPerColor: 1 | 2 | 3 | null }
  | { type: 'START_GAME'; playerId: PlayerId }
  | { type: 'ADVANCE_PHASE'; playerId: PlayerId; expectedPhase: Phase; expectedRound: number }
- | { type: 'DRAW_STUDY'; playerId: PlayerId; deckId: string }
+ | ({ type: 'DRAW_STUDY'; playerId: PlayerId } & ({ deckId: string; deckIds?: never } | { deckIds: string[]; deckId?: never }))
  | { type: 'DISCARD_STUDY'; playerId: PlayerId; cardIds: string[] }
  | { type: 'DISCARD_QUESTS'; playerId: PlayerId; questIds: string[] }
  | { type: 'DISCARD_HAND_LIMIT'; playerId: PlayerId; cardIds: string[] }
- | { type: 'PREPARE_CARDS'; playerId: PlayerId; rapidCardId: string; preparedCardIds: string[] }
+ | { type: 'PREPARE_CARDS'; playerId: PlayerId; rapidCardId?: string; preparedCardIds: string[] }
  | { type: 'END_ACTIVATION'; playerId: PlayerId }
  | { type: 'PASS_ROUND'; playerId: PlayerId }
  | { type: 'ACTIVATE_EVOCATION'; playerId: PlayerId; evocationId: string }

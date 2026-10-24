@@ -6,6 +6,8 @@ const advance=(g:GameState)=>applyAction(g,{type:'ADVANCE_PHASE',playerId:'p1',e
 function readyGame(count=2,schoolId='cantrip') {
  let g=createGame(count);
  for(const p of g.players) p.connected=true;
+ // Legacy movement/effect fixtures deliberately use the full board; default sizing has dedicated tests.
+ g=applyAction(g,{type:'SET_ROOM_COUNT',playerId:'p1',roomsPerColor:3});
  for(const p of g.players) {
   g=applyAction(g,{type:'SELECT_STARTING_SCHOOL',playerId:p.id,schoolId});
   g=applyAction(g,{type:'SET_READY',playerId:p.id,ready:true});
@@ -20,7 +22,7 @@ function studyGame(count=2,schoolId='cantrip') {
 function actionGame(g=studyGame(),p1Cards?:string[]) {
  for(const id of ['p1','p2']) {
   g=applyAction(g,{type:'DRAW_STUDY',playerId:id,deckId:'cantrip'});
-  g=applyAction(g,{type:'DISCARD_STUDY',playerId:id,cardIds:g.players.find(p=>p.id===id)!.hand.filter(c=>!c.powerful).sort((a,b)=>Number(!!a.schoolId)-Number(!!b.schoolId)).slice(0,2).map(c=>c.id)});
+  g=applyAction(g,{type:'DISCARD_STUDY',playerId:id,cardIds:g.players.find(p=>p.id===id)!.studyCardIds!.filter(cardId=>id!=='p1'||!p1Cards?.includes(cardId)).slice(0,2)});
  }
  for(const id of ['p1','p2']) {
   const p=g.players.find(p=>p.id===id)!,overflow=p.hand.length-p.cardLimit;
@@ -165,7 +167,7 @@ describe('Black Rose, study and preparation',()=>{
   for(const [i,p] of g.players.entries())expect(p.hand).toEqual(stock.slice(7*i,7*i+2));
   const personalDiscard=[...g.players[0].discard];
   g=applyAction(g,{type:'DRAW_STUDY',playerId:'p1',deckId:'cantrip'});expect(g.players[0].hand).toHaveLength(6);expect(g.library[0].cards).toHaveLength(18);
-  const ids=g.players[0].hand.slice(0,2).map(c=>c.id);
+  const ids=g.players[0].studyCardIds!.slice(0,2);
   expect(()=>applyAction(g,{type:'DISCARD_STUDY',playerId:'p1',cardIds:[ids[0],ids[0]]})).toThrow();
   g=applyAction(g,{type:'DISCARD_STUDY',playerId:'p1',cardIds:ids});expect(g.players[0].hand).toHaveLength(4);expect(g.phase).toBe('STUDY');
   expect(g.library[0].discard.map(c=>c.id)).toEqual(ids);expect(g.players[0].discard).toEqual(personalDiscard);expectConserved(g,allIds);
@@ -192,10 +194,12 @@ describe('Black Rose, study and preparation',()=>{
   }
   for(const [i,p] of g.players.entries()) {
    expect(hands[i]).toHaveLength(2);expect(hands[i].every(c=>c.schoolId==='transmutation')).toBe(true);
-   g=applyAction(g,{type:'DISCARD_STUDY',playerId:p.id,cardIds:hands[i].map(c=>c.id)});
+  g=applyAction(g,{type:'DISCARD_STUDY',playerId:p.id,cardIds:g.players[i].studyCardIds!.slice(0,2)});
    expect(g.players[i].hand).toHaveLength(4);expect(g.players[i].discard).toHaveLength(1);
   }
-  expect(g.library[1].discard.map(c=>c.id)).toEqual(hands.flatMap(hand=>hand.map(c=>c.id)));
+  expect(g.library[1].discard).toEqual([]);
+  expect(g.library[0].discard.map(c=>c.id)).toEqual(stock.filter((_,i)=>i<count*4 && i%4<2).map(c=>c.id));
+  for(const [i,p] of g.players.entries())expect(p.hand.slice(0,2)).toEqual(hands[i]);
   expect(g.phase).toBe('PREPARATION');expect(g.library[0].cards).toHaveLength(36-4*count);expectConserved(g,ids);
  });
  it('waits for both preparations, then starts the first activation automatically',()=>{
@@ -207,7 +211,7 @@ describe('Black Rose, study and preparation',()=>{
   let g=studyGame();const ids=physicalCards(g).map(c=>c.id);
   for(const p of g.players) {
    g=applyAction(g,{type:'DRAW_STUDY',playerId:p.id,deckId:'cantrip'});
-   g=applyAction(g,{type:'DISCARD_STUDY',playerId:p.id,cardIds:g.players.find(m=>m.id===p.id)!.hand.slice(0,2).map(c=>c.id)});
+  g=applyAction(g,{type:'DISCARD_STUDY',playerId:p.id,cardIds:g.players.find(m=>m.id===p.id)!.studyCardIds!.slice(0,2)});
   }
   // TEST FIXTURE ONLY: move seven actual shared cards into the hand to retain overflow coverage.
   g.players[0].hand.push(...g.library[1].cards.splice(0,4),...g.library[2].cards.splice(0,3));
@@ -269,7 +273,7 @@ describe('Black Rose, study and preparation',()=>{
     const school=g.library.find(d=>d.cards.length+d.discard.length>=4);
     expect(school,`No drawable school in round ${round}`).toBeDefined();
     g=applyAction(g,{type:'DRAW_STUDY',playerId:id,deckId:school!.id});
-    g=applyAction(g,{type:'DISCARD_STUDY',playerId:id,cardIds:g.players.find(p=>p.id===id)!.hand.slice(0,2).map(c=>c.id)});
+    g=applyAction(g,{type:'DISCARD_STUDY',playerId:id,cardIds:g.players.find(p=>p.id===id)!.studyCardIds!.slice(0,2)});
    }
    for(const id of ['p1','p2']) {
     const p=g.players.find(p=>p.id===id)!,overflow=p.hand.length-p.cardLimit;
@@ -463,7 +467,7 @@ describe('rebuilt rooms, passing and victory',()=>{
   g=advance(g);
   for(const id of ['p1','p2']) {
     g=applyAction(g,{type:'DRAW_STUDY',playerId:id,deckId:'cantrip'});
-   g=applyAction(g,{type:'DISCARD_STUDY',playerId:id,cardIds:g.players.find(p=>p.id===id)!.hand.slice(0,2).map(c=>c.id)});
+  g=applyAction(g,{type:'DISCARD_STUDY',playerId:id,cardIds:g.players.find(p=>p.id===id)!.studyCardIds!.slice(0,2)});
   }
   for(const id of ['p1','p2']) {
    const hand=g.players.find(p=>p.id===id)!.hand;
@@ -637,7 +641,7 @@ describe('token-free spells, starting rooms and colored chamber effects',()=>{
  });
  it('routes Study, cast, and uncast shared-library cards to the Cantrip discard',()=>{
   let g=studyGame();const personalDiscard=[...g.players[0].discard];g=applyAction(g,{type:'DRAW_STUDY',playerId:'p1',deckId:'cantrip'});
-  const cards=g.players[0].hand.filter(c=>c.schoolId==='cantrip').slice(0,2);
+  const cards=g.players[0].hand.filter(c=>g.players[0].studyCardIds!.slice(0,2).includes(c.id));
   g=applyAction(g,{type:'DISCARD_STUDY',playerId:'p1',cardIds:cards.map(c=>c.id)});
   expect(g.library[0].discard.map(c=>c.id)).toEqual(cards.map(c=>c.id));expect(g.players[0].discard).toEqual(personalDiscard);
   g=actionGame();g.players[0].wizard.position={q:0,r:0};const prepared=g.players[0].prepared.slot1!.card;

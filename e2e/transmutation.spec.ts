@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page, type WebSocketRoute } from '@playwright/test';
-import { openMageDetails, selectControlTab, viewRetinue } from './layout-ui';
+import { openMageDetails, selectControlTab, selectSpells, viewRetinue } from './layout-ui';
 import { applyAction, BLACK_ROSE_ID, createGame, MAGE_COLORS } from '../packages/game-engine/src/index';
 import type { Card, Evocation, GameAction, GameState, Hex } from '../packages/game-engine/src/index';
 
@@ -113,6 +113,7 @@ async function mount(page: Page, initial: GameState) {
   const overlay = page.locator('.phase-overlay');
   if (await overlay.isVisible()) await overlay.click();
   await expect(overlay).toHaveCount(0);
+  if (game.phase === 'ACTION') await selectSpells(page);
   return { replies, get state() { return game; }, update(state: GameState) {
     conserved(state); game = state; socket.send(JSON.stringify({ type: 'STATE', state }));
   } };
@@ -200,6 +201,7 @@ async function cast(page: Page, wire: Wire, expected: Cast) {
   await expect(page.locator('.spell.chosen')).toHaveCount(0);
   await expectModels(page, after);
   conserved(after);
+  await selectSpells(page);
   return after;
 }
 
@@ -250,6 +252,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
         const wire = await mount(page, game);
         await expectModels(page, wire.state);
         for (const [index, id] of [scenario.own, scenario.enemy].entries()) {
+          await selectSpells(page);
           const slot: Slot = index === 0 ? 'slot1' : 'rapid';
           const card = prepared(page, slot);
           await expect(card).toContainText(`· ${scenario.target === 'MAGE' ? 'Mage' : scenario.target === 'EVOCATION' ? 'Evocation' : 'Model'}`);
@@ -260,12 +263,25 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
           await targetSelect(page).selectOption(id);
           const after = await cast(page, wire, { type: 'CAST_SPELL', playerId: 'p1', slot,
             ...(game.players.some(p => p.id === id) ? { targetPlayerId: id } : { targetEvocationId: id }) });
-          const remaining = 3 - scenario.amount;
-          const ledger = scenario.effect === 'heal' ? (remaining ? { p3: remaining } : {})
-            : { p1: scenario.amount, p3: remaining };
+          const ownConversion = scenario.effect === 'convert' && index === 0;
+          const changed = ownConversion ? 0 : scenario.amount, remaining = 3 - changed;
+          const ledger: Record<string, number> = scenario.effect === 'heal' ? (remaining ? { p3: remaining } : {})
+            : { ...(changed ? { p1: changed } : {}), p3: remaining };
           expect(modelAt(after, id).damageCubes).toBe(scenario.effect === 'heal' ? remaining : 3);
           expect(modelAt(after, id).damageByPlayer).toEqual(Object.fromEntries(Object.entries(ledger).filter(([, n]) => n > 0)));
-          expect(after.players[2].cubes.available).toBe(19 + scenario.amount * (index + 1));
+          expect(after.players[2].cubes.available).toBe(19 + scenario.amount * (scenario.effect === 'convert' ? index : index + 1));
+          if (ownConversion) {
+            expect(modelAt(after, id)).toEqual(modelAt(game, id));
+            expect(after.players.map(p => p.cubes)).toEqual(game.players.map(p => p.cubes));
+            expect(after.feedbackEvents).toEqual(game.feedbackEvents);
+            await expect(page.locator('.feedback-pulse[data-feedback-kind="CONVERT"]')).toHaveCount(0);
+          } else if (scenario.effect === 'convert') {
+            expect((after.feedbackEvents ?? []).filter(event => event.kind === 'CONVERT')).toEqual([
+              expect.objectContaining({ kind: 'CONVERT', amount: changed, sourceId: 'p1',
+                target: expect.objectContaining({ id }) }),
+            ]);
+          }
+          expect(after.board).toEqual(game.board);
         }
         expect(wire.replies.map(r => r.action.type)).toEqual(['CAST_SPELL', 'CAST_SPELL']);
         expect(wire.state.players[0].actionTokens).toBe(2);
@@ -331,7 +347,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       for (const id of ['own-one', 'enemy-one']) wound(game, id, { p4: 1 });
       game.evocations.push(evocation('outside', 'p2', 2, { q: 0, r: 1 })); wound(game, 'outside', { p4: 1 }); syncCubes(game);
       const wire = await mount(page, game);
-      await expectModels(page, game); await prepared(page).click(); await noDummy(page);
+      await expectModels(page, game); await selectSpells(page); await prepared(page).click(); await noDummy(page);
       await expect(prepared(page)).toContainText('Spell 1 · Room'); await hex(page).click();
       await expect(targetSelect(page)).toHaveCount(0);
       const after = await cast(page, wire, { type: 'CAST_SPELL', playerId: 'p1', slot: 'slot1', roomId: 'room-0,0' });
@@ -341,6 +357,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       expect(after.players[2].cubes).toEqual({ available: 23, onWizard: 2, onEvocations: 0, onBoard: 0 });
       expect(after.players[3].cubes).toEqual({ available: 24, onWizard: 0, onEvocations: 1, onBoard: 0 });
       expect(after.blackRose).toEqual(game.blackRose);
+      await selectControlTab(page, 'Evocations');
       await info.attach(`room-heal-retinue-${viewport.width}`, { body: await page.locator('#retinue-p1').screenshot(), contentType: 'image/png' });
     });
 
@@ -391,13 +408,20 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
         if (!own && kind === 'evocation') {
           expect(after.evocations.some(e => e.id === id)).toBe(false);
           await expect(page.locator(`.evocation-marker[data-evocation-id="${id}"]`)).toHaveCount(0);
+          await selectControlTab(page, 'Evocations');
           await expect(page.getByRole('button', { name: 'Hide evocations for Blue Seer (0)', exact: true })).toBeVisible();
           expect(after.players[0].cubes.available).toBe(25); // Converted and final-hit cubes both returned.
+        } else if (own) {
+          expect(modelAt(after, id)).toEqual(modelAt(game, id));
+          expect(after.players.map(p => p.cubes)).toEqual(game.players.map(p => p.cubes));
+          expect(after.feedbackEvents).toEqual(game.feedbackEvents); // Neither friendly CONVERT nor DAMAGE resolves.
+          await expect(page.locator('.feedback-pulse')).toHaveCount(0);
         } else {
-          expect(modelAt(after, id)).toMatchObject({ damageCubes: own ? 1 : 2, damageByPlayer: { p1: own ? 1 : 2 } });
-          expect(after.players[0].cubes[kind === 'mage' ? 'onWizard' : 'onEvocations']).toBe(own ? 1 : 2);
+          expect(modelAt(after, id)).toMatchObject({ damageCubes: 2, damageByPlayer: { p1: 2 } });
+          expect(after.players[0].cubes.onWizard).toBe(2);
         }
-        expect(after.players[2].cubes.available).toBe(25);
+        expect(after.players[2].cubes.available).toBe(own ? 24 : 25);
+        expect(after.board).toEqual(game.board);
         expect(after.players.every(p => p.kills === 0 && p.victoryPoints === 0)).toBe(true);
       });
     }

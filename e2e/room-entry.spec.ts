@@ -36,7 +36,7 @@ test('creating and joining a room renders the lobby without React hook errors', 
       // The state that caused the hook-order crash must remain usable after entry.
       const ownId = button === 'Create room' ? 'p1' : 'p2';
       await expect(page.locator(`#retinue-${ownId}`)).toBeHidden();
-      await expect(page.locator(`.player[data-player-id="${ownId}"]`)).not.toHaveAttribute('open');
+      await expect(page.locator(`.player[data-player-id="${ownId}"]`)).toHaveAttribute('open', '');
       await viewRetinue(page, ownId);
       const retinue = page.getByRole('region', { name: `${name} evocations`, exact: true });
       await expect(retinue).toContainText('No evocations yet.');

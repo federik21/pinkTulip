@@ -68,7 +68,8 @@ function publicFeedback(s:GameState, h:ActionHistory) {
    if (viewer === active.playerId) expect(visible).toEqual(active);
    else {
     expect(Object.keys(visible).sort()).toEqual(['card', 'id', 'playerId']);
-    expect(visible.card.name).toBe('Hidden spell');
+    expect(visible.card).toEqual({ id:`hidden-${s.readiedSpells!.indexOf(active)}`, name:'Hidden spell', kind:'SPELL',
+     damage:0, instability:0, range:0, target:'MODEL', spellType:active.card.spellType });
     expect(JSON.stringify(visible)).not.toMatch(/targetPlayerId|targetEvocationId|roomId|trigger|rulesText|private-/);
    }
    // Even owners get only public feedback, never their full private active payload.
@@ -78,14 +79,16 @@ function publicFeedback(s:GameState, h:ActionHistory) {
   for (const e of wire.feedbackEvents ?? []) {
    const allowed:Record<GameFeedbackEvent['kind'], string[]> = {
     DAMAGE:['id', 'round', 'kind', 'target', 'sourceId', 'amount'],
+    HEAL:['id', 'round', 'kind', 'target', 'sourceId', 'amount'],
     CONVERT:['id', 'round', 'kind', 'target', 'sourceId', 'amount', 'total'],
     MAGE_DEFEATED:['id', 'round', 'kind', 'target', 'sourceId', 'contributions', 'awards', 'bonusPlayerId', 'returnedCubes', 'respawnRoomId'],
-    SPELL_TRIGGERED:['id', 'round', 'kind', 'activeSpellId', 'ownerId', 'cardName', 'spellType', 'trigger', 'target', 'roomId', 'ongoing'],
+    SPELL_TRIGGERED:['id', 'round', 'kind', 'activeSpellId', 'ownerId', 'cardName', 'spellType', 'trigger', 'target', 'roomId', 'ongoing', 'effects'],
    };
-   expect(Object.keys(e).every(k => allowed[e.kind].includes(k))).toBe(true);
+   expect(Object.keys(e).every(k => k === 'interruptId' || allowed[e.kind].includes(k))).toBe(true);
+   if (e.interruptId) expect(events(wire).some(parent => parent.id === e.interruptId && parent.kind === 'SPELL_TRIGGERED')).toBe(true);
    if ('target' in e && e.target) expect(Object.keys(e.target).every(k => ['kind', 'id', 'name', 'roomId'].includes(k))).toBe(true);
   }
-    const json = JSON.stringify(events(wire));
+  const json = JSON.stringify(events(wire));
   expect(json).not.toMatch(/rulesText|triggerEffects|schoolId|targetPlayerId|targetEvocationId|private-|snapshots|undoStack|redoStack/);
  }
  expect(s).toEqual(before); expect(JSON.stringify(h)).toBe('{}');
@@ -117,6 +120,9 @@ describe('feedback wire privacy for every mage and spectator', () => {
   expect(events(s).map(e => e.kind)).toEqual(['SPELL_TRIGGERED', 'DAMAGE']);
   expect(events(s)[0]).toMatchObject({ activeSpellId:revealed.id, ownerId:'p1', cardName:revealed.card.name,
    spellType:'TRAP', trigger:'ENTER_ROOM', target:{ kind:'MAGE', id:'p2', name:player(s, 'p2').name, roomId:east }, roomId:east, ongoing:false });
+  expect(events(s)[0]).toMatchObject({ effects:['Deal 2 damage to the triggering model.'] });
+  expect(events(s)[0]).not.toHaveProperty('interruptId');
+  expect(events(s)[1]).toMatchObject({ kind:'DAMAGE', sourceId:'p1', amount:2, interruptId:events(s)[0].id });
   expect(s.library[2].discard).toContainEqual(revealed.card); publicFeedback(s, h);
   for (const viewer of viewers) expect(h.status(s, viewer)).toEqual(disabled);
   const before = structuredClone(s); expect(() => undo(h, s, 'p2')).toThrow(/No action available/); expect(s).toEqual(before);
@@ -125,8 +131,34 @@ describe('feedback wire privacy for every mage and spectator', () => {
   const h = new ActionHistory(); let s = fixture(); evoc(s);
   s = arm(s, "Servant's Safeguard", 'p3', { targetEvocationId:'actual-evocation-id' }); turn(s);
   s = apply(h, s, { type:'PUNCH', playerId:'p1', targetId:'actual-evocation-id' });
+  expect(events(s).map(e => e.kind)).toEqual(['DAMAGE', 'SPELL_TRIGGERED', 'HEAL']);
   expect(events(s)[1]).toMatchObject({ kind:'SPELL_TRIGGERED', spellType:'PROTECTION', target:{ kind:'EVOCATION', id:'actual-evocation-id', name:'Cadaver', roomId:center }, roomId:center, ongoing:false });
+  expect(events(s)[2]).toEqual({ kind:'HEAL', id:expect.any(String), round:1, sourceId:'p3', amount:2,
+   interruptId:events(s)[1].id, target:{ kind:'EVOCATION', id:'actual-evocation-id', name:'Cadaver', roomId:center } });
   publicFeedback(s, h);
+ });
+ it('preserves depth-first HEAL/damage facts and immediate interrupt parents across nested protection reveals', () => {
+  const h = new ActionHistory(); let s = arm(fixture(), 'Thorn Retort', 'p1', {});
+  s = arm(s, 'Thorn Retort', 'p2', {}); turn(s);
+  s = apply(h, s, { type:'PUNCH', playerId:'p1', targetId:'p2' });
+  const feed = events(s), outer = feed[1], inner = feed[4];
+  expect(feed.map(e => e.kind)).toEqual(['DAMAGE', 'SPELL_TRIGGERED', 'HEAL', 'DAMAGE', 'SPELL_TRIGGERED', 'HEAL', 'DAMAGE']);
+  expect(outer).toMatchObject({ kind:'SPELL_TRIGGERED', ownerId:'p2', effects:[
+   'Heal up to 1 wound on the bound model.', 'Deal 1 damage to the acting model.',
+  ] });
+  expect(outer).not.toHaveProperty('interruptId');
+  expect(inner).toMatchObject({ kind:'SPELL_TRIGGERED', ownerId:'p1', interruptId:outer.id });
+  expect(feed[2]).toEqual({ kind:'HEAL', id:expect.any(String), round:1, sourceId:'p2', amount:1,
+   target:{ kind:'MAGE', id:'p2', name:player(s, 'p2').name, roomId:center }, interruptId:outer.id });
+  expect(feed[3]).toMatchObject({ kind:'DAMAGE', sourceId:'p2', amount:1, target:{ id:'p1' }, interruptId:outer.id });
+  expect(feed[5]).toEqual({ kind:'HEAL', id:expect.any(String), round:1, sourceId:'p1', amount:1,
+   target:{ kind:'MAGE', id:'p1', name:player(s).name, roomId:center }, interruptId:inner.id });
+  expect(feed[6]).toMatchObject({ kind:'DAMAGE', sourceId:'p1', amount:1, target:{ id:'p2' }, interruptId:inner.id });
+  expect(new Set(feed.map(e => e.id)).size).toBe(7);
+  expect(s.players.slice(0, 2).map(p => p.wizard.damageCubes)).toEqual([0, 2]);
+  expect(s.readiedSpells).toEqual([]); publicFeedback(s, h);
+  expect(h.status(s, 'p1')).toEqual(disabled);
+  expect(() => undo(h, s)).toThrow(/No action available/);
  });
  it.each(['MAGE', 'EVOCATION'] as const)('exposes no fabricated trigger metadata when a bound %s spell expires', kind => {
   const h = new ActionHistory(); let s = fixture();
@@ -162,8 +194,64 @@ describe('feedback wire privacy for every mage and spectator', () => {
 });
 
 describe('feedback respects existing exact history snapshots', () => {
- it.each(['DAMAGE', 'DEFEAT', 'CONVERT_AND_DAMAGE'] as const)('undoes and redoes %s with identical events/UUIDs and no re-resolution', mode => {
+ it.each(['MAGE', 'EVOCATION'] as const)('replays a legal own-%s conversion without cube mutation or fabricated feedback for any viewer', kind => {
+  const h = new ActionHistory(), initial = fixture();
+  const model = kind === 'EVOCATION' ? evoc(initial, 6) : undefined;
+  if (model) model.playerId = 'p1';
+  const target = model ?? player(initial).wizard;
+  Object.assign(target, { damageCubes:4, damageByPlayer:{ p2:1, p3:1, [BLACK_ROSE_ID]:1 } });
+  if (!model) player(initial).wizard.blackDamage = 1;
+  syncCubes(initial);
+  const card = prepare(initial, model ? 'Reclaimed Servant' : "Mage's Due");
+  const before = structuredClone(initial);
+  let s = apply(h, initial, { type:'CAST_SPELL', playerId:'p1', slot:'rapid',
+   ...(model ? { targetEvocationId:model.id } : { targetPlayerId:'p1-wizard' }) });
+  const after = structuredClone(s);
+  expect(initial).toEqual(before); expect(s.players.map(p => p.cubes)).toEqual(before.players.map(p => p.cubes));
+  expect(s.players.map(p => p.wizard)).toEqual(before.players.map(p => p.wizard));
+  expect(s.evocations).toEqual(before.evocations); expect(s.board).toEqual(before.board);
+  expect(events(s)).toEqual([]); expect(player(s).prepared.rapid).toEqual({ card, used:true });
+  expect(s.library.find(deck => deck.id === card.schoolId)!.discard).toEqual([card]);
+  expect(player(s).actionTokens).toBe(player(before).actionTokens);
+  expect(s.activation).toMatchObject({ actionsUsed:1, spellsCast:1 }); publicFeedback(s, h);
+  expect(h.status(s, 'p1')).toEqual({ canUndo:true, canRedo:false, undoLabel:'Cast spell' });
+  s = undo(h, s); expect(s).toEqual(before); publicFeedback(s, h);
+  s = replayWithoutResolution(h, s); expect(s).toEqual(after); expect(events(s)).toEqual([]); publicFeedback(s, h);
+ });
+
+ it('skips own conversion before healing, returns original owners’ cubes, and replays only the actual HEAL fact', () => {
+  const h = new ActionHistory(), initial = fixture();
+  Object.assign(player(initial).wizard, { damageCubes:6, blackDamage:1, damageByPlayer:{ p2:1, p3:2, [BLACK_ROSE_ID]:1 } });
+  syncCubes(initial); const card = prepare(initial, "Alchemist's Refuge");
+  const before = structuredClone(initial);
+  let s = apply(h, initial, { type:'CAST_SPELL', playerId:'p1', slot:'rapid', targetPlayerId:'p1' });
+  const after = structuredClone(s);
+  expect(player(s).wizard).toMatchObject({ damageCubes:4, blackDamage:1, damageByPlayer:{ p3:1, [BLACK_ROSE_ID]:1 } });
+  expect(player(s).cubes).toEqual(player(before).cubes);
+  expect(player(s, 'p2').cubes).toEqual({ available:25, onWizard:0, onEvocations:0, onBoard:0 });
+  expect(player(s, 'p3').cubes).toEqual({ available:24, onWizard:1, onEvocations:0, onBoard:0 });
+  expect(events(s)).toEqual([{ kind:'HEAL', id:expect.any(String), round:1, sourceId:'p1', amount:2,
+   target:{ kind:'MAGE', id:'p1', name:player(s).name, roomId:center } }]);
+  expect(player(s).prepared.rapid).toEqual({ card, used:true });
+  expect(s.board).toEqual(before.board); publicFeedback(s, h);
+  s = undo(h, s); expect(s).toEqual(before); publicFeedback(s, h);
+  s = replayWithoutResolution(h, s); expect(s).toEqual(after); publicFeedback(s, h);
+ });
+
+ it('does not manufacture HEAL facts for a zero-wound cast and still replays that cast exactly', () => {
+  const h = new ActionHistory(), initial = fixture(); prepare(initial, 'Mending Light');
+  let s = apply(h, initial, { type:'CAST_SPELL', playerId:'p1', slot:'rapid' }); const after = structuredClone(s);
+  expect(events(s)).toEqual([]); expect(player(s).prepared.rapid!.used).toBe(true); publicFeedback(s, h);
+  s = undo(h, s); expect(s).toEqual(initial);
+  s = replayWithoutResolution(h, s); expect(s).toEqual(after); publicFeedback(s, h);
+ });
+
+ it.each(['DAMAGE', 'HEAL', 'DEFEAT', 'CONVERT_AND_DAMAGE'] as const)('undoes and redoes %s with identical events/UUIDs and no re-resolution', mode => {
   const h = new ActionHistory(), initial = fixture(); let action:GameAction = { type:'PUNCH', playerId:'p1', targetId:'p2' };
+  if (mode === 'HEAL') {
+   Object.assign(player(initial).wizard, { damageCubes:2, damageByPlayer:{ p3:2 } }); prepare(initial, 'Mending Light');
+   action = { type:'CAST_SPELL', playerId:'p1', slot:'rapid' };
+  }
   if (mode === 'DEFEAT') Object.assign(player(initial, 'p2').wizard, { damageCubes:8, damageByPlayer:{ p1:8 } });
   if (mode === 'CONVERT_AND_DAMAGE') {
    Object.assign(player(initial, 'p2').wizard, { damageCubes:3, damageByPlayer:{ p3:3 } }); prepare(initial, 'Transmuting Surge');
@@ -171,7 +259,13 @@ describe('feedback respects existing exact history snapshots', () => {
   }
   syncCubes(initial); const before = structuredClone(initial);
   let s = apply(h, initial, action); const after = structuredClone(s), ids = events(s).map(e => e.id);
-  expect(initial).toEqual(before); expect(ids.length).toBe(mode === 'DAMAGE' ? 1 : 2); publicFeedback(s, h);
+  expect(initial).toEqual(before); expect(ids.length).toBe(mode === 'DAMAGE' || mode === 'HEAL' ? 1 : 2); publicFeedback(s, h);
+  if (mode === 'HEAL') {
+   expect(events(s)).toEqual([{ kind:'HEAL', id:ids[0], round:1, sourceId:'p1', amount:2,
+    target:{ kind:'MAGE', id:'p1', name:player(s).name, roomId:center } }]);
+   expect(player(s, 'p3').cubes.available).toBe(player(before, 'p3').cubes.available + 2);
+   expect(player(s).wizard.damageCubes).toBe(0);
+  }
   expect(h.status(s, 'p1').canUndo).toBe(true);
   for (let i = 0; i < 2; i++) {
    s = undo(h, s); expect(s).toEqual(before); expect(events(s)).toEqual([]); publicFeedback(s, h);

@@ -88,7 +88,7 @@ function privacy(game: GameState, history: ActionHistory, ownHistory: NonNullabl
   for (const id of futureIds) expect(json).not.toContain(`"${id}"`);
   for (const p of game.players.filter(p => p.id !== viewer)) {
    for (const card of p.hand) expect(json).not.toContain(`"${card.id}"`);
-   expect(json).not.toContain(`"${p.quest!.id}"`);
+    if (p.quest) expect(json).not.toContain(`"${p.quest.id}"`);
    for (const slot of Object.values(p.prepared).filter(slot => slot && !slot.used)) {
     expect(json).not.toContain(`"${slot!.card.id}"`);
    }
@@ -102,6 +102,14 @@ function wounded(game: GameState, index: number, damageCubes: number, damageByPl
  expect(game.players[index].wizard).toMatchObject({ damageCubes, damageByPlayer, blackDamage });
 }
 type Case = { name:string; selection:Selection; check:(game:GameState) => void };
+const ownConversionLedgers: { owners:string; ledger:Record<string, number> }[] = [
+ { owners:'caster', ledger:{ p1:1 } }, { owners:'p2', ledger:{ p2:1 } },
+ { owners:'p3', ledger:{ p3:1 } }, { owners:'p4', ledger:{ p4:1 } },
+ { owners:'Black Rose', ledger:{ [BLACK_ROSE_ID]:1 } },
+ { owners:'mixed', ledger:{ p1:1, p2:1, p3:1, [BLACK_ROSE_ID]:1 } },
+];
+const ownConversionCases = (['MAGE', 'EVOCATION'] as const).flatMap(kind =>
+ ownConversionLedgers.flatMap(({ owners, ledger }) => [0, 1, 20].map(supply => ({ kind, owners, ledger, supply }))));
 const cases: Case[] = [
  { name:'Mending Light', selection:{}, check:g => wounded(g, 0, 3, { [BLACK_ROSE_ID]:1 }, 1) },
  { name:'Vital Thread', selection:{ targetEvocationId:'support-model-0' }, check:g => {
@@ -122,20 +130,28 @@ const cases: Case[] = [
   expect(room(g)).toMatchObject({ instability:6, cubesByPlayer:{ p1:1, p2:2, p3:1, [BLACK_ROSE_ID]:2 } });
  } },
  { name:'Stolen Sigil', selection:{ targetPlayerId:'p2' }, check:g => wounded(g, 1, 5, { p1:2, p3:1 }, 1) },
+ { name:'Stolen Sigil', selection:{ targetPlayerId:'p1' }, check:g => wounded(g, 0, 6, { p2:2, p3:1, [BLACK_ROSE_ID]:1 }, 1) },
+ { name:'Stolen Sigil', selection:{ targetEvocationId:'support-model-0' }, check:g => {
+  expect(g.evocations[0]).toMatchObject({ damageCubes:1, damageByPlayer:{ p2:1 } });
+ } },
  { name:"Mage's Due", selection:{ targetPlayerId:'p2' }, check:g => wounded(g, 1, 5, { p1:3 }, 1) },
+ { name:"Mage's Due", selection:{ targetPlayerId:'p1-wizard' }, check:g => wounded(g, 0, 6, { p2:2, p3:1, [BLACK_ROSE_ID]:1 }, 1) },
  { name:'Reclaimed Servant', selection:{ targetEvocationId:'support-model-1' }, check:g => {
   expect(g.evocations[1]).toMatchObject({ damageCubes:1, damageByPlayer:{ p1:1 } });
+ } },
+ { name:'Reclaimed Servant', selection:{ targetEvocationId:'support-model-0' }, check:g => {
+  expect(g.evocations[0]).toMatchObject({ damageCubes:1, damageByPlayer:{ p2:1 } });
  } },
  { name:'Rewrite the Lodge', selection:{ roomId:'room-0,0' }, check:g => {
   expect(room(g)).toMatchObject({ instability:5, cubesByPlayer:{ p1:3, [BLACK_ROSE_ID]:2 }, reconstructed:false, scored:false });
  } },
  { name:"Alchemist's Refuge", selection:{ targetPlayerId:'p1' }, check:g => wounded(g, 0, 4, { p3:1, [BLACK_ROSE_ID]:1 }, 1) },
  { name:'Transmuting Surge', selection:{ targetPlayerId:'p1' }, check:g => {
-  wounded(g, 0, 6, { p1:1, p2:1, p3:1, [BLACK_ROSE_ID]:1 }, 1); // Friendly damage is immune.
+  wounded(g, 0, 6, { p2:2, p3:1, [BLACK_ROSE_ID]:1 }, 1); // Both friendly conversion and damage are ignored.
  } },
  { name:'Transmuting Surge', selection:{ targetPlayerId:'p2' }, check:g => wounded(g, 1, 6, { p1:2, p3:2 }, 1) },
  { name:'Transmuting Surge', selection:{ targetEvocationId:'support-model-0' }, check:g => {
-  expect(g.evocations[0]).toMatchObject({ damageCubes:1, damageByPlayer:{ p1:1 } }); // No friendly destruction.
+  expect(g.evocations[0]).toMatchObject({ damageCubes:1, damageByPlayer:{ p2:1 } }); // No conversion or friendly destruction.
  } },
  { name:'Transmuting Surge', selection:{ targetEvocationId:'support-model-1' }, check:g => {
   expect(g.evocations.map(e => e.id)).toEqual(['support-model-0']);
@@ -157,6 +173,19 @@ describe('actual Transmutation spell snapshots and projection', () => {
   expect(game.players[0].prepared.slot1).toEqual({ card, used:true });
   expect(game.library[1].discard).toEqual([card]); expect(game.library[0]).toEqual(initial.library[0]);
   expect(physicalCards(game)).toEqual(cards);
+  const ownTarget = card.target === 'SELF' || selection.targetPlayerId === 'p1' || selection.targetPlayerId === 'p1-wizard' || selection.targetEvocationId === 'support-model-0';
+  if (card.convert && ownTarget) {
+   expect((game.feedbackEvents ?? []).some(event => event.kind === 'CONVERT')).toBe(false);
+   expect(game.board).toEqual(initial.board);
+   if (card.heal) {
+    expect((game.feedbackEvents ?? []).map(event => event.kind)).toEqual(['HEAL']);
+   } else {
+    expect(game.players.map(p => p.wizard)).toEqual(initial.players.map(p => p.wizard));
+    expect(game.evocations).toEqual(initial.evocations);
+    expect(game.players.map(p => p.cubes)).toEqual(initial.players.map(p => p.cubes));
+    expect(game.feedbackEvents).toEqual(initial.feedbackEvents);
+   }
+  }
   expect(game.players.map(p => [p.kills, p.victoryPoints, p.questsCompleted])).toEqual(initial.players.map(p => [p.kills, p.victoryPoints, p.questsCompleted]));
   expect(game.blackRose).toEqual(initial.blackRose);
   privacy(game, history, { canUndo:true, canRedo:false, undoLabel:'Cast spell' });
@@ -169,6 +198,72 @@ describe('actual Transmutation spell snapshots and projection', () => {
   game = history.apply(game, { type:'REDO_ACTION', playerId:'p1' }, 'p1');
   expect(game).toEqual(after); conserved(game); expect(physicalCards(game)).toEqual(cards);
   privacy(game, history, { canUndo:true, canRedo:false, undoLabel:'Cast spell' });
+ });
+
+ it.each(ownConversionCases)('keeps own $kind conversion a legal no-op with $owners cubes and $supply supply across handoff/undo/redo', ({ kind, ledger, supply }) => {
+  const history = new ActionHistory(), { game:initial, card } = fixture(kind === 'MAGE' ? "Mage's Due" : 'Reclaimed Servant');
+  const target = kind === 'MAGE' ? initial.players[0].wizard : initial.evocations[0];
+  target.health = 8; target.damageByPlayer = { ...ledger };
+  target.damageCubes = Object.values(ledger).reduce((n, cubes) => n + cubes, 0) + 1;
+  if (kind === 'MAGE') {
+   initial.players[0].wizard.blackDamage = 1; target.damageCubes++; // Separate neutral and unattributed wounds.
+  }
+  syncCubes(initial);
+  let remaining = initial.players[0].cubes.available - supply;
+  for (const chamber of initial.board.rooms.filter(r => !r.startingFor)) {
+   const cubes = Math.min(remaining, chamber.instabilityLimit - chamber.instability);
+   if (cubes) { chamber.instability += cubes; chamber.cubesByPlayer.p1 = (chamber.cubesByPlayer.p1 ?? 0) + cubes; }
+   remaining -= cubes;
+  }
+  expect(remaining).toBe(0); syncCubes(initial); conserved(initial);
+  expect(initial.players[0].cubes.available).toBe(supply);
+  initial.activation!.actionsUsed = 1;
+  const before = structuredClone(initial), cards = physicalCards(initial);
+  let game = history.apply(initial, { type:'CAST_SPELL', playerId:'p1', slot:'slot1',
+   ...(kind === 'MAGE' ? { targetPlayerId:'p1-wizard' } : { targetEvocationId:target.id }) }, 'p1');
+  const after = structuredClone(game);
+  expect(initial).toEqual(before); expect(game.currentPlayerId).toBe('p2');
+  expect(game.players.map(p => p.wizard)).toEqual(before.players.map(p => p.wizard));
+  expect(game.evocations).toEqual(before.evocations);
+  expect(game.players.map(p => p.cubes)).toEqual(before.players.map(p => p.cubes));
+  expect(game.board).toEqual(before.board); expect(game.feedbackEvents).toEqual(before.feedbackEvents);
+  expect(game.readiedSpells).toEqual(before.readiedSpells); expect(game.ongoingSpells).toEqual(before.ongoingSpells);
+  expect(game.activeSpellOrder).toEqual(before.activeSpellOrder);
+  expect(game.players[0].prepared.slot1).toEqual({ card, used:true });
+  expect(game.players[0].actionTokens).toBe(before.players[0].actionTokens);
+  expect(game.library[1].discard).toEqual([card]); expect(physicalCards(game)).toEqual(cards);
+  expect(game.players.map(p => [p.kills, p.victoryPoints, p.questsCompleted])).toEqual(before.players.map(p => [p.kills, p.victoryPoints, p.questsCompleted]));
+  expect(game.blackRose).toEqual(before.blackRose);
+  conserved(game); privacy(game, history, { canUndo:true, canRedo:false, undoLabel:'Cast spell' });
+  game = history.apply(game, { type:'UNDO_ACTION', playerId:'p1' }, 'p1');
+  expect(game).toEqual(before); conserved(game);
+  game = history.apply(game, { type:'REDO_ACTION', playerId:'p1' }, 'p1');
+  expect(game).toEqual(after); conserved(game); expect(physicalCards(game)).toEqual(cards);
+  privacy(game, history, { canUndo:true, canRedo:false, undoLabel:'Cast spell' });
+ });
+
+ it.each(['MAGE', 'EVOCATION'] as const)('still places printed room instability when own %s conversion/damage instructions are ignored', kind => {
+  const history = new ActionHistory(), { game:initial, card } = fixture('Transmuting Surge');
+  // Reuse one real physical card to isolate a mixed instruction combination;
+  // no extra spell or cube supply is introduced by the fixture.
+  card.instability = 2;
+  const cards = physicalCards(initial), before = structuredClone(initial);
+  let game = history.apply(initial, { type:'CAST_SPELL', playerId:'p1', slot:'slot1',
+   ...(kind === 'MAGE' ? { targetPlayerId:'p1' } : { targetEvocationId:'support-model-0' }) }, 'p1');
+  const after = structuredClone(game);
+  expect(initial).toEqual(before);
+  expect(game.players.map(p => p.wizard)).toEqual(before.players.map(p => p.wizard));
+  expect(game.evocations).toEqual(before.evocations);
+  expect(room(game)).toMatchObject({ instability:7, cubesByPlayer:{ p1:2, p2:2, p3:1, [BLACK_ROSE_ID]:2 } });
+  expect(game.players[0].cubes).toEqual({ ...before.players[0].cubes, available:23, onBoard:2 });
+  expect(game.players.slice(1).map(p => p.cubes)).toEqual(before.players.slice(1).map(p => p.cubes));
+  expect(game.feedbackEvents).toEqual(before.feedbackEvents);
+  expect(game.players[0].prepared.slot1).toEqual({ card, used:true });
+  expect(game.library[1].discard).toEqual([card]); expect(game.activation).toMatchObject({ actionsUsed:1, spellsCast:1 });
+  conserved(game); expect(physicalCards(game)).toEqual(cards);
+  privacy(game, history, { canUndo:true, canRedo:false, undoLabel:'Cast spell' });
+  game = history.apply(game, { type:'UNDO_ACTION', playerId:'p1' }, 'p1'); expect(game).toEqual(before); conserved(game);
+  game = history.apply(game, { type:'REDO_ACTION', playerId:'p1' }, 'p1'); expect(game).toEqual(after); conserved(game);
  });
 
  it('restores a full-room conversion across automatic handoff, without claiming completion or clearing history', () => {

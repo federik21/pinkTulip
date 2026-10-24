@@ -134,9 +134,9 @@ export class ActionHistory {
    return restored;
   }
 
- // SELECT_STARTING_SCHOOL deliberately has no label: public lobby choices
- // (and the private initial deal on start) can never be undone or replayed.
- // Resolve everything before changing history: failed commands are inert,
+    // SELECT_STARTING_SCHOOL and SET_ROOM_COUNT deliberately have no label:
+    // lobby configuration and the private initial deal cannot be replayed.
+    // Resolve everything before changing history: failed commands are inert,
   // including failed opponent commands and failed/stale phase commands.
   const before = snapshot(game);
   let after = applyAction(before, action);
