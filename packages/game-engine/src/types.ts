@@ -3,7 +3,19 @@ export type RoomId = string;
 export type Phase = 'LOBBY' | 'BLACK_ROSE' | 'STUDY' | 'PREPARATION' | 'ACTION' | 'EVOCATION' | 'CLEANUP' | 'GAME_OVER';
 export type Hex = { q: number; r: number };
 export type SpellTarget = 'SELF' | 'ROOM' | 'MAGE' | 'EVOCATION' | 'MODEL';
-export type Card = { id: string; name: string; kind: 'SPELL'; damage: number; instability: number; range: number; target: SpellTarget; heal?: number; convert?: number; schoolId?: string; powerful?: boolean };
+export type SpellType = 'COMBAT' | 'CONTINGENCY' | 'TRAP' | 'PROTECTION';
+export type TriggerEvent = 'ENTER_ROOM' | 'DAMAGE_TAKEN' | 'SPELL_CAST' | 'ROOM_ACTIVATED' | 'EVOCATION_ACTIVATED' | 'MAGE_ATTACK' | 'EVOCATION_ATTACK';
+export type FeedbackTarget = { kind: 'MAGE' | 'EVOCATION' | 'ROOM'; id: string; name: string; roomId?: string };
+export type GameFeedbackEvent = { id: string; round: number } & (
+ | { kind: 'DAMAGE'; target: FeedbackTarget; sourceId: string; amount: number }
+ | { kind: 'CONVERT'; target: FeedbackTarget; sourceId: string; amount: number; total: number }
+ | { kind: 'MAGE_DEFEATED'; target: FeedbackTarget; sourceId: string; contributions: Record<string, number>; awards: Array<{ playerId: string; cubes: number; rank: number; tied: boolean; points: number }>; bonusPlayerId?: string; returnedCubes: Record<string, number>; respawnRoomId: string }
+ | { kind: 'SPELL_TRIGGERED'; activeSpellId: string; ownerId: string; cardName: string; spellType: SpellType; trigger: TriggerEvent; target?: FeedbackTarget; roomId?: string; ongoing: boolean }
+);
+export type TriggerCondition = { event: TriggerEvent; relation: 'ENEMY' | 'SELF' | 'ANY'; scope: 'BOUND_MODEL' | 'BOUND_ROOM' | 'ANY' };
+export type TriggeredInstruction = { effect: 'DAMAGE' | 'HEAL' | 'CONVERT' | 'INSTABILITY'; amount: number; target: 'BOUND_MODEL' | 'BOUND_ROOM' | 'EVENT_MODEL' | 'EVENT_ACTOR' | 'EVENT_ROOM' | 'OWNER' };
+export type Card = { id: string; name: string; kind: 'SPELL'; damage: number; instability: number; range: number; target: SpellTarget; heal?: number; convert?: number; schoolId?: string; powerful?: boolean; spellType?: SpellType; rulesText?: string; trigger?: TriggerCondition; triggerEffects?: TriggeredInstruction[]; ongoing?: { trigger: TriggerCondition; effects: TriggeredInstruction[] } };
+export type ActiveSpell = { id: string; playerId: string; card: Card; targetPlayerId?: string; targetEvocationId?: string; roomId?: string };
 export type RoomColor = 'crimson' | 'azure' | 'emerald' | 'amber' | 'violet' | 'grey';
 export type RoomEffect = 'ROOM_DAMAGE' | 'DRAW_DISCARD' | 'INSTABILITY' | 'DRAW_QUEST' | 'DRAW_GRIMOIRE' | 'SUMMON_CADAVER' | 'DRAW_POWERFUL';
 export type LibraryDeck = { id: string; name: string; cards: Card[]; discard: Card[] };
@@ -22,6 +34,7 @@ export type Evocation = {
 export type EvocationActivation = { evocationId: string; playerId: PlayerId; movesRemaining: number; returnToAction: boolean };
 export type Player = {
  id: PlayerId; name: string; connected: boolean; ready: boolean;
+ startingSchoolId?: string | null;
  wizard: Wizard; personalDeck: Card[]; hand: Card[]; discard: Card[]; prepared: PreparedCards;
  cubes: { available: number; onWizard: number; onBoard: number; onEvocations: number }; actionTokens: number; victoryPoints: number;
  questsCompleted: number; kills: number; quest: Quest | null; additionalQuests: Quest[]; studyDrawn: boolean; studyDone: boolean;
@@ -47,14 +60,20 @@ export type GameState = {
  history?: { canUndo: boolean; canRedo: boolean; undoLabel?: string; redoLabel?: string };
  library: LibraryDeck[]; eventDeck: EventCard[]; eventDiscard: EventCard[]; questDeck: Quest[]; questDiscard: Quest[];
  powerfulDeck: Card[]; removedCards: Card[];
+ readiedSpells?: ActiveSpell[]; ongoingSpells?: ActiveSpell[];
+ // Instance IDs only: stable chronology across both active zones, safe to mask.
+ activeSpellOrder?: string[];
  evocations: Evocation[]; evocationActivation: EvocationActivation | null;
  currentPlayerId: PlayerId | null; activation: Activation | null; winner: PlayerId | null; log: string[];
+ // Public resolution facts only; optional for snapshots created before feedback events.
+ feedbackEvents?: GameFeedbackEvent[];
  usedEvent: EventCard | null; blackRoseResolved: boolean;
 };
 export type GameAction =
  // Transport commands: intercepted by the server, never resolved by the engine.
  | { type: 'UNDO_ACTION'; playerId: PlayerId }
  | { type: 'REDO_ACTION'; playerId: PlayerId }
+ | { type: 'SELECT_STARTING_SCHOOL'; playerId: PlayerId; schoolId: string }
  | { type: 'SET_READY'; playerId: PlayerId; ready: boolean }
  | { type: 'START_GAME'; playerId: PlayerId }
  | { type: 'ADVANCE_PHASE'; playerId: PlayerId; expectedPhase: Phase; expectedRound: number }
@@ -80,5 +99,5 @@ export type GameAction =
  | { type: 'DISCARD_EXIT'; playerId: PlayerId; cardId: string; destination: Hex }
  | { type: 'PUNCH'; playerId: PlayerId; targetId: PlayerId; roomEffect?: 'START' | 'END'; roomTargetId?: RoomId }
  | { type: 'CAST_SPELL'; playerId: PlayerId; slot: 'rapid' | 'slot1' | 'slot2' | 'slot3'; targetPlayerId?: PlayerId; targetEvocationId?: string; roomId?: RoomId; dummy?: boolean }
- // Legacy wire compatibility only: powers must be prepared and use CAST_SPELL.
+ // Legacy wire compatibility only: forgotten spells must be prepared and use CAST_SPELL.
  | { type: 'CAST_POWERFUL_SPELL'; playerId: PlayerId; cardId: string; targetPlayerId?: PlayerId; targetEvocationId?: string; roomId?: RoomId; dummy?: boolean };

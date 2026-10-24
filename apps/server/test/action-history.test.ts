@@ -9,7 +9,12 @@ function fixture(count = 2): GameState {
  game.phase = 'ACTION'; game.round = 1; game.currentPlayerId = 'p1';
  game.activation = { playerId:'p1', actionsUsed:0, exploring:0, sequencedSpellUsed:false,
   spellsCast:0, discardedExit:false, roomEffectUsed:false };
- for (const p of game.players) { p.connected = true; p.wizard.position = { q:0, r:0 }; }
+ // Mid-game fixtures move real school cards into personal zones explicitly;
+ // creating a lobby no longer generates twelve extra cards per mage.
+ for (const p of game.players) {
+  p.connected = true; p.wizard.position = { q:0, r:0 };
+  p.personalDeck.push(...game.library[0].cards.splice(0, 8));
+ }
  return game;
 }
 function prepare(game: GameState, changes: Partial<Card> = {}, slot: keyof Player['prepared'] = 'rapid') {
@@ -87,7 +92,7 @@ describe('private exact snapshot undo/redo', () => {
   game = apply(history, game, redo); expect(game).toEqual(after);
  });
 
- it('restores removed powerful preparations without changing draws', () => {
+ it('restores removed forgotten preparations without changing draws', () => {
   const history = new ActionHistory(), initial = fixture();
   const card = initial.powerfulDeck.shift()!;
   initial.players[0].prepared.rapid = { card, used:false };
@@ -245,17 +250,27 @@ describe('turn ownership, branching, validation and phase barriers', () => {
   reject(history, game, redo, /No action available/);
  });
 
- it.each(['SET_READY', 'DRAW_STUDY', 'DISCARD_STUDY', 'DISCARD_HAND_LIMIT', 'PREPARE_CARDS', 'DISCARD_QUESTS', 'ADVANCE_PHASE'] as const)(
+ it.each(['SELECT_STARTING_SCHOOL', 'SET_READY', 'DRAW_STUDY', 'DISCARD_STUDY', 'DISCARD_HAND_LIMIT', 'PREPARE_CARDS', 'DISCARD_QUESTS', 'ADVANCE_PHASE'] as const)(
   'treats successful %s as a barrier even without a phase change', type => {
-   const history = new ActionHistory(); let game = apply(history, fixture(), begin);
+   const history = new ActionHistory(); let initial = fixture();
+   if (type === 'SET_READY') {
+    initial.phase = 'LOBBY';
+    initial = apply(history, initial, { type:'SELECT_STARTING_SCHOOL', playerId:'p1', schoolId:initial.library[0].id });
+    initial.phase = 'ACTION';
+   }
+   let game = apply(history, initial, begin);
    expect(available(history, game).canUndo).toBe(true);
    let action: GameAction;
    switch (type) {
-    case 'SET_READY': game.phase = 'LOBBY'; action = { type, playerId:'p1', ready:true }; break;
+    case 'SELECT_STARTING_SCHOOL':
+     game.phase = 'LOBBY'; action = { type, playerId:'p1', schoolId:game.library[0].id }; break;
+    case 'SET_READY':
+     game.phase = 'LOBBY';
+     action = { type, playerId:'p1', ready:true }; break;
     case 'DRAW_STUDY': game.phase = 'STUDY'; action = { type, playerId:'p1', deckId:game.library[0].id }; break;
     case 'DISCARD_STUDY':
      game.phase = 'STUDY'; game.players[0].studyDrawn = true;
-     game.players[0].hand = game.players[0].personalDeck.splice(0, 4);
+    game.players[0].hand = game.players[0].personalDeck.splice(0, 4);
      action = { type, playerId:'p1', cardIds:game.players[0].hand.slice(0, 2).map(c => c.id) }; break;
     case 'DISCARD_HAND_LIMIT':
      game.phase = 'PREPARATION'; game.players[0].hand = game.players[0].personalDeck.splice(0, 8);

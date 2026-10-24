@@ -74,12 +74,14 @@ function physicalCards(s:GameState) {
  return [
   ...s.library.flatMap(d=>[...d.cards,...d.discard]),...s.powerfulDeck,...s.removedCards,
   ...s.players.flatMap(p=>[...p.personalDeck,...p.hand,...p.discard,...Object.values(p.prepared).flatMap(c=>c&&!c.used?[c.card]:[])]),
+  ...[...s.readiedSpells??[],...s.ongoingSpells??[]].map(a=>a.card),
  ].map(c=>c.id).sort();
 }
 
 describe('Transmutation physical school contract',()=>{
  it('adds exactly one independent 36-card school, 12 distinct printed patterns with three copies each',()=>{
-  const library=createLibrary();expect(library.map(d=>[d.id,d.name])).toEqual([['cantrip','Cantrip'],['transmutation','Transmutation']]);
+  const library=createLibrary();expect(library.map(d=>[d.id,d.name])).toEqual([['cantrip','Cantrip'],['transmutation','Transmutation'],['enchantment','Enchantment']]);
+  expect(new Set(library.map(d=>d.id)).size).toBe(3);
   const deck=createTransmutationDeck();expect(deck).toHaveLength(36);expect(new Set(deck.map(c=>c.id)).size).toBe(36);
   const expected:[string,SpellTarget,number,number,number,number,number][]=[
    ['Mending Light','SELF',3,0,0,0,0],['Vital Thread','MODEL',2,0,0,0,2],
@@ -99,11 +101,65 @@ describe('Transmutation physical school contract',()=>{
   }
   expect(library[0].cards.slice().sort((a,b)=>a.id.localeCompare(b.id))).toEqual(createSpellDeck('cantrip','cantrip').sort((a,b)=>a.id.localeCompare(b.id)));
   expect(library[1].cards.map(c=>c.id).sort()).toEqual(deck.map(c=>c.id).sort());
-  const s=createGame();expect(physicalCards(s)).toHaveLength(108);expect(new Set(physicalCards(s)).size).toBe(108);
+ });
+
+ it.each([1,2,3,4])('creates %i seats with empty personal zones and exactly 108 shared plus 12 forgotten physical cards',count=>{
+  const s=createGame(count),cards=physicalCards(s);
+  expect(cards).toHaveLength(120);expect(new Set(cards).size).toBe(120);
+  expect(s.library.flatMap(d=>d.cards)).toHaveLength(108);expect(s.library.every(d=>d.discard.length===0)).toBe(true);
+  expect(s.powerfulDeck).toHaveLength(12);expect(s.powerfulDeck.every(c=>c.powerful)).toBe(true);
   for(const p of s.players) {
-   expect(p.personalDeck).toHaveLength(12);expect(p.personalDeck.every(c=>!c.schoolId)).toBe(true);
-   expect(p.personalDeck.slice().sort((a,b)=>a.id.localeCompare(b.id))).toEqual(createSpellDeck(p.id).slice(0,12).sort((a,b)=>a.id.localeCompare(b.id)));
+   expect(p.personalDeck).toEqual([]);expect(p.hand).toEqual([]);expect(p.discard).toEqual([]);
+   expect(p.prepared).toEqual({rapid:null,slot1:null,slot2:null,slot3:null});
   }
+ });
+
+ describe.each(['cantrip','transmutation','enchantment'])('%s starting grimoire',schoolId=>{
+  it.each([2,3,4])('allocates seven actual school cards for %i mages, then Study keeps four cards with normal school routing',count=>{
+   let s=createGame(count);const cards=physicalCards(s),school=s.library.find(d=>d.id===schoolId)!;
+   const stock=[...school.cards],studySchool=s.library.find(d=>d.id!==schoolId)!;
+   s.eventDeck=[{id:'quiet',name:'Quiet',description:'No effect',kind:'BLACK_DAMAGE',amount:0,rooms:0}];
+   for(const p of s.players)p.connected=true;
+   for(const p of s.players) {
+    s=applyAction(s,{type:'SELECT_STARTING_SCHOOL',playerId:p.id,schoolId});
+    s=applyAction(s,{type:'SET_READY',playerId:p.id,ready:true});
+   }
+   const lobby=structuredClone(s);s=applyAction(s,{type:'START_GAME',playerId:'p1'});
+   expect(lobby.players.every(p=>p.hand.length+p.personalDeck.length+p.discard.length===0)).toBe(true);
+   expect(s.phase).toBe('BLACK_ROSE');
+   for(const [i,p] of s.players.entries()) {
+    expect(p.startingSchoolId).toBe(schoolId);expect(p.hand).toEqual([]);
+    expect(p.personalDeck).toEqual(stock.slice(i*7,i*7+6));expect(p.discard).toEqual([stock[i*7+6]]);
+    expect([...p.personalDeck,...p.discard].every(c=>c.schoolId===schoolId)).toBe(true);
+   }
+   expect(s.library.find(d=>d.id===schoolId)!.cards).toEqual(stock.slice(count*7));
+   expect(s.library.filter(d=>d.id!==schoolId)).toEqual(lobby.library.filter(d=>d.id!==schoolId));
+   expect(s.powerfulDeck).toEqual(lobby.powerfulDeck);expect(physicalCards(s)).toEqual(cards);
+   s=applyAction(s,{type:'ADVANCE_PHASE',playerId:'p1',expectedPhase:'BLACK_ROSE',expectedRound:1});
+   expect(s.phase).toBe('STUDY');
+   for(const [i,p] of s.players.entries()) {
+    expect(p.hand).toEqual(stock.slice(i*7,i*7+2));expect(p.personalDeck).toEqual(stock.slice(i*7+2,i*7+6));
+    expect(p.discard).toEqual([stock[i*7+6]]);
+   }
+   expect(physicalCards(s)).toEqual(cards);
+   for(const [i,p] of s.players.entries()) {
+    const drawn=studySchool.cards.slice(i*4,i*4+4);
+    s=applyAction(s,{type:'DRAW_STUDY',playerId:p.id,deckId:studySchool.id});
+    expect(s.players[i].hand).toEqual([...stock.slice(i*7,i*7+2),...drawn]);
+    expect(physicalCards(s)).toEqual(cards);
+    // A grimoire card retains its school origin: ordinary Study discards do
+    // not join the seventh setup card in personal discard.
+    s=applyAction(s,{type:'DISCARD_STUDY',playerId:p.id,cardIds:[stock[i*7].id,drawn[0].id]});
+    expect(s.players[i].hand).toEqual([stock[i*7+1],...drawn.slice(1)]);
+    expect(s.players[i].personalDeck).toEqual(stock.slice(i*7+2,i*7+6));
+    expect(s.players[i].discard).toEqual([stock[i*7+6]]);
+    expect(s.library.find(d=>d.id===schoolId)!.discard).toEqual(Array.from({length:i+1},(_,j)=>stock[j*7]));
+    expect(s.library.find(d=>d.id===studySchool.id)!.discard).toEqual(Array.from({length:i+1},(_,j)=>studySchool.cards[j*4]));
+    expect(physicalCards(s)).toEqual(cards);
+   }
+   expect(s.phase).toBe('PREPARATION');expect(s.players.every(p=>p.studyDrawn&&p.studyDone&&p.hand.length===4)).toBe(true);
+   expect(new Set(physicalCards(s)).size).toBe(120);
+  });
  });
 
  it('draws and recycles only Transmutation in Study, and routes support discards back to that school',()=>{
@@ -272,7 +328,7 @@ describe('healing wounds and returning only actual physical cubes',()=>{
   for(const i of [0,1,3])expect(result.players[i].cubes).toEqual(before[i]);conserved(result);
  });
  it.each(['MAGE','EVOCATION'] as const)('neutral-only and unattributed-only %s healing creates no supply',kind=>{
-  for(const ledger of [{[BLACK_ROSE_ID]:3},{}]) {
+  for(const ledger of [{[BLACK_ROSE_ID]:3},{}] as Record<string,number>[]) {
    const s=fixture();prepare(s,card(kind,{heal:20}));wound(s,kind,1,ledger,Object.keys(ledger).length?0:3);
    const before=s.players.map(p=>({...p.cubes}));const result=cast(s,kind==='MAGE'?{targetPlayerId:'p2'}:{targetEvocationId:'evoc-2'});
    expect(model(result,kind).damageCubes).toBe(0);expect(model(result,kind).damageByPlayer).toEqual({});
@@ -333,7 +389,7 @@ describe('conversion replaces ownership without creating wounds, instability or 
   expect(result.players[0].cubes).toEqual({available:24,onWizard:0,onBoard:0,onEvocations:1});conserved(result);
  });
  it.each(['MAGE','EVOCATION'] as const)('%s conversion cannot spend supply on own-only cubes or unattributed wounds',kind=>{
-  for(const ledger of [{p1:2},{}]) {
+  for(const ledger of [{p1:2},{}] as Record<string,number>[]) {
    const s=fixture();prepare(s,card(kind,{convert:5}));wound(s,kind,1,ledger,2);
    const before=structuredClone(s),result=cast(s,kind==='MAGE'?{targetPlayerId:'p2'}:{targetEvocationId:'evoc-2'});
    expect(model(result,kind)).toEqual(model(before,kind));expect(result.players.map(p=>p.cubes)).toEqual(before.players.map(p=>p.cubes));conserved(result);

@@ -1,4 +1,5 @@
 import { test, expect, Page, Browser, TestInfo, Locator } from '@playwright/test';
+import { openMageDetails, selectControlTab, viewRetinue } from './layout-ui';
 
 type Mage = { page: Page; id: string; name: string; coordinates: string };
 
@@ -17,6 +18,7 @@ async function roomName(page: Page, coordinates: string) {
 }
 
 async function expectEvocationLocation(page: Page, id: string, mage: Mage, coordinates = mage.coordinates) {
+  await selectControlTab(page, 'Evocations');
   await expect(page.locator(`.evocation-card[data-evocation-id="${id}"] > small`)).toHaveText(`${mage.name} · Undead · ${await roomName(page, coordinates)}`);
 }
 
@@ -27,11 +29,7 @@ function player(page: Page, name: string) {
 }
 
 async function openRetinue(page: Page, ownerId: string) {
-  const toggle = page.locator(`.player[data-player-id="${ownerId}"] .mini-toggle`);
-  if (await toggle.getAttribute('aria-expanded') === 'false') await toggle.click();
-  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
-  const panel = page.locator(`#retinue-${ownerId}`);
-  await expect(panel).toBeVisible();
+  const panel = await viewRetinue(page, ownerId);
   for (const card of await panel.locator('.evocation-card').all()) await expect(card).toHaveAttribute('data-owner-id', ownerId);
   if (await panel.locator('.evocation-card[data-owned="false"]').count()) {
     await expect(panel.getByRole('button')).toHaveCount(0);
@@ -68,7 +66,7 @@ async function renderedPhase(page: Page) {
 }
 
 async function expectTokens(page: Page, name: string, tokens: number) {
-  await expect(player(page, name).locator('.player-stats > span').filter({ hasText: /^⚡/ }))
+  await expect(player(page, name).locator('summary .player-stats').filter({ hasText: /^⚡/ }))
     .toHaveText(`⚡ ${tokens} tokens`);
 }
 
@@ -90,7 +88,7 @@ async function expectActions(mage: Mage, left: number) {
 }
 
 async function tokensOf(mage: Mage) {
-  return Number((await player(mage.page, mage.name).locator('.player-stats > span').filter({ hasText: /^⚡/ }).textContent())!.match(/⚡ (\d+)/)![1]);
+  return Number((await player(mage.page, mage.name).locator('summary .player-stats').filter({ hasText: /^⚡/ }).textContent())!.match(/⚡ (\d+)/)![1]);
 }
 
 // A broadcast and its request ACK can render separately. Require coherent ownership
@@ -113,6 +111,7 @@ async function actionOwner(mages: Mage[], nextPhase?: string) {
 }
 
 async function endTurn(mage: Mage, mages: Mage[]) {
+  await selectControlTab(mage.page, 'Actions');
   await expect(mage.page.getByRole('button', { name: /^End turn\b/ })).toBeEnabled();
   await mage.page.getByRole('button', { name: /^End turn\b/ }).click();
   const next = await actionOwner(mages);
@@ -121,6 +120,7 @@ async function endTurn(mage: Mage, mages: Mage[]) {
 }
 
 async function castPrepared(mage: Mage, pages: Page[], card: Locator) {
+  await selectControlTab(mage.page, 'Actions');
   const tokens = await tokensOf(mage);
   const left = Number((await mage.page.locator('.phase-panel .badge').textContent())!.match(/^(\d)/)![1]);
   const label = (await card.locator('.eyebrow').textContent())!.trim();
@@ -129,7 +129,7 @@ async function castPrepared(mage: Mage, pages: Page[], card: Locator) {
   await expect(card).toBeEnabled();
   await expect(card).toContainText('1 action to cast');
   await card.click();
-  if (label.endsWith(' · Model')) await mage.page.getByRole('button', { name: 'Target dummy · no damage', exact: true }).click();
+  if (/·\s*Model\b/.test(label)) await mage.page.getByRole('button', { name: 'Target dummy · no damage', exact: true }).click();
   // Harmless same-room targets preserve the real summons and mage health.
   await hex(mage.page, mage.coordinates, true).click();
   await mage.page.locator('.room-detail').getByRole('button', { name: /^Cast .* here/ }).click();
@@ -154,10 +154,12 @@ async function expectAttributes(pages: Page[], count = pages.length) {
     await expect(page.locator('.mage-legend [data-player-id]')).toHaveCount(count);
     for (let index = 0; index < count; index++) {
       const id = `p${index + 1}`;
-      const stats = page.locator(`.player[data-player-id="${id}"] dl.mage-attributes`);
-      await expect(stats.locator('dt')).toHaveText(['Max HP', 'Attack', 'Movement', 'Cards', 'Quest limit']);
-      await expect(stats.locator('div').filter({ hasNot: page.locator('dt', { hasText: /^Cards$/ }) }).locator('dd')).toHaveText(['10', '2', '2', '2']);
-      await expect(stats.locator('dd').nth(3)).toHaveText(/^\d+\/7$/);
+      const mage = await openMageDetails(page, id);
+      const stats = mage.locator('dl.secondary-attributes');
+      await expect(stats.locator('dt')).toHaveText(['Max HP', 'Attack', 'Movement', 'Quest limit']);
+      await expect(stats.locator('dd')).toHaveText(['10', '2', '2', '2']);
+      await expect(mage.locator('summary .critical-attributes dt')).toHaveText('Cards');
+      await expect(mage.locator('summary .critical-attributes dd')).toHaveText(/^\d+\/7$/);
       const meter = page.locator(`.player[data-player-id="${id}"] .health`);
       await expect(meter).toHaveAttribute('aria-valuemax', '10');
       const damage = Number(await meter.getAttribute('aria-valuenow'));
@@ -179,6 +181,7 @@ async function expectAttributes(pages: Page[], count = pages.length) {
 }
 
 async function expectPhysicalLock(mage: Mage, pages: Page[], kind: 'EXPLORE' | 'ATTACK') {
+  await selectControlTab(mage.page, 'Actions');
   await expect(mage.page.locator('.physical-effects')).toHaveAttribute('data-physical-kind', kind);
   await expect(mage.page.getByRole('heading', { name: kind === 'EXPLORE' ? 'Explore effects' : 'Attack effects', exact: true })).toBeVisible();
   await expect(mage.page.locator('.prepared .spell:not(:disabled), .powerful-panel .spell:not(:disabled)')).toHaveCount(0);
@@ -199,6 +202,7 @@ async function expectPhysicalLock(mage: Mage, pages: Page[], kind: 'EXPLORE' | '
 }
 
 async function beginPhysical(mage: Mage, pages: Page[], kind: 'EXPLORE' | 'ATTACK', tokens: number) {
+  await selectControlTab(mage.page, 'Actions');
   await (kind === 'EXPLORE' ? exploreButton(mage.page) : attackButton(mage.page)).click();
   await expectPhysicalLock(mage, pages, kind);
   for (const page of pages) await expectTokens(page, mage.name, tokens);
@@ -285,17 +289,56 @@ async function expectPhase(pages: Page[], phase: string) {
   }
 }
 
+async function chooseStartingSchool(page: Page, schoolId = 'cantrip') {
+  const select = page.getByRole('combobox', { name: 'Starting magic school', exact: true });
+  await expect(select).toHaveValue('');
+  await expect(page.getByRole('button', { name: 'Mark ready', exact: true })).toBeDisabled();
+  await select.selectOption(schoolId);
+  await expect(select).toHaveValue(schoolId);
+  await expect(page.getByRole('button', { name: 'Mark ready', exact: true })).toBeEnabled();
+}
+
+async function discardThirdPreparation(page: Page) {
+  await selectControlTab(page, 'Actions');
+  const select = page.getByLabel('Card to discard for exit');
+  // Held cards now precede the four preparations; the last option is still slot 3.
+  await select.selectOption({ index: await select.locator('option').count() - 1 });
+}
+
+async function resolveHandLimit(page: Page) {
+  const panel = page.locator('.hand-limit-panel');
+  if (!await panel.count()) return;
+  const cards = panel.locator('.spell'), excess = await cards.count() - 7;
+  expect(excess).toBeGreaterThan(0);
+  await expect(panel.getByRole('heading', { name: 'Reduce your hand to 7 cards', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Prepare spells', exact: true })).toHaveCount(0);
+  await selectControlTab(page, 'More');
+  const before = Number((await page.locator('.reference > .hint').textContent())!.match(/Personal discard (\d+)/)![1]);
+  // Retain held Forgotten spells for the later-round preparation/range coverage.
+  for (let index = 0; index < excess; index++) await panel.locator('.spell:not(.powerful)').nth(index).click();
+  await panel.getByRole('button', { name: `Discard excess cards (${excess}/${excess})`, exact: true }).click();
+  await expect(panel).toHaveCount(0);
+  await expect(page.locator('.phase-panel .spell')).toHaveCount(7);
+  await expect(page.locator('.reference > .hint')).toContainText(`Personal discard ${before + excess}`);
+}
+
 async function studyCards(pages: Page[]) {
   for (const page of pages) {
     await expect(page.getByRole('heading', { name: 'Schools of magic', exact: true })).toBeVisible();
-    await expect(page.locator('.schools button')).toHaveCount(2);
+    await expect.poll(() => page.locator('.schools button').count()).toBeGreaterThanOrEqual(2);
+    for (const [id, name] of [['cantrip', 'Cantrip'], ['transmutation', 'Transmutation']]) {
+      await expect(page.locator(`.schools button[data-school-id="${id}"] strong`)).toHaveText(name);
+    }
     await dismissOverlay(page);
-    // Combat scenarios deliberately keep drawing the original offensive school.
+    // Combat scenarios deliberately keep drawing Cantrip; four-player starting
+    // choices are mixed so this finite school can supply all four Study draws.
+    await selectControlTab(page, 'More');
+    const before = Number((await page.locator('.reference > .hint').textContent())!.match(/Hand (\d+)\//)![1]);
     await page.locator('.schools button[data-school-id="cantrip"]').click();
-    await expect(page.locator('.phase-panel .spell').nth(5)).toBeVisible();
+    await expect(page.locator('.phase-panel .spell')).toHaveCount(before + 4);
     const cards = page.locator('.phase-panel .spell');
     const count = await cards.count();
-    // Keep the two grimoire draws and two school cards. Later rounds retain held cards too.
+    // Keep held cards, up to two grimoire draws and two new school cards.
     await cards.nth(count - 2).click();
     await cards.nth(count - 1).click();
     await page.getByRole('button', { name: 'Discard selected (2/2)', exact: true }).click();
@@ -306,6 +349,7 @@ async function studyCards(pages: Page[]) {
 
 async function prepareCards(pages: Page[], preparePower = false) {
   for (const page of pages) {
+    await resolveHandLimit(page);
     await expect(page.getByRole('heading', { name: 'Three ordered spells. One wild card.', exact: true })).toBeVisible();
     await dismissOverlay(page);
     await expect(page.locator('.phase-panel .spell').nth(3)).toBeVisible();
@@ -354,6 +398,7 @@ async function expectGreySummon(mage: Mage, pages: Page[], total: number, handed
 }
 
 async function extraEvocationActivation(mage: Mage, pages: Page[], id: string, total: number, next?: Mage, path: string[] = []) {
+  await selectControlTab(mage.page, 'Evocations');
   const own = mage.page.locator(`.evocation-card[data-evocation-id="${id}"]`);
   const activate = own.getByRole('button', { name: /^Activate Cadaver\b/ });
   await expect(activate.locator('small')).toHaveText('1 token · extra activation');
@@ -395,6 +440,7 @@ async function extraEvocationActivation(mage: Mage, pages: Page[], id: string, t
   }
   await expect(mage.page.locator('.phase-panel .badge')).toHaveText(next ? 'Waiting' : '1 turn actions left');
   await expect(activate).toBeDisabled();
+  await selectControlTab(mage.page, 'Actions');
   if (next) {
     await expect(exploreButton(mage.page)).toHaveCount(0);
     await expect(attackButton(mage.page)).toHaveCount(0);
@@ -425,6 +471,7 @@ async function drainSpells(mages: Mage[], expectedCasts = 7, nextPhase = 'Evocat
     }
 
     const { page } = mage;
+    await selectControlTab(page, 'Actions');
     await expectActing(pages, mage);
     await expectTokens(page, mage.name, 0);
     await expect(page.locator('.phase-panel .badge')).toHaveText(/[12] turn actions left/);
@@ -479,13 +526,15 @@ test('two browsers exhaust two round tokens, spend turn actions on spells, and r
       await expect(a.getByRole('heading', { name: 'Gather the mages', exact: true })).toBeVisible();
       await expect(a.getByRole('button', { name: 'Start game', exact: true })).toHaveCount(0);
       await expect(a.locator('.lobby-count')).toHaveText('1 / 4 mages · 0 ready');
+      await chooseStartingSchool(a);
       await a.getByRole('button', { name: 'Mark ready', exact: true }).click();
       await expect(a.locator('.lobby-readiness')).toContainText('Waiting for at least 2 mages');
       await b.getByLabel('Mage name').fill(moon.name);
       await b.getByLabel('Room name').fill(room);
       await b.getByRole('button', { name: 'Join room', exact: true }).click();
+      await chooseStartingSchool(b);
       await b.getByRole('button', { name: 'Mark ready', exact: true }).click();
-      await expectPhase(pages, 'Black Rose');
+      await expectPhase(pages, '(not) Black Rose');
       await expectNoActingMage(pages);
       await expectAttributes(pages);
       await a.getByRole('button', { name: 'Receive quests & begin Study', exact: false }).click();
@@ -537,10 +586,10 @@ test('two browsers exhaust two round tokens, spend turn actions on spells, and r
       await expect(attackButton(a)).toBeDisabled();
       await expect(a.getByRole('button', { name: 'Pass for this round', exact: true })).toHaveCount(0);
       // Exit options are flexible, then slots 1/2/3: discard only the third numbered preparation.
-      await a.getByLabel('Card to discard for exit').selectOption({ index: 4 });
+      await discardThirdPreparation(a);
       await hex(a, '2,-2', true).click();
       await expect(a.locator('.log > div').filter({ hasText: /Ember Browser discards .*1 action.*no physical token/ })).toBeVisible();
-      await expect(a.locator('.prepared .spell.used .eyebrow')).toHaveText(/^Spell 3 · (Room|Model)$/);
+      await expect(a.locator('.prepared .spell.used .eyebrow')).toHaveText(/^Spell 3 · (Room|Model)\b/);
       await expectTokens(a, ember.name, 2);
       await expectActions(ember, 1);
       await expectMageAt(pages, ember, '2,-2');
@@ -574,6 +623,7 @@ test('two browsers exhaust two round tokens, spend turn actions on spells, and r
 
       await expect(b.getByRole('heading', { name: 'Choose your next action', exact: true })).toBeVisible();
       await expectActing(pages, moon);
+      await selectControlTab(b, 'Actions');
       await expect(b.getByRole('button', { name: 'Pass for this round', exact: true })).toHaveCount(0);
       await expect(attackButton(b)).toBeDisabled();
       await beginPhysical(moon, pages, 'EXPLORE', 1);
@@ -712,9 +762,13 @@ test('two browsers exhaust two round tokens, spend turn actions on spells, and r
       const availableBefore = await player(b, moon.name).locator('[title="Available cubes"]').innerText();
       await expect(attackModel).toBeEnabled();
       await expect(attackModel.locator('small')).toHaveText('2 damage');
-      const scoreNames = [ember.name, moon.name, 'Black Rose'];
+      const scoreNames = [ember.name, moon.name, '(not) Black Rose'];
       const scoresBefore = (await b.locator('.player-heading > b').allTextContents()).map(text => Number(text.match(/\d+/)![0]));
-      const questProgressBefore = await Promise.all(pages.map(page => page.locator('.quest-panel > .hint').first().textContent()));
+      const questProgressBefore = await Promise.all(pages.map(async page => {
+        await selectControlTab(page, 'More');
+        return page.locator('.quest-panel > .hint').first().textContent();
+      }));
+      await selectControlTab(b, 'Evocations');
       await attackModel.click();
       await expectPhase(pages, 'Cleanup');
       await expectNoActingMage(pages);
@@ -728,6 +782,7 @@ test('two browsers exhaust two round tokens, spend turn actions on spells, and r
         .reduce((total, entry) => total + Number(entry.match(/: \+(\d+) VP for .* \(rank /)![1]), 0));
       for (const page of pages) {
         await expect(page.locator('.player-heading > b')).toHaveText(expectedScores.map(score => `${score} VP`));
+        await selectControlTab(page, 'More');
         await expect(page.locator('.quest-panel > .hint').first()).toHaveText(questProgressBefore[pages.indexOf(page)]!);
         await expect(page.getByRole('heading', { name: '❖ The lodge settles', exact: true })).toBeVisible();
         await expect(page.locator(`[data-evocation-id="${emberId}"]`)).toHaveCount(0);
@@ -747,7 +802,7 @@ test('two browsers exhaust two round tokens, spend turn actions on spells, and r
 
     await test.step('Refresh two tokens next round, preserve the surviving model, and fit mobile screens', async () => {
       await a.getByRole('button', { name: 'Begin round 2', exact: false }).click();
-      await expectPhase(pages, 'Black Rose');
+      await expectPhase(pages, '(not) Black Rose');
       await expectNoActingMage(pages);
       for (const [i, page] of pages.entries()) {
         await expect(page.locator('.event-panel')).toContainText('Round 2');
@@ -795,9 +850,10 @@ async function withMages(browser: Browser, info: TestInfo, prefix: string, run: 
       await mage.page.getByLabel('Mage name').fill(mage.name);
       await mage.page.getByLabel('Room name').fill(room);
       await mage.page.getByRole('button', { name: index ? 'Join room' : 'Create room', exact: true }).click();
+      await chooseStartingSchool(mage.page);
       await mage.page.getByRole('button', { name: 'Mark ready', exact: true }).click();
     }
-    await expectPhase(pages, 'Black Rose');
+    await expectPhase(pages, '(not) Black Rose');
     await expectAttributes(pages);
     await run(mages);
     expect(errors, 'Uncaught browser errors').toEqual([]);
@@ -831,6 +887,7 @@ test('four real browsers wait for every joined mage, auto-start, show named room
       }
       await mage.page.getByRole('button', { name: index ? 'Join room' : 'Create room', exact: true }).click();
       await expect(mage.page.locator('.lobby-count')).toHaveText(`${index + 1} / 4 mages · 0 ready`);
+      await chooseStartingSchool(mage.page, ['cantrip', 'cantrip', 'transmutation', 'enchantment'][index]);
       if (!index) {
         await mage.page.getByRole('button', { name: 'Mark ready', exact: true }).click();
         await expect(mage.page.locator('.lobby-count')).toHaveText('1 / 4 mages · 1 ready');
@@ -864,7 +921,7 @@ test('four real browsers wait for every joined mage, auto-start, show named room
       await expect(page.getByRole('heading', { name: 'Gather the mages', exact: true })).toBeVisible();
     }
     await amber.page.getByRole('button', { name: 'Mark ready', exact: true }).click();
-    await expectPhase(pages, 'Black Rose');
+    await expectPhase(pages, '(not) Black Rose');
     await expectAttributes(pages);
     const names = await pages[0].locator('.room-name').allTextContents();
     expect(new Set(names.map(name => name.trim())).size).toBe(23);
@@ -874,12 +931,16 @@ test('four real browsers wait for every joined mage, auto-start, show named room
       expect(await page.locator('.room-name').allTextContents()).toEqual(names);
       for (const tile of await page.locator('g.hex').all()) {
         const name = (await tile.locator('.room-name').textContent())!.trim();
-        expect(name).toMatch(/^[A-Za-z ]+$/);
-        await expect(tile).toHaveAttribute('aria-label', new RegExp(`^${name},`));
+        expect(name).toMatch(/^[A-Za-z ()]+$/);
+        await expect(tile).toHaveAttribute('aria-label', new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')},`));
         await expect(tile.locator(':scope > title')).toContainText(name);
       }
-      await expect(hex(page, '0,0').locator('.room-name')).toHaveText('Black Rose Chamber');
+      await expect(hex(page, '0,0').locator('.room-name')).toHaveText('(not) Black Rose Chamber');
+      for (const [index, color] of ['Rose', 'Blue', 'Amber', 'Green'].entries()) {
+        await expect(hex(page, starts[index]).locator('.room-name')).toHaveText(`${color} Mage cell`);
+      }
       await expect(page.locator('footer')).toContainText('2–4 mages');
+      await selectControlTab(page, 'More');
       await expect(page.locator('.reference')).toContainText('Dense ranks');
       await expect(page.locator('.reference')).toContainText('1 VP, minimum 1');
       for (const rewards of ['4 cubes · 2 / 1 / 0 VP', '5 cubes · 4 / 2 / 1 VP', '6 cubes · 5 / 3 / 1 VP', '10 cubes · 6 / 3 / 1 VP']) {
@@ -928,7 +989,7 @@ test('four real browsers wait for every joined mage, auto-start, show named room
       }
       await expect(hex(page, '1,1').locator('.cube-owner circle').last()).toHaveCSS('fill', mageColors[3]);
       await hex(page, '0,0').click();
-      await expect(page.locator('.room-detail > strong')).toHaveText('Black Rose Chamber');
+      await expect(page.locator('.room-detail > strong')).toHaveText('(not) Black Rose Chamber');
       // Geometry and contrast are read from the rendered SVG, never injected state.
       const readability = await page.locator('g.hex:not(.start-room)').evaluateAll(tiles => tiles.map(tile => {
         const count = tile.querySelector<SVGTextElement>('.cube-count')!;
@@ -974,13 +1035,14 @@ async function receiveQuests(mages: Mage[], info: TestInfo) {
   await expect.poll(async () => {
     const phases = await Promise.all(pages.map(page => page.locator('.phase-track .current span').textContent()));
     return phases.every(phase => phase === 'Study') ||
-      phases.every(phase => phase === 'Black Rose') &&
+      phases.every(phase => phase === '(not) Black Rose') &&
       (await Promise.all(pages.map(page => page.locator('.event-panel fieldset').count()))).every(count => count === 1);
   }).toBe(true);
   let discarded = 0;
-  if (await pages[0].locator('.phase-track .current span').textContent() === 'Black Rose') {
+  if (await pages[0].locator('.phase-track .current span').textContent() === '(not) Black Rose') {
     for (const mage of mages) {
       if (await mage.page.locator('.phase-track .current span').textContent() === 'Study') break;
+      await selectControlTab(mage.page, 'More');
       const excess = await mage.page.locator('.quest-panel .quest-entry').count() - 2;
       if (excess <= 0) {
         await expect(mage.page.locator('.event-panel')).toContainText('Your quests meet the limit of 2. Waiting for the other mages');
@@ -994,7 +1056,7 @@ async function receiveQuests(mages: Mage[], info: TestInfo) {
       await expect(confirm).toHaveText(`Discard excess quests (0/${excess})`);
       await expect(confirm).toBeDisabled();
       for (const page of pages) {
-        await expect(page.locator('.phase-track .current span')).toHaveText('Black Rose');
+        await expect(page.locator('.phase-track .current span')).toHaveText('(not) Black Rose');
         await expect(page.getByRole('heading', { name: 'Schools of magic', exact: true })).toHaveCount(0);
         await expect(page.getByRole('button', { name: /^Receive quests & begin Study/ })).toHaveCount(0);
       }
@@ -1122,7 +1184,7 @@ test('pending Explore and Attack menus resolve either order, skip safely, and at
 
     await test.step('Meet in round two, keeping enemy summons adjacent rather than in the attack list', async () => {
       await a.getByRole('button', { name: /^Begin round 2/ }).click();
-      await expectPhase(pages, 'Black Rose');
+      await expectPhase(pages, '(not) Black Rose');
       await receiveQuests(mages, testInfo);
       await studyAndPrepare(pages);
       await beginPhysical(ember, pages, 'EXPLORE', 1);
@@ -1216,7 +1278,7 @@ test('two Explores hand off with spells uncast; spell highlights and powerful du
     await expectActions(ember, 2);
     await expect(power).toBeDisabled();
     await expect(power).toContainText('Prepare in a later round');
-    await expect(a.locator('.powerful-panel')).toContainText('Held powers cannot be cast from hand');
+    await expect(a.locator('.powerful-panel')).toContainText('Held forgotten spells cannot be cast from hand');
     const powerName = (await power.locator('strong').textContent())!;
     await castPrepared(ember, pages, a.locator('.prepared .spell').filter({ hasText: /^Spell 1 ·/ }));
     await endTurn(ember, mages);
@@ -1226,7 +1288,7 @@ test('two Explores hand off with spells uncast; spell highlights and powerful du
     await expectPhase(pages, 'Cleanup');
     await expect(power).toBeDisabled();
     await a.getByRole('button', { name: /^Begin round 2/ }).click();
-    await expectPhase(pages, 'Black Rose');
+    await expectPhase(pages, '(not) Black Rose');
     await receiveQuests(mages, testInfo);
     await studyCards(pages);
     await prepareCards(pages, true);
@@ -1234,7 +1296,7 @@ test('two Explores hand off with spells uncast; spell highlights and powerful du
     await expect(preparedPower.locator('strong')).toHaveText(powerName);
     await expect(preparedPower).toBeEnabled();
     await expect(preparedPower).toContainText('1 action to cast');
-    const model = (await preparedPower.locator('.eyebrow').textContent())!.endsWith(' · Model');
+    const model = /·\s*Model\b/.test((await preparedPower.locator('.eyebrow').textContent())!);
     await preparedPower.click();
     if (model) await a.getByRole('button', { name: 'Target dummy · no damage', exact: true }).click();
     await expect(a.locator('g.hex.reachable')).toHaveCount(13);
@@ -1271,7 +1333,7 @@ test('discard exit, flexible and numbered spells each use one turn action withou
       await expectActing(pages, mage);
       await expectActions(mage, 2);
       await expect(mage.page.locator('.actions-panel .notice')).toContainText('1 turn action and no physical token');
-      await mage.page.getByLabel('Card to discard for exit').selectOption({ index: 4 });
+      await discardThirdPreparation(mage.page);
       mage.coordinates = index ? '-2,2' : '2,-2';
       await hex(mage.page, mage.coordinates, true).click();
       await expectMageAt(pages, mage, mage.coordinates);
@@ -1325,7 +1387,7 @@ async function observePendingFieldsets(page: Page) {
   });
 }
 
-test('three real rounds retain draws into the hand limit and enforce reachable Amber quest overflow', async ({ browser }, testInfo) => {
+test('three real rounds retain finite personal draws without initial overflow and enforce reachable Amber quest overflow', async ({ browser }, testInfo) => {
   test.setTimeout(180_000);
   await withMages(browser, testInfo, 'Limits', async mages => {
     const [ember, moon] = mages, [a, b] = mages.map(mage => mage.page), pages = [a, b];
@@ -1346,16 +1408,19 @@ test('three real rounds retain draws into the hand limit and enforce reachable A
         await skipEffects(moon, pages);
         return;
       }
+      await selectControlTab(b, 'More');
       const before = await b.locator('.quest-entry').count();
+      await selectControlTab(b, 'Actions');
       await roomButton(b).click();
+      await selectControlTab(b, 'More');
       await expect.poll(() => b.locator('.quest-entry').count()).toBeGreaterThan(before);
       await expectPhysicalLock(moon, pages, 'ATTACK');
       await skipEffects(moon, pages);
     }
 
     await test.step('Round one retains two Violet draws and gathers real additional Amber quests', async () => {
-      // The third numbered spell is a school card; the first two personal spells will seed Azure's discard.
-      await a.getByLabel('Card to discard for exit').selectOption({ index: 4 });
+      // Exit with slot 3, not a held card. The sole starter discard stays personal.
+      await discardThirdPreparation(a);
       await hex(a, '2,-2', true).click();
       ember.coordinates = '2,-2';
       await expectMageAt(pages, ember, ember.coordinates);
@@ -1375,25 +1440,32 @@ test('three real rounds retain draws into the hand limit and enforce reachable A
       await beginPhysical(ember, pages, 'EXPLORE', 0);
       await roomButton(a).click();
       await move(ember, pages, []);
+      await selectControlTab(a, 'More');
       await expect(a.locator('.reference')).toContainText('Hand 2/7');
       await drainSpells(mages, 7, 'Cleanup');
       await expectPhase(pages, 'Cleanup');
     });
 
-    await test.step('Round two holds school cards, draws in Violet and retrieves in Azure', async () => {
+    await test.step('Round two holds school cards, retrieves the starter discard in Azure, then exhausts its finite supply', async () => {
       await a.getByRole('button', { name: /^Begin round 2/ }).click();
-      await expectPhase(pages, 'Black Rose');
+      await expectPhase(pages, '(not) Black Rose');
       questDiscards += await receiveQuests(mages, testInfo);
       await studyAndPrepare(pages);
+      await selectControlTab(a, 'More');
       await expect(a.locator('.reference')).toContainText('Hand 2/7');
       await beginPhysical(ember, pages, 'EXPLORE', 1);
-      await roomButton(a).click();
       await move(ember, pages, ['0,0', '0,1']);
+      await roomButton(a).click();
       await expect(a.locator('.physical-effects')).toHaveCount(0);
+      // Keep positive Azure retrieval coverage: take the sole public starter
+      // discard before a second activation proves the empty supply is a no-op.
+      await selectControlTab(a, 'More');
+      await expect(a.locator('.reference')).toContainText('Grimoire 0 · Hand 3/7 · Personal discard 0');
       await beginPhysical(ember, pages, 'EXPLORE', 0);
       await roomButton(a).click();
       await move(ember, pages, []);
-      await expect(a.locator('.reference')).toContainText(/Hand [45]\/7/);
+      await selectControlTab(a, 'More');
+      await expect(a.locator('.reference')).toContainText('Grimoire 0 · Hand 3/7 · Personal discard 0');
       await expectActing(pages, moon);
       await amberQuests(1);
       await amberQuests(0);
@@ -1401,51 +1473,35 @@ test('three real rounds retain draws into the hand limit and enforce reachable A
       await expectPhase(pages, 'Cleanup');
     });
 
-    await test.step('Round three gates Preparation, selects exactly the excess, and sends school cards to personal discard', async () => {
+    await test.step('Round three retains all five finite cards and waits for every mage to prepare', async () => {
       await a.getByRole('button', { name: /^Begin round 3/ }).click();
-      await expectPhase(pages, 'Black Rose');
+      await expectPhase(pages, '(not) Black Rose');
       questDiscards += await receiveQuests(mages, testInfo);
       await studyCards(pages);
-      const panel = a.locator('.hand-limit-panel'), cards = panel.locator('.spell');
-      await expect(panel.getByRole('heading', { name: 'Reduce your hand to 7 cards', exact: true })).toBeVisible();
-      await expect(a.getByRole('button', { name: 'Prepare spells', exact: true })).toHaveCount(0);
-      const count = await cards.count(), excess = count - 7;
-      expect(excess).toBeGreaterThan(0);
-      expect(excess, 'At most two old school cards are carried in this route').toBeLessThanOrEqual(2);
-      const confirm = panel.getByRole('button', { name: /^Discard excess cards/ });
-      await expect(confirm).toHaveText(`Discard excess cards (0/${excess})`);
-      await expect(confirm).toBeDisabled();
-      await expect(panel.locator('.spell:disabled')).toHaveCount(0);
-      const names = await cards.locator('strong').allTextContents();
-      const discardBefore = Number((await a.locator('.reference > .hint').textContent())!.match(/Personal discard (\d+)/)![1]);
-      for (let index = 0; index < excess; index++) await cards.nth(index).click();
-      await cards.nth(excess).click();
-      await expect(panel.locator('.spell.chosen')).toHaveCount(excess);
-      await expect(confirm).toHaveText(`Discard excess cards (${excess}/${excess})`);
-      await cards.first().click();
-      await expect(confirm).toBeDisabled();
-      await cards.first().click();
-      await capture(a, testInfo, 'round-three-hand-overflow-selected');
-      // The other mage may prepare, but Action must wait for this mage's limit and slots.
+      await expect(a.locator('.hand-limit-panel')).toHaveCount(0);
+      await expect(a.getByRole('heading', { name: 'Three ordered spells. One wild card.', exact: true })).toBeVisible();
+      await expect(a.locator('.phase-panel .spell')).toHaveCount(5);
+      await selectControlTab(a, 'More');
+      await expect(a.locator('.reference > .hint')).toContainText('Grimoire 0 · Hand 5/7 · Personal discard 0');
+      // Exact hand-limit selection/routing is exercised by conserving fixtures
+      // in rule-polish; this real path must not manufacture starting overflow.
+      await resolveHandLimit(b);
       for (let index = 0; index < 4; index++) await b.locator('.phase-panel .spell').nth(index).click();
       await b.getByRole('button', { name: 'Prepare spells', exact: true }).click();
       for (const page of pages) await expect(page.locator('.phase-track .current span')).toHaveText('Preparation');
-      await confirm.click();
-      await expect(panel).toHaveCount(0);
-      await expect(a.getByRole('heading', { name: 'Three ordered spells. One wild card.', exact: true })).toBeVisible();
-      await expect(a.locator('.phase-panel .spell')).toHaveCount(7);
-      await expect(a.locator('.phase-panel .spell strong')).toHaveText(names.slice(excess));
-      await expect(a.locator('.reference > .hint')).toContainText(`Personal discard ${discardBefore + excess}`);
-      await expect(a.locator('.reference > .hint')).toContainText('Hand 7/7');
-      await capture(a, testInfo, 'round-three-hand-limit-resolved');
+      await capture(a, testInfo, 'round-three-finite-hand');
       await prepareCards([a]);
       await expectPhase(pages, 'Action');
+      await selectControlTab(a, 'More');
+      await expect(a.locator('.reference > .hint')).toContainText('Hand 1/7');
       await expectAttributes(pages);
       for (const handle of fieldsets) {
         expect((await handle.jsonValue()).length, 'Real requests must disable their containing fieldset while pending').toBeGreaterThan(0);
         await handle.dispose();
       }
-      const coverage = { roundsReached: 3, handDiscards: excess, schoolCardsToPersonalDiscard: excess, questDiscards, spentAmberSpecialSkips };
+      const coverage = { roundsReached: 3, retainedCardsBeforePreparation: 5, initialHandOverflow: false,
+        finitePersonalSupplyExhausted: true, azureRetrievals: 1, emptyAzureActivations: 1,
+        questDiscards, spentAmberSpecialSkips };
       await testInfo.attach('limits-coverage', { body: JSON.stringify(coverage, null, 2), contentType: 'application/json' });
       testInfo.annotations.push({ type: 'coverage', description: JSON.stringify(coverage) });
       if (!questDiscards) testInfo.annotations.push({ type: 'gap', description: 'Amber quests completed before Black Rose; no random quest overflow occurred. No state was injected.' });
@@ -1464,12 +1520,12 @@ test('three real rounds retain draws into the hand limit and enforce reachable A
       const standings = await a.locator('.player-heading > b').allTextContents();
       expect(standings).toHaveLength(3);
       const scores = standings.map(score => Number(score.match(/\d+/)![0]));
-      const names = [ember.name, moon.name, 'Black Rose'];
+      const names = [ember.name, moon.name, '(not) Black Rose'];
       const winner = names[scores.indexOf(Math.max(...scores))];
       for (const page of pages) {
         await expect(page.locator('.header-meta')).toContainText('Round 3');
         await expect(page.locator('.victory h2')).toHaveText(`♛ ${winner} wins`);
-        await expect(page.locator('.victory')).toContainText('Black Rose:');
+        await expect(page.locator('.victory')).toContainText('(not) Black Rose:');
         await expect(page.locator('.victory')).toContainText('Final majorities and first-player bonus included.');
         await expect(page.locator('.player-heading > b')).toHaveText(standings);
         await expect(page.getByRole('button', { name: /^Begin round 4/ })).toHaveCount(0);

@@ -32,8 +32,9 @@ function conservation(g:GameState) {
   expect(p.cubes.available+p.cubes.onWizard+p.cubes.onBoard+p.cubes.onEvocations).toBe(25);
   expect(Object.values(p.cubes).every(n=>n>=0)).toBe(true);
  }
- const cards=[...g.powerfulDeck,...g.removedCards,...g.library.flatMap(d=>[...d.cards,...d.discard]),...g.players.flatMap(p=>[...p.hand,...p.personalDeck,...p.discard,...Object.values(p.prepared).filter(c=>c&&!c.used).map(c=>c!.card)])];
- expect(cards).toHaveLength(72+12*g.players.length+12);expect(new Set(cards.map(c=>c.id)).size).toBe(cards.length);
+ const cards=[...g.powerfulDeck,...g.removedCards,...g.library.flatMap(d=>[...d.cards,...d.discard]),...[...g.readiedSpells??[],...g.ongoingSpells??[]].map(a=>a.card),...g.players.flatMap(p=>[...p.hand,...p.personalDeck,...p.discard,...Object.values(p.prepared).filter(c=>c&&!c.used).map(c=>c!.card)])];
+ expect(cards).toHaveLength(120);expect(new Set(cards.map(c=>c.id)).size).toBe(120);
+ expect(cards.filter(c=>!c.powerful)).toHaveLength(108);expect(cards.filter(c=>c.powerful)).toHaveLength(12);
 }
 function neutralDefeat(contributions:Record<string,number>,blackDamage:number) {
  const g=actionFixture(),victim=player(g,'p4');
@@ -50,8 +51,16 @@ describe('public authoritative schema and history boundary',()=>{
  it('initializes scoring state and captures the first seated mage when START_GAME succeeds',()=>{
   let g=createGame(3);expect(g.blackRose).toEqual({victoryPoints:0,kills:0});expect(g.firstPlayerId).toBeNull();expect(g.endgameScored).toBe(false);
   expect(g.history).toBeUndefined();expect(BLACK_ROSE_ID).toBe('black-rose');expect(ENDGAME_REWARDS).toEqual([4,2,1]);
-  for(const p of g.players){p.connected=true;p.ready=true;}
+  for(const p of g.players){expect(p.hand).toEqual([]);expect(p.personalDeck).toEqual([]);expect(p.discard).toEqual([]);}
+  conservation(g);const startingCards=g.library[0].cards.slice(0,21);
+  for(const p of g.players)p.connected=true;
+  for(const p of g.players){g=applyAction(g,{type:'SELECT_STARTING_SCHOOL',playerId:p.id,schoolId:'cantrip'});g=applyAction(g,{type:'SET_READY',playerId:p.id,ready:true});}
   g.hostId='p2';g=applyAction(g,{type:'START_GAME',playerId:'p2'});expect(g.firstPlayerId).toBe('p1');
+  for(const [i,p] of g.players.entries()) {
+   expect(p.hand).toEqual([]);expect(p.personalDeck).toEqual(startingCards.slice(i*7,i*7+6));expect(p.discard).toEqual([startingCards[i*7+6]]);
+   expect([...p.personalDeck,...p.discard].every(c=>c.schoolId==='cantrip')).toBe(true);
+  }
+  expect(g.library[0].cards).toHaveLength(15);expect(g.library[0].discard).toEqual([]);
   conservation(g);
  });
  it('exposes only per-viewer history flags/labels, not snapshots or snapshot-bearing commands',()=>{
@@ -172,14 +181,16 @@ describe('room completion and Cleanup reconstruction',()=>{
   let g=createGame(2);const [full,almost]=g.board.rooms.filter(r=>r.color==='crimson');
   for(const r of g.board.rooms)if(!r.startingFor&&r.id!==full.id&&r.id!==almost.id){r.reconstructed=true;r.scored=true;}
   placeLedger(g,full,{[BLACK_ROSE_ID]:full.instabilityLimit});placeLedger(g,almost,{[BLACK_ROSE_ID]:almost.instabilityLimit-1});
-  for(const p of g.players){p.connected=true;p.ready=true;}
+  for(const p of g.players)p.connected=true;
+  for(const p of g.players){g=applyAction(g,{type:'SELECT_STARTING_SCHOOL',playerId:p.id,schoolId:'cantrip'});g=applyAction(g,{type:'SET_READY',playerId:p.id,ready:true});}
   g.eventDeck=[{id:'event-fill',name:'Fill',description:'Instability',kind:'INSTABILITY',amount:3,rooms:99}];
   g=applyAction(g,{type:'START_GAME',playerId:'p1'});
   expect(room(g,full.id)).toMatchObject({reconstructed:false,scored:false,instability:full.instabilityLimit});
   expect(room(g,almost.id)).toMatchObject({reconstructed:false,scored:false,instability:almost.instabilityLimit});
   expect(g.log.filter(l=>l.includes('places 1 instability'))).toHaveLength(1);expect(g.blackRose.victoryPoints).toBe(0);
   // Isolate the phase boundary; all event-filled rooms still await real Cleanup settlement.
-  g.phase='ACTION';g.currentPlayerId='p1';g.activation=actionFixture().activation;for(const p of g.players)p.actionTokens=0;
+  g.phase='ACTION';g.currentPlayerId='p1';g.activation=actionFixture().activation;
+  for(const p of g.players){p.actionTokens=0;p.wizard.position={q:0,r:0};}
   g=settle(g);expect(g.blackRose.victoryPoints).toBe(full.rewards[0]+almost.rewards[0]);
   expect(g.players.every(p=>p.victoryPoints===0)).toBe(true);conservation(g);
  });

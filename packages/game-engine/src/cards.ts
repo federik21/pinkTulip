@@ -1,4 +1,8 @@
-import { Card, EventCard, LibraryDeck, Quest } from './types';
+import { Card, EventCard, LibraryDeck, Quest, SpellType } from './types';
+
+export function getSpellType(card:Card):SpellType {
+ return card.spellType ?? (card.damage>0 || card.instability>0 || (card.convert??0)>0 ? 'COMBAT' : 'CONTINGENCY');
+}
 
 export const shuffle = <T>(items: T[]): T[] => {
  const result = [...items];
@@ -46,10 +50,53 @@ export function createTransmutationDeck(): Card[] {
  return Array.from({ length: 36 }, (_, i) => ({ ...patterns[i % patterns.length], id: `transmutation-${i + 1}`, kind: 'SPELL', schoolId: 'transmutation' }));
 }
 
+export function createEnchantmentDeck(): Card[] {
+ const patterns: Omit<Card, 'id' | 'kind' | 'schoolId'>[] = [
+  { name:'Threshold Snare', spellType:'TRAP', target:'ROOM', damage:0, instability:0, range:2,
+  rulesText:'Activate secretly in a room within range 2. When an enemy enters it, reveal and deal 2 damage to that model.',
+   trigger:{event:'ENTER_ROOM',relation:'ENEMY',scope:'BOUND_ROOM'}, triggerEffects:[{effect:'DAMAGE',amount:2,target:'EVENT_MODEL'}] },
+  { name:'Spell Leech', spellType:'TRAP', target:'ROOM', damage:0, instability:0, range:2,
+  rulesText:'Activate secretly in a room within range 2. When an enemy casts there, reveal and deal 2 damage to the caster before its printed effects.',
+   trigger:{event:'SPELL_CAST',relation:'ENEMY',scope:'BOUND_ROOM'}, triggerEffects:[{effect:'DAMAGE',amount:2,target:'EVENT_ACTOR'}] },
+  { name:'Thorn Retort', spellType:'PROTECTION', target:'SELF', damage:0, instability:0, range:0,
+  rulesText:'Activate secretly on yourself. After enemy damage, reveal, heal 1 wound, then deal 1 damage to the attacking model.',
+   trigger:{event:'DAMAGE_TAKEN',relation:'ENEMY',scope:'BOUND_MODEL'}, triggerEffects:[{effect:'HEAL',amount:1,target:'BOUND_MODEL'},{effect:'DAMAGE',amount:1,target:'EVENT_ACTOR'}] },
+  { name:'Mending Ward', spellType:'PROTECTION', target:'MAGE', damage:0, instability:0, range:2,
+  rulesText:'Activate secretly on any mage within range 2. After it takes damage, reveal and heal 2 wounds. Defeated models cannot be healed.',
+   trigger:{event:'DAMAGE_TAKEN',relation:'ANY',scope:'BOUND_MODEL'}, triggerEffects:[{effect:'HEAL',amount:2,target:'BOUND_MODEL'}] },
+  { name:"Servant's Safeguard", spellType:'PROTECTION', target:'EVOCATION', damage:0, instability:0, range:3,
+  rulesText:'Activate secretly on any evocation within range 3. After it takes damage, reveal and heal 2 wounds. Destroyed models cannot be healed.',
+   trigger:{event:'DAMAGE_TAKEN',relation:'ANY',scope:'BOUND_MODEL'}, triggerEffects:[{effect:'HEAL',amount:2,target:'BOUND_MODEL'}] },
+  { name:'Hearth Ward', spellType:'PROTECTION', target:'ROOM', damage:0, instability:0, range:2,
+  rulesText:'Activate secretly in a room within range 2. When an enemy activates it, reveal and heal your mage 2 wounds before the room reward.',
+   trigger:{event:'ROOM_ACTIVATED',relation:'ENEMY',scope:'BOUND_ROOM'}, triggerEffects:[{effect:'HEAL',amount:2,target:'OWNER'}] },
+  { name:'Tripwire', spellType:'TRAP', target:'ROOM', damage:0, instability:0, range:2,
+  rulesText:'Activate secretly in a room within range 2. When an enemy evocation activates there, reveal and deal 1 damage to it.',
+   trigger:{event:'EVOCATION_ACTIVATED',relation:'ENEMY',scope:'BOUND_ROOM'}, triggerEffects:[{effect:'DAMAGE',amount:1,target:'EVENT_MODEL'}] },
+  { name:'Cinder Seal', spellType:'TRAP', target:'ROOM', damage:0, instability:0, range:2,
+  rulesText:'Activate secretly in a room within range 2. When an enemy activates it, reveal and place 2 instability there before its reward.',
+   trigger:{event:'ROOM_ACTIVATED',relation:'ENEMY',scope:'BOUND_ROOM'}, triggerEffects:[{effect:'INSTABILITY',amount:2,target:'BOUND_ROOM'}] },
+  { name:"Pilgrim's Mark", spellType:'CONTINGENCY', target:'SELF', damage:0, instability:0, range:0,
+   rulesText:'Bind to yourself. Whenever you enter a different room, convert 1 of its live instability cubes to your color.',
+   ongoing:{trigger:{event:'ENTER_ROOM',relation:'ANY',scope:'BOUND_MODEL'},effects:[{effect:'CONVERT',amount:1,target:'EVENT_ROOM'}]} },
+  { name:'Thorned Path', spellType:'COMBAT', target:'MAGE', damage:0, instability:0, convert:1, range:2,
+   rulesText:'Convert 1 damage cube on any mage within range 2, then remain bound. Whenever it enters a different room, place 1 instability there in your color.',
+   ongoing:{trigger:{event:'ENTER_ROOM',relation:'ANY',scope:'BOUND_MODEL'},effects:[{effect:'INSTABILITY',amount:1,target:'EVENT_ROOM'}]} },
+  { name:'Runic Remedy', spellType:'CONTINGENCY', target:'MAGE', damage:0, instability:0, heal:1, range:2,
+   rulesText:'Heal any mage within range 2 by 1, then remain bound. Whenever that mage activates a room, heal it by 1 before the reward.',
+   ongoing:{trigger:{event:'ROOM_ACTIVATED',relation:'ANY',scope:'BOUND_MODEL'},effects:[{effect:'HEAL',amount:1,target:'BOUND_MODEL'}]} },
+  { name:'Arcane Feedback', spellType:'COMBAT', target:'MAGE', damage:1, instability:0, range:2,
+   rulesText:'Deal 1 damage to an enemy mage within range 2, then remain bound. Whenever it casts, deal 1 damage to it before the printed effects.',
+   ongoing:{trigger:{event:'SPELL_CAST',relation:'ANY',scope:'BOUND_MODEL'},effects:[{effect:'DAMAGE',amount:1,target:'EVENT_ACTOR'}]} },
+ ];
+ return Array.from({length:36},(_,i)=>({...patterns[i%patterns.length],id:`enchantment-${i+1}`,kind:'SPELL',schoolId:'enchantment'}));
+}
+
 export function createLibrary(): LibraryDeck[] {
  return [
   { id: 'cantrip', name: 'Cantrip', cards: shuffle(createSpellDeck('cantrip', 'cantrip')), discard: [] },
   { id: 'transmutation', name: 'Transmutation', cards: shuffle(createTransmutationDeck()), discard: [] },
+  { id: 'enchantment', name: 'Enchantment', cards: shuffle(createEnchantmentDeck()), discard: [] },
  ];
 }
 
@@ -65,8 +112,8 @@ export function createPowerfulDeck(): Card[] {
 
 export function createEvents(): EventCard[] {
  return shuffle(Array.from({ length: 12 }, (_, i) => i % 2 === 0
-  ? { id: `event-${i}`, name: 'The Lodge Trembles', description: 'Place 1–2 Black Rose instability in two random unfinished rooms.', kind: 'INSTABILITY' as const, amount: 1 + (i % 3 === 0 ? 1 : 0), rooms: 2 }
-  : { id: `event-${i}`, name: 'Thorns of the Black Rose', description: 'Every mage suffers black damage. No player receives kill credit.', kind: 'BLACK_DAMAGE' as const, amount: i % 3 === 0 ? 2 : 1, rooms: 0 }));
+  ? { id: `event-${i}`, name: 'The Lodge Trembles', description: 'Place 1–2 (not) Black Rose instability in two random unfinished rooms.', kind: 'INSTABILITY' as const, amount: 1 + (i % 3 === 0 ? 1 : 0), rooms: 2 }
+  : { id: `event-${i}`, name: 'Thorns of the (not) Black Rose', description: 'Every mage suffers black damage. No player receives kill credit.', kind: 'BLACK_DAMAGE' as const, amount: i % 3 === 0 ? 2 : 1, rooms: 0 }));
 }
 
 export function createQuests(): Quest[] {

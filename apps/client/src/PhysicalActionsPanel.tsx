@@ -48,7 +48,7 @@ export function PhysicalActionsPanel({game,me,enabled,pending,exitCardId,setExit
     <button className="skip-effects" disabled={pending} onClick={()=>send({type:'SKIP_PHYSICAL_EFFECTS',playerId:me.id})}>Skip remaining effects</button>
    </div>}
    <button disabled={pending||!!physical||!!active?.exploring||((active?.actionsUsed??0)<1&&!active?.spellsCast&&!active?.discardedExit)} onClick={()=>{setExitCardId('');send({type:'END_ACTIVATION',playerId:me.id});}}>End turn<small>Keep remaining resources</small></button>
-    <p className="hint">2 actions total per turn: physical actions, prepared spell casts, and discard-to-move each count. Physical actions also spend one of your 2 physical tokens for the round. Finish or skip pending effects before the turn hands off. Held powers are saved for a later Preparation and do not keep your Action phase alive.</p>
+    <p className="hint">2 actions total per turn: physical actions, prepared spell casts, and discard-to-move each count. Physical actions also spend one of your 2 physical tokens for the round. Finish or skip pending effects before the turn hands off. Held forgotten spells are saved for a later Preparation and do not keep your Action phase alive.</p>
     {me.cubes.available===0&&<p className="notice">No cubes available: you cannot place room instability. Damage can still wound enemy models without placing a cube.</p>}
   </>}
  </section>;

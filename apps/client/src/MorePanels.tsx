@@ -1,0 +1,31 @@
+import React from 'react';
+import { ENDGAME_REWARDS, GameState, Player, getRoomRewards } from '@brw/game-engine';
+import { ActiveSpellsPanel } from './ActiveSpellsPanel';
+
+export function MorePanels({game,me}:{game:GameState;me:Player}) {
+ return <div className="more-panels">
+  <ActiveSpellsPanel game={game} viewerId={me.id}/>
+  <section className="quest-panel" aria-labelledby="quests-heading"><span className="eyebrow">Your personal quests</span><h2 id="quests-heading">Your personal quests</h2>{[me.quest,...me.additionalQuests].filter((q):q is NonNullable<Player['quest']>=>!!q).map(quest=><div className="quest-entry" key={quest.id}><h3>◇ {quest.name}</h3><p>{quest.description}</p><span className="badge">+{quest.reward} VP on completion</span></div>)}{!me.quest&&<><h3>◇ Awaiting a new purpose</h3><p>You receive a quest at the end of (not) Black Rose if you do not have one, or from an Amber room.</p></>}<p className="hint">{me.questsCompleted} quests completed · {me.kills} mages defeated</p></section>
+  <section className="reference" aria-labelledby="reference-heading"><span className="eyebrow">Quick reference</span><h2 id="reference-heading">Quick reference</h2>
+   <p>Endgame follows Cleanup after <b>round 3</b>, or when a mage or the (not) Black Rose reaches <b>30 VP</b>. Final scores determine the winner; the (not) Black Rose can win. Equal final scores favor mage seating order, then the (not) Black Rose.</p>
+   <p><b>2 actions total per turn.</b> Explore, Attack, each spell cast (including flexible and forgotten), discard-to-move, and paid evocation activation each use one. The turn hands off after the second action finishes.</p>
+   <p><b>2 physical tokens per round.</b> Explore, Attack, and paid evocation activation also use a token. Spells and discard-to-move do not. Resolve a physical action's primary effect and room activation in either order, once each, or skip what remains.</p>
+   <p>Mage attacks deal <b>{me.wizard.attack} damage at distance 0</b>. Explore permits up to <b>{me.wizard.movement} movements</b>. Numbered spells are limited to one per turn, within the shared two-action budget.</p>
+   <p>Before Preparation, discard to <b>{me.cardLimit} cards</b>; excess goes to personal discard. At the end of (not) Black Rose, discard to <b>{me.questLimit} quests</b>.</p>
+   <p><b>Evocations:</b> maximum 3. Activate a <b>Grey room</b> to summon a Cadaver; tokens activate existing models, never directly summon. Every model activates once after Action; token activations during Action are extra. Move between adjacent spaces, then attack one enemy model in the <b>same room</b>, never a neighboring room.</p>
+   <p><b>Room effects:</b> once within Explore or Attack. Starting rooms cannot be activated. Full rooms immediately reject cubes, but only rebuild at Cleanup: score once, return cubes once, unlock the <b>double special</b>. Rebuilt specials are usable once per Action phase and refresh at Cleanup.</p>
+   <p><b>Capacity → rank rewards:</b>{[4,5,6,10].map(capacity=><React.Fragment key={capacity}><br/>{capacity} cubes · {getRoomRewards(capacity).join(' / ')} VP{capacity===4?' · Violet (3 rooms)':capacity===5?' · ordinary (12 rooms)':capacity===6?' · Grey (3 rooms)':' · central chamber'}</React.Fragment>)}</p>
+   <p>Damage places your available cubes on enemy models. On mage defeat, contributors score <b>4 / 2 / 1 VP</b> and recover their cubes. Destroyed evocations return their cubes without VP.</p>
+   <p><b>Dense ranks:</b> positive contributions share ranks when tied; the next different total takes the next rank (1, 1, 2). A tied positive reward is reduced by <b>1 VP, minimum 1</b>. Zero prizes and ranks beyond the reward table stay zero. (not) Black Rose cubes and black damage compete for room and defeat rewards.</p>
+   <p><b>Endgame:</b> positive kills and completed-quest majorities each award <b>{ENDGAME_REWARDS.join(' / ')} VP</b>, with the same dense-rank tie rule. (not) Black Rose competes for kills, not quests. The first-player token grants <b>+1 VP</b>. Bonuses are scored once.</p>
+   <p><b>One-color bonus:</b> gain <b>+1 VP</b> if all cubes in a room are yours when it is completed, or all damage cubes on a mage are yours when they are defeated. (not) Black Rose cubes, black damage and unattributed wounds prevent a mage’s one-color bonus.</p>
+   <p>Normal school discards return to their school; forced hand-limit discards are the exception.</p>
+   <p><b>Transmutation:</b> 12 spells, 3 copies each. <b>Heal</b> removes wounds and returns their cubes to their owners. A room heal affects every mage and evocation there. <b>Convert</b> swaps other-colored damage cubes on a model, or instability cubes in a room, for your available cubes without changing the total. Rebuilt room history cannot be converted.</p>
+   <p><b>Spell targets:</b> Self = only your mage; Mage = one mage; Evocation = one evocation; Model = either; Room = the room and all models there. Support may target friendly models. Your mage and evocations are immune to damage from your own spells, room effects, and controlled models.</p>
+   <p><b>Spell glossary:</b> uncast cards are <b>Ready</b>. A Trap or Protection becomes <b>Active</b> when you activate it face down; it reveals only when its condition triggers. Combat and Contingency are thematic spell types. Conditions interrupt between instructions, resolve in turn order, and can cause nested reactions.</p>
+   <p><b>Forgotten spells:</b> obtain these in the central room and save them for a later Preparation, never cast directly from hand. Prepared forgotten spells cost one turn action and are permanently removed on casting; unused preparations return to hand next round. Held forgotten spells do not keep Action alive.</p>
+   <p><b>Cube supply:</b> with zero available cubes you cannot place room instability, but attacks and spells can still wound. Damage bars count received damage, including neutral black damage and separately labeled unattributed wounds, not remaining health.</p>
+   <p className="hint">Grimoire {me.personalDeck.length} · Hand {me.hand.length}/{me.cardLimit} · Personal discard {me.discard.length}</p>
+  </section>
+ </div>;
+}

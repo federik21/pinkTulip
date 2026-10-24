@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
 import { areInSameRoom, canUseSpellDummy, isWithinSpellRange, spellCanTargetModel } from '../packages/game-engine/src/engine';
-import type { Card, GameAction, GameState, Hex, Player } from '../packages/game-engine/src/types';
+import type { ActiveSpell, Card, GameAction, GameState, Hex, Player } from '../packages/game-engine/src/types';
 
 // Real isolated server/clients: no engine fixtures, state mutation or test-only actions.
 const server = spawn(process.execPath, ['--import', 'tsx', 'apps/server/src/index.ts'], {
@@ -15,6 +15,10 @@ type Message = { type: string; state?: GameState; message?: string; requestId?: 
 type WireAction = GameAction | { type: 'SUMMON_EVOCATION'; playerId: string };
 const ids = ['p1', 'p2'] as const;
 const slots = ['slot1', 'slot2', 'slot3', 'rapid'] as const;
+const hiddenCard = (index: number): Card => ({
+ id: `hidden-${index}`, name: 'Hidden spell', kind: 'SPELL', damage: 0,
+ instability: 0, range: 0, target: 'MODEL',
+});
 const player = (s: GameState, id: string) => {
  const p = s.players.find(p => p.id === id); assert.ok(p); return p;
 };
@@ -33,25 +37,41 @@ function epochKey(s: GameState) {
   const { hand, personalDeck, prepared, quest, additionalQuests, ...publicPlayer } = p;
   return { ...publicPlayer, hand: hand.length, personalDeck: personalDeck.length,
    prepared: slots.map(slot => prepared[slot] ? { used: prepared[slot]!.used } : null) };
- }) });
+ }), readiedSpells: s.readiedSpells?.map(({ id, playerId }) => ({ id, playerId })) });
 }
 
-function checkCardSupply(state: GameState, owners: Player[]) {
+function checkCardSupply(state: GameState, owners: Player[], readied: ActiveSpell[]) {
  assert.equal(owners.length, state.players.length, 'Combine only each mage’s own view at the same epoch');
- // Used preparations reference discarded/removed cards, not additional physical copies.
+ assert.deepEqual(owners.map(p => p.id).sort(), state.players.map(p => p.id).sort());
+ assert.equal(readied.length, state.readiedSpells?.length ?? 0);
+ for (const active of state.readiedSpells ?? [])
+  assert.equal(readied.filter(a => a.id === active.id && a.playerId === active.playerId).length, 1, 'Collect each private readiness from its owner exactly once');
+ const active = [...readied, ...state.ongoingSpells ?? []];
+ assert.equal(new Set(active.map(a => a.id)).size, active.length, 'Active instance IDs are unique across both zones');
+ assert.deepEqual([...(state.activeSpellOrder ?? [])].sort(), active.map(a => a.id).sort(), 'Chronology contains each active instance exactly once');
+ for (const instance of active) {
+  assert.match(instance.id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  assert.notEqual(instance.id, instance.card.id, 'Instance UUIDs are not physical card IDs');
+  assert.ok(owners.some(p => p.id === instance.playerId));
+ }
+ // Used preparations reference discarded/removed/active cards, not additional physical copies.
  const visible = [...state.library.flatMap(deck => deck.discard), ...state.removedCards,
+  ...active.map(instance => instance.card),
   ...owners.flatMap(p => [...p.hand, ...p.discard, ...Object.values(p.prepared)
    .filter(slot => slot && !slot.used).map(slot => slot!.card)])];
  assert.ok(visible.every(card => !card.id.startsWith('hidden-')));
  assert.equal(new Set(visible.map(card => card.id)).size, visible.length, 'All observable physical cards have globally unique IDs');
  const shared = visible.filter(card => card.schoolId);
  assert.ok(shared.every(card => state.library.some(deck => deck.id === card.schoolId) && !card.powerful && card.id.startsWith(`${card.schoolId}-`)));
- for (const deck of state.library)
-  assert.equal(deck.cards.length + shared.filter(card => card.schoolId === deck.id).length, 36, `${deck.name} conserves its own 36 cards`);
- // Hidden future IDs deliberately cannot be compared across private wire views.
- assert.equal(state.library.reduce((sum, deck) => sum + deck.cards.length, 0) + shared.length, 72);
+ const hiddenPersonal = state.players.reduce((sum, p) => sum + p.personalDeck.length, 0);
+ const unobservedSchool = state.library.map(deck => 36 - deck.cards.length - shared.filter(card => card.schoolId === deck.id).length);
+ assert.ok(unobservedSchool.every(n => n >= 0 && n <= hiddenPersonal), 'Each school has exactly 36 physical cards, including masked personal future draws');
+ // Deck identities stay masked even to owners, so do not invent their origins.
+ const unobservedPower = 12 - state.powerfulDeck.length - visible.filter(card => card.powerful).length;
+ assert.ok(unobservedPower >= 0);
+ assert.equal(unobservedSchool.reduce((sum, n) => sum + n, 0) + unobservedPower, hiddenPersonal);
  assert.equal(state.library.reduce((sum, deck) => sum + deck.cards.length, 0) + state.powerfulDeck.length +
-  state.players.reduce((sum, p) => sum + p.personalDeck.length, 0) + visible.length, 72 + 12 * state.players.length + 12);
+  hiddenPersonal + visible.length, 120);
 }
 
 class Mage {
@@ -154,7 +174,7 @@ function checkSettlement(before: GameState, after: GameState) {
  const cleanupIndex = appended.findIndex(line => line.startsWith('CLEANUP —'));
  assert.ok(cleanupIndex >= 0);
  for (const line of appended.slice(0, cleanupIndex)) {
-  for (const competitor of [...before.players, { id: 'black-rose', name: 'Black Rose' }]) {
+  for (const competitor of [...before.players, { id: 'black-rose', name: '(not) Black Rose' }]) {
    if (!line.startsWith(`${competitor.name}: +`) && !line.startsWith(`${competitor.name} completes `)) continue;
    const reward = line.match(/\+(\d+) VP/);
    if (reward) scores[competitor.id] += Number(reward[1]);
@@ -177,7 +197,7 @@ function checkSettlement(before: GameState, after: GameState) {
   ]) for (const { id, points } of awards(counts, [4, 2, 1])) scores[id] += points;
   assert.ok(before.firstPlayerId); scores[before.firstPlayerId]++;
   const winner = [...before.players.map(p => p.id), 'black-rose'].sort((a, b) => scores[b] - scores[a])[0];
-  assert.equal(after.winner, winner, 'Final standings include Black Rose and stable seating-order ties');
+  assert.equal(after.winner, winner, 'Final standings include (not) Black Rose and stable seating-order ties');
  } else assert.equal(after.endgameScored, false);
  assert.deepEqual(Object.fromEntries([...after.players.map(p => [p.id, p.victoryPoints]), ['black-rose', after.blackRose.victoryPoints]]), scores);
 }
@@ -218,18 +238,25 @@ async function main() {
     const sameTurn = (before: GameState, id: string) => epoch.phase === 'ACTION' && epoch.currentPlayerId === id &&
     !epoch.log.slice(before.log.length).some(line => line.includes(' takes a turn: '));
   async function privacy() {
-   const owners: Player[] = [];
-   const hidden = (cards: Card[]) => cards.forEach((card, index) => assert.deepEqual(card, {
-    id: `hidden-${index}`, name: 'Hidden spell', kind: 'SPELL', damage: 0,
-    instability: 0, range: 0, target: 'MODEL',
-   }));
+    const owners: Player[] = [], readied: ActiveSpell[] = [];
+    const hidden = (cards: Card[]) => cards.forEach((card, index) => assert.deepEqual(card, hiddenCard(index)));
    for (const { id, connected } of epoch.players) {
     if (!connected) continue;
     const own = await client(id).sync(epoch);
     owners.push(player(own, id));
+    readied.push(...(own.readiedSpells ?? []).filter(active => active.playerId === id));
     assert.equal(epochKey(own), epochKey(epoch));
     assert.ok(own.history && typeof own.history.canUndo === 'boolean' && typeof own.history.canRedo === 'boolean');
     assert.ok(Object.keys(own.history).every(key => ['canUndo', 'canRedo', 'undoLabel', 'redoLabel'].includes(key)), 'History exposes availability only, never snapshots');
+    for (const [index, active] of (own.readiedSpells ?? []).entries()) {
+     if (active.playerId === id) assert.ok(!active.card.id.startsWith('hidden-'), 'Own readiness remains fully visible');
+     else assert.deepEqual(active, { id: active.id, playerId: active.playerId, card: hiddenCard(index) },
+      'Mask the entire opponent instance, including every binding and trigger');
+    }
+    assert.deepEqual(own.ongoingSpells, epoch.ongoingSpells);
+    assert.deepEqual(own.activeSpellOrder, epoch.activeSpellOrder);
+    for (const active of own.ongoingSpells ?? [])
+     assert.ok(!active.card.id.startsWith('hidden-') && active.card.ongoing, 'Ongoing cards and bindings remain public');
     for (const other of own.players.filter(p => p.id !== id)) {
      assert.equal(other.quest, null); assert.deepEqual(other.additionalQuests, []);
      assert.ok(other.hand.every(c => c.name === 'Hidden spell' && !c.schoolId && !c.powerful));
@@ -237,10 +264,15 @@ async function main() {
      hidden(other.hand);
      for (const prepared of Object.values(other.prepared)) if (prepared) hidden([prepared.card]);
     }
-    for (const p of own.players) hidden(p.personalDeck);
+    for (const p of own.players) {
+     hidden(p.personalDeck);
+     assert.deepEqual(p.discard, player(epoch, p.id).discard, 'Personal discard is public to both real sockets');
+     assert.ok(p.discard.every(card => !card.id.startsWith('hidden-')));
+    }
     assert.deepEqual(own.eventDeck, []); assert.deepEqual(own.questDeck, []);
     assert.deepEqual(own.library.map(({ id, name }) => ({ id, name })), [
      { id: 'cantrip', name: 'Cantrip' }, { id: 'transmutation', name: 'Transmutation' },
+      { id: 'enchantment', name: 'Enchantment' },
     ]);
     for (const deck of own.library) {
      assert.ok(deck.cards.length + deck.discard.length <= 36);
@@ -248,7 +280,7 @@ async function main() {
     }
     hidden(own.powerfulDeck);
    }
-   checkCardSupply(epoch, owners);
+  checkCardSupply(epoch, owners, readied);
   }
   const command = async (mage: Mage, action: WireAction, error?: RegExp): Promise<GameState> => {
     await mage.sync(epoch); const before = epoch;
@@ -392,22 +424,35 @@ async function main() {
    await activateRoom(id); return true;
   };
   assert.equal(epoch.phase, 'LOBBY'); assert.deepEqual(epoch.evocations, []);
+  assert.ok(epoch.players.every(p => p.hand.length === 0 && p.personalDeck.length === 0 && p.discard.length === 0));
   assert.deepEqual(epoch.players.map(p => p.id), ['p1'], 'Creating a room must not invent an unjoined second mage');
   for (const deck of epoch.library) { assert.equal(deck.cards.length, 36); assert.deepEqual(deck.discard, []); }
   assert.equal(epoch.board.rooms.filter(r => r.color === 'grey' && r.effect === 'SUMMON_CADAVER').length, 3);
-  await legacy('p1'); await act({ type: 'SET_READY', playerId: 'p1', ready: true });
+  await legacy('p1');
+  await act({ type:'SET_READY', playerId:'p1', ready:true }, /school/i);
+  await act({ type:'SELECT_STARTING_SCHOOL', playerId:'p1', schoolId:'cantrip' });
+  await act({ type: 'SET_READY', playerId: 'p1', ready: true });
   assert.equal(epoch.phase, 'LOBBY'); assert.equal(epoch.round, 0, 'A ready solo creator must wait for another mage');
   epoch = await b.join('smoke', false, 'Moon');
   assert.deepEqual(epoch.players.map(p => p.id), [...ids]); assert.ok(epoch.players.every(p => p.connected));
   assert.equal(epoch.phase, 'LOBBY'); assert.equal(player(epoch, 'p1').ready, true); assert.equal(player(epoch, 'p2').ready, false);
   checkCubes(epoch); await privacy();
+  await act({ type:'SELECT_STARTING_SCHOOL', playerId:'p2', schoolId:'cantrip' });
+  assert.ok(epoch.players.every(p => p.hand.length === 0 && p.personalDeck.length === 0 && p.discard.length === 0), 'Choosing a school allocates nothing early');
   await act({ type: 'SET_READY', playerId: 'p2', ready: true });
   assert.equal(epoch.phase, 'BLACK_ROSE'); assert.equal(epoch.round, 1, 'The final SET_READY must auto-start exactly one real round');
+  assert.deepEqual(epoch.library.map(deck => deck.cards.length), [22, 36, 36]);
+  for (const id of ids) {
+   const own = player(await client(id).sync(epoch), id);
+  assert.equal(own.startingSchoolId, 'cantrip'); assert.equal(own.hand.length, 0);
+  assert.equal(own.personalDeck.length, 6); assert.equal(own.discard.length, 1);
+  assert.ok(own.discard.every(card => card.schoolId === 'cantrip' && card.id.startsWith('cantrip-')));
+  }
 
   async function studyAndPrepare() {
    assert.equal(epoch.phase, 'BLACK_ROSE'); assert.equal(epoch.blackRoseResolved, false);
    assert.ok(epoch.players.every(p => p.actionTokens === 2));
-   await act({ type: 'DISCARD_QUESTS', playerId: 'p1', questIds: [] }, /Resolve Black Rose/);
+  await act({ type: 'DISCARD_QUESTS', playerId: 'p1', questIds: [] }, /Resolve \(not\) Black Rose/);
    const before = epoch;
    await advance(); assert.equal(epoch.blackRoseResolved, true);
    if (epoch.phase === 'BLACK_ROSE') {
@@ -436,27 +481,44 @@ async function main() {
   await act({ type: 'DRAW_STUDY', playerId: 'p1', deckId: 'school-1' }, /School not found/);
    for (const id of ids) {
     const own = player(await client(id).sync(epoch), id);
-    assert.equal(own.hand.length, player(before, id).hand.length + 2);
+    const previous = player(before, id), draws = Math.min(2, previous.personalDeck.length + previous.discard.length);
+    assert.equal(own.hand.length, previous.hand.length + draws, 'Continue cannot generate cards when the real personal supply is exhausted');
+    if (epoch.round === 1) {
+     assert.equal(own.hand.length, 2); assert.equal(own.personalDeck.length, 4); assert.equal(own.discard.length, 1);
+     assert.ok(own.hand.every(card => card.schoolId === own.startingSchoolId));
+    }
     await act({ type: 'DISCARD_HAND_LIMIT', playerId: id, cardIds: [] }, /STUDY/);
-  const stock = epoch.library[0], transmutation = epoch.library[1], reshuffles = stock.cards.length < 4;
-   await act({ type: 'DRAW_STUDY', playerId: id, deckId: 'cantrip' });
-   assert.equal(epoch.library[0].cards.length, stock.cards.length + (reshuffles ? stock.discard.length : 0) - 4);
-   assert.equal(epoch.library[0].discard.length, reshuffles ? 0 : stock.discard.length);
-  assert.deepEqual(epoch.library[1], transmutation, 'Cantrip draws and reshuffles must not borrow from Transmutation');
+  // Starting personal decks/overflow can lock much of Cantrip in private hands or
+  // personal discards. Study must use real available school stock, not assume
+  // that the original 36 are still drawable or replenish them with fixtures.
+  const preferred = epoch.library.find(deck => deck.id === 'cantrip')!;
+  const stock = preferred.cards.length + preferred.discard.length >= 4 ? preferred
+   : epoch.library.find(deck => deck.id === 'transmutation' && deck.cards.length + deck.discard.length >= 4);
+  assert.ok(stock, 'A real independent school must have four available cards');
+  const untouched = epoch.library.filter(deck => deck.id !== stock.id), reshuffles = stock.cards.length < 4;
+   await act({ type: 'DRAW_STUDY', playerId: id, deckId: stock.id });
+   const drawnStock = epoch.library.find(deck => deck.id === stock.id)!;
+   assert.equal(drawnStock.cards.length, stock.cards.length + (reshuffles ? stock.discard.length : 0) - 4);
+   assert.equal(drawnStock.discard.length, reshuffles ? 0 : stock.discard.length);
+  assert.deepEqual(epoch.library.filter(deck => deck.id !== stock.id), untouched, 'School draws and reshuffles must not borrow from either other school');
    const hand = player(epoch, id).hand;
    assert.equal(hand.length, own.hand.length + 4);
-   assert.ok(hand.slice(-4).every(c => c.schoolId === 'cantrip' && c.id.startsWith('cantrip-')));
-   const discarded = hand.filter(c => c.schoolId === 'cantrip').slice(-2).map(c => c.id);
+   assert.ok(hand.slice(-4).every(c => c.schoolId === stock.id && c.id.startsWith(`${stock.id}-`)));
+   const discarded = [...hand.slice(-4)].sort((a, b) => Number(b.target === 'EVOCATION') - Number(a.target === 'EVOCATION')).slice(0, 2).map(c => c.id);
     assert.equal(discarded.length, 2);
     await act({ type: 'DISCARD_STUDY', playerId: id, cardIds: discarded });
-    assert.ok(discarded.every(cardId => epoch.library[0].discard.some(c => c.id === cardId)));
-    assert.deepEqual(epoch.library[1], transmutation, 'Cantrip discards stay out of the other school');
+    assert.ok(discarded.every(cardId => epoch.library.find(deck => deck.id === stock.id)!.discard.some(c => c.id === cardId)));
+    assert.deepEqual(epoch.library.filter(deck => deck.id !== stock.id), untouched, 'Study discards stay out of both other schools');
    }
    for (const id of ids) {
     let own = player(await client(id).sync(epoch), id);
+    if (epoch.round === 1) {
+     assert.equal(own.hand.length, 4, 'The first Study produces four held cards, not eleven');
+     assert.equal(own.discard.length, 1, 'Only the seventh starting card begins in personal discard');
+    }
      const prepare = (): GameAction => {
       const power = own.hand.find(c => c.powerful);
-      const ordinary = own.hand.filter(c => !c.powerful);
+      const ordinary = own.hand.filter(c => !c.powerful).sort((a, b) => Number(a.target === 'EVOCATION') - Number(b.target === 'EVOCATION'));
       return { type: 'PREPARE_CARDS', playerId: id,
        preparedCardIds: ordinary.slice(0, 3).map(c => c.id), rapidCardId: (power ?? ordinary[3]).id };
      };
@@ -678,21 +740,22 @@ async function main() {
   await act({ type: 'EXPLORE_STEP', playerId: 'p2', destination: { q: -3, r: 2 } }, /cannot enter or reenter/);
   await act({ type: 'END_EXPLORE', playerId: 'p2' }); await activateRoom('p2');
   await waitTurn('p1');
+  const beforeViolet = player(await a.sync(epoch), 'p1').hand.length;
   await begin('p1'); await activateRoom('p1'); await movement('p1', []);
-  assert.equal(player(await a.sync(epoch), 'p1').hand.length, 2);
+  assert.equal(player(await a.sync(epoch), 'p1').hand.length, beforeViolet + 1, 'The second Violet activation draws one from the finite personal deck');
   await waitTurn('p2');
   await begin('p2'); await movement('p2', [{ q: -1, r: 1 }, { q: 0, r: 0 }]); await activateRoom('p2');
   const heldPower = player(await b.sync(epoch), 'p2').hand.find(c => c.powerful)!;
-  assert.ok(heldPower, 'A central-room gift is held, not prepared');
+  assert.ok(heldPower, 'A central-room forgotten spell is held, not prepared');
   await act({ type: 'CAST_POWERFUL_SPELL', playerId: 'p2', cardId: heldPower.id, ...spellTarget('p2', heldPower) }, /cannot be cast from hand/);
   coverage.heldPowerRejections++;
   await legacy('p2'); await drainAction(); await freePhase(1);
-  assert.ok(player(await b.sync(epoch), 'p2').hand.some(c => c.id === heldPower.id), 'Held powers survive automatic Action exhaustion and Cleanup');
+  assert.ok(player(await b.sync(epoch), 'p2').hand.some(c => c.id === heldPower.id), 'Held forgotten spells survive automatic Action exhaustion and Cleanup');
 
   await advance();
   await act({ type: 'ADVANCE_PHASE', playerId: 'p1', expectedPhase: 'CLEANUP', expectedRound: 1 }, /Stale phase command/);
   await studyAndPrepare();
-  // Round 2: Violet and Azure guarantee four retained draws before round 3's limit.
+  // Round 2: Violet/Azure can retrieve only the remaining real personal cards.
   await begin('p1'); await activateRoom('p1'); await movement('p1', [{ q: 0, r: 0 }, { q: 0, r: 1 }]);
   await begin('p1'); await activateRoom('p1');
   await act({ type: 'PERFORM_MOVEMENT', playerId: 'p1' });
@@ -707,7 +770,7 @@ async function main() {
 
   await advance(); await studyAndPrepare();
   // Spend numbered preparations safely before the mages meet on Grey. Reserve
-  // both flexible spells for legal yields; a newly drawn power cannot be cast.
+  // both flexible spells for legal yields; a newly drawn forgotten spell cannot be cast.
   const plannedPreparationsRemain = () => epoch.players.some(p =>
    slots.slice(0, 3).some(slot => p.prepared[slot] && !p.prepared[slot]!.used));
   for (let guard = 0; plannedPreparationsRemain(); guard++) {
@@ -753,7 +816,7 @@ async function main() {
   await attack(false); await attack(true);
   assert.equal(epoch.phase, 'EVOCATION'); await freePhase(3);
   assert.equal(epoch.phase, 'GAME_OVER'); assert.equal(epoch.endgameScored, true);
-  assert.ok(player(await a.sync(epoch), 'p1').hand.some(c => c.id === latePower.id), 'A newly held power neither casts nor prevents final Action exhaustion');
+  assert.ok(player(await a.sync(epoch), 'p1').hand.some(c => c.id === latePower.id), 'A newly held forgotten spell neither casts nor prevents final Action exhaustion');
   assert.equal(coverage.settlements, 3, 'Each real round settles once; round three ends rather than starting round four');
   await advance(/The game is over/);
   await privacy();
@@ -763,25 +826,25 @@ async function main() {
   assert.equal(coverage.begins, 12, 'Both round tokens per mage must still resolve as meaningful physical actions');
   assert.ok(coverage.cappedHandoffs > 0 && coverage.pendingAtCap > 0 && coverage.thirdRejected > 0);
   assert.ok(coverage.retainedTokens > 0 && coverage.retainedSpells > 0 && coverage.yields > 0);
-  assert.ok(coverage.powerful > 0 && coverage.heldPowerRejections === 2 && coverage.drawBarriers > 0 && coverage.handDiscards > 0 && coverage.schoolExceptions > 0);
+  assert.ok(coverage.powerful > 0 && coverage.heldPowerRejections === 2 && coverage.drawBarriers > 0);
   assert.ok(coverage.grey >= 2 && coverage.attacks === 2 && coverage.locks > 30);
   assert.ok(coverage.emptyHandLimits > 0 && coverage.freeEvocations > 0 && coverage.destroyed > 0);
   assert.ok(coverage.evocationRangeRejections > 0, 'Different-room attacks must be rejected over the real socket');
   assert.ok(coverage.futurePass > 0 && coverage.automaticSkips > 0 && coverage.skips >= 2);
-  assert.ok(coverage.offAxisPrepared > 0 && coverage.offAxisPowerful > 0, 'Both prepared and powerful off-axis casts must be rejected over the real socket');
-  console.log(`PASS: joined-only lobby grows from 1 to 2 mages and auto-starts on final readiness; 3 real two-client rounds; wizard max HP/attack/movement 10/2/2, limits 7/2, exactly 2 physical tokens/round. ` +
+  assert.ok(coverage.offAxisPrepared > 0 && coverage.offAxisPowerful > 0, 'Both ordinary and forgotten prepared off-axis casts must be rejected over the real socket');
+  console.log(`PASS: joined-only lobby grows from 1 to 2 mages, explicit schools gate readiness, six masked personal cards + one public discard per mage allocate 14/36 Cantrips, no initial hand/overflow; 120 total physical spells; auto-start on final readiness; 3 real two-client rounds; wizard max HP/attack/movement 10/2/2, limits 7/2, exactly 2 physical tokens/round. ` +
     `2 TOTAL actions/turn: ${coverage.prepared} prepared casts (${coverage.numbered} numbered/${coverage.flexible} flexible; rounds ${preparedByRound.join('/')}) ` +
-  `including ${coverage.powerful} permanently removed prepared powers; ${coverage.heldPowerRejections} direct held-power rejections, ${coverage.drawBarriers} no-undo draw barriers + ${coverage.discardExits} discard exit, each 1 action/no physical token. ` +
+  `including ${coverage.powerful} permanently removed prepared forgotten spells; ${coverage.heldPowerRejections} direct held-forgotten-spell rejections, ${coverage.drawBarriers} no-undo draw barriers + ${coverage.discardExits} discard exit, each 1 action/no physical token. ` +
    `${coverage.cappedHandoffs} automatic two-action handoffs, ${coverage.pendingAtCap} pending-effect checks at the cap, ` +
    `${coverage.thirdRejected} post-handoff action rejections; handoffs retain tokens/spells ${coverage.retainedTokens}/${coverage.retainedSpells}. ` +
    `${coverage.begins} new physical menus, ${coverage.locks} mage-lock rejections, ${coverage.skips} skips, ${coverage.attacks} distance-0 mage attacks. ` +
-   `Hand overflow: ${coverage.handDiscards} to PERSONAL discard (${coverage.schoolExceptions} school, ${coverage.powerExceptions} powerful); ` +
+  `Hand overflow: ${coverage.handDiscards} to PERSONAL discard (${coverage.schoolExceptions} school, ${coverage.powerExceptions} forgotten); ` +
    `quest overflow: ${coverage.questDiscards}; empty-limit checks: ${coverage.emptyHandLimits}/${coverage.emptyQuestLimits}. ` +
    `Grey: ${coverage.grey} effects (${coverage.greyRebuilt} rebuilt, ${coverage.greyCap} cap no-ops); ` +
   `${coverage.freeEvocations} free model activations, ${coverage.ownerSkips} owner skips, ${coverage.destroyed} same-room no-score destructions; ` +
   `${coverage.evocationRangeRejections} different-room attack rejections, ${coverage.evocationCombatSteps} legal steps into enemy rooms. ` +
-  `Off-axis ordinary/prepared-power casts rejected: ${coverage.offAxisPrepared}/${coverage.offAxisPowerful}. Round 3 GAME_OVER: ${epoch.winner}; independent room/final majority scoring, first-player bonus, privacy/cube ledgers verified.\n` +
-   `GAPS: quest overflow depends on random completions; powerful overflow, paid activations, Wounded Fury bonus and remaining combat/menu permutations stay in deterministic engine coverage. Rebuilt Grey may prevent one or both Attack room effects. Browser validation is separate.`);
+  `Off-axis ordinary/forgotten prepared casts rejected: ${coverage.offAxisPrepared}/${coverage.offAxisPowerful}. Round 3 GAME_OVER: ${epoch.winner}; independent room/final majority scoring, first-player bonus, privacy/cube ledgers verified.\n` +
+  `GAPS: quest overflow depends on random completions; hand-limit overflow is deliberately constructed in server tests rather than fabricated at setup. Forgotten overflow, paid activations, Wounded Fury bonus and remaining combat/menu permutations stay in deterministic engine/server coverage. Rebuilt Grey may prevent one or both Attack room effects. Browser validation is separate.`);
  } finally {
   for (const ws of sockets) ws.terminate();
   if (server.exitCode === null && server.signalCode === null) {

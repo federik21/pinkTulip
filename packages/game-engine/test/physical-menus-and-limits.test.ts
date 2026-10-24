@@ -13,15 +13,21 @@ const attack=(g:GameState,targetId='p2')=>applyAction(g,{type:'INFLICT_ATTACK',p
 function rejected(g:GameState,action:GameAction,error?:RegExp) {
  const before=structuredClone(g);expect(()=>applyAction(g,action)).toThrow(error);expect(g).toEqual(before);
 }
+// TEST FIXTURE ONLY: transfer physical library cards; createGame supplies no personal cards.
+function seedPersonalDeck(g:GameState,count=2,playerId='p1') {
+ const seeded=g.library[0].cards.splice(0,count);expect(seeded).toHaveLength(count);
+ player(g,playerId).personalDeck.push(...seeded);
+}
 function actionFixture(effect:RoomEffect='DRAW_GRIMOIRE') {
  const g=createGame();g.phase='ACTION';g.round=1;g.currentPlayerId='p1';
  g.activation={playerId:'p1',actionsUsed:0,exploring:0,sequencedSpellUsed:false,spellsCast:0,discardedExit:false,roomEffectUsed:false,physicalAction:null};
  const source=g.board.rooms.find(r=>r.effect===effect)!;
- for(const p of g.players)p.wizard.position={...source.tiles[0]};
+ for(const p of g.players){p.wizard.position={...source.tiles[0]};seedPersonalDeck(g,2,p.id);}
  return g;
 }
 function preparationFixture(handSize=8) {
  const g=createGame();g.phase='PREPARATION';
+ seedPersonalDeck(g,handSize);
  player(g).hand.push(...player(g).personalDeck.splice(0,handSize));return g;
 }
 function prepareAction(g:GameState,playerId='p1'):GameAction {
@@ -30,6 +36,7 @@ function prepareAction(g:GameState,playerId='p1'):GameAction {
 }
 function blackRoseFixture(counts=[3,4]) {
  const g=createGame();g.phase='BLACK_ROSE';g.round=1;
+ for(const p of g.players)seedPersonalDeck(g,2,p.id);
  for(const [i,count] of counts.entries()) {
   const quests=g.questDeck.splice(0,count);g.players[i].quest=quests.shift()??null;g.players[i].additionalQuests=quests;
  }
@@ -37,10 +44,11 @@ function blackRoseFixture(counts=[3,4]) {
 }
 const heldQuests=(p:Player)=>p.quest?[p.quest,...p.additionalQuests]:p.additionalQuests;
 function cards(g:GameState) {
- return [...g.powerfulDeck,...g.removedCards,...g.library.flatMap(d=>[...d.cards,...d.discard]),...g.players.flatMap(p=>[...p.hand,...p.discard,...p.personalDeck,...Object.values(p.prepared).filter(c=>c&&!c.used).map(c=>c!.card)])];
+ return [...g.powerfulDeck,...g.removedCards,...g.library.flatMap(d=>[...d.cards,...d.discard]),...[...g.readiedSpells??[],...g.ongoingSpells??[]].map(a=>a.card),...g.players.flatMap(p=>[...p.hand,...p.discard,...p.personalDeck,...Object.values(p.prepared).filter(c=>c&&!c.used).map(c=>c!.card)])];
 }
 function conserved(g:GameState) {
- const all=cards(g);expect(all).toHaveLength(72+12*g.players.length+12);expect(new Set(all.map(c=>c.id)).size).toBe(all.length);
+ const all=cards(g);expect(all).toHaveLength(120);expect(new Set(all.map(c=>c.id)).size).toBe(120);
+ expect(all.filter(c=>!c.powerful)).toHaveLength(108);expect(all.filter(c=>c.powerful)).toHaveLength(12);
  for(const p of g.players) {
   expect(p.cubes.available+p.cubes.onWizard+p.cubes.onBoard+p.cubes.onEvocations).toBe(25);
   expect(p.cubes.onWizard).toBe(g.players.reduce((sum,victim)=>sum+(victim.wizard.damageByPlayer[p.id]??0),0));
@@ -73,15 +81,31 @@ describe('agreed client interfaces and defaults',()=>{
  });
 
  it('accepts old activation literals but initializes production activations with physicalAction null',()=>{
-  let g=createGame();for(const p of g.players){p.connected=true;p.ready=true;}
-  g=applyAction(g,{type:'START_GAME',playerId:'p1'});g=advance(g);
-  expect(g.blackRoseResolved).toBe(true);
-  for(const id of ['p1','p2']) {
-    g=applyAction(g,{type:'DRAW_STUDY',playerId:id,deckId:'cantrip'});
-   g=applyAction(g,{type:'DISCARD_STUDY',playerId:id,cardIds:player(g,id).hand.slice(0,2).map(c=>c.id)});
+  let g=createGame();for(const p of g.players)p.connected=true;
+  for(const p of g.players){g=applyAction(g,{type:'SELECT_STARTING_SCHOOL',playerId:p.id,schoolId:'cantrip'});g=applyAction(g,{type:'SET_READY',playerId:p.id,ready:true});}
+  const startingCards=g.library[0].cards.slice(0,14);
+  g=applyAction(g,{type:'START_GAME',playerId:'p1'});
+  for(const [i,p] of g.players.entries()) {
+   expect(p.hand).toEqual([]);expect(p.personalDeck).toEqual(startingCards.slice(i*7,i*7+6));expect(p.discard).toEqual([startingCards[i*7+6]]);
   }
-  for(const id of ['p1','p2'])g=applyAction(g,prepareAction(g,id));
-  expect(g.activation?.physicalAction).toBeNull();
+  conserved(g);g=advance(g);
+  expect(g.blackRoseResolved).toBe(true);
+  for(const [i,p] of g.players.entries()) {
+   expect(p.hand).toEqual(startingCards.slice(i*7,i*7+2));expect(p.personalDeck).toEqual(startingCards.slice(i*7+2,i*7+6));expect(p.discard).toEqual([startingCards[i*7+6]]);
+  }
+  conserved(g);
+  for(const id of ['p1','p2']) {
+   g=applyAction(g,{type:'DRAW_STUDY',playerId:id,deckId:'cantrip'});expect(player(g,id).hand).toHaveLength(6);
+   g=applyAction(g,{type:'DISCARD_STUDY',playerId:id,cardIds:player(g,id).hand.slice(0,2).map(c=>c.id)});
+   expect(player(g,id).hand).toHaveLength(4);expect(player(g,id).personalDeck).toHaveLength(4);expect(player(g,id).discard).toHaveLength(1);conserved(g);
+  }
+  expect(g.phase).toBe('PREPARATION');expect(g.library[0].discard).toEqual([startingCards[0],startingCards[1],startingCards[7],startingCards[8]]);
+  for(const id of ['p1','p2']) {
+   rejected(g,{type:'DISCARD_HAND_LIMIT',playerId:id,cardIds:[]},/No cards over the hand limit/);
+   g=applyAction(g,prepareAction(g,id));
+   expect(player(g,id).hand).toEqual([]);
+  }
+  expect(g.activation?.physicalAction).toBeNull();conserved(g);
   delete g.activation!.physicalAction;g=begin(g);expect(g.activation?.physicalAction?.kind).toBe('EXPLORE');
  });
 
@@ -381,7 +405,7 @@ describe('movement, attacks and authoritative health',()=>{
   for(const reconstructed of [false,true]) {
    let g=actionFixture(effect);const source=g.board.rooms.find(r=>r.effect===effect)!;
    source.reconstructed=reconstructed;
-   player(g).discard.push(...player(g).personalDeck.splice(0,2));
+  if(effect==='DRAW_DISCARD')player(g).discard.push(...player(g).personalDeck.splice(0,2));
   const emeraldTarget=g.board.rooms.find(r=>!r.startingFor&&hexDistance(r.tiles[0],source.tiles[0])===1)!;
    const before=structuredClone(g),reward=reconstructed?2:1;
   g=activateRoom(begin(g),effect==='INSTABILITY'?emeraldTarget.id:undefined);
@@ -413,6 +437,7 @@ describe('mandatory preparation hand limits and the personal-discard exception',
 
  it('honors a custom card limit and rejects wrong counts, duplicates, foreign cards, phases and prepared players',()=>{
   const g=preparationFixture(9);player(g).cardLimit=6;
+  seedPersonalDeck(g,1,'p2');
   const ids=player(g).hand.map(c=>c.id),foreign=player(g,'p2').personalDeck[0].id;
   for(const cardIds of [[],ids.slice(0,2),ids.slice(0,4),[ids[0],ids[0],ids[1]],[ids[0],ids[1],foreign]])rejected(g,{type:'DISCARD_HAND_LIMIT',playerId:'p1',cardIds});
   const prepared=structuredClone(g);player(prepared).preparationDone=true;rejected(prepared,{type:'DISCARD_HAND_LIMIT',playerId:'p1',cardIds:ids.slice(0,3)},/Already prepared/);
@@ -424,13 +449,14 @@ describe('mandatory preparation hand limits and the personal-discard exception',
   expect(player(applyAction(n,prepareAction(n))).preparationDone).toBe(true);conserved(n);
  });
 
- it('routes personal, Cantrip and powerful overflow cards ALL to personal discard with flags and identities intact',()=>{
+ it('routes personal-grimoire, Cantrip and powerful overflow cards ALL to personal discard with flags and identities intact',()=>{
   let g=preparationFixture(7);const personal=player(g).hand[0],school=g.library[0].cards.shift()!,power=g.powerfulDeck.shift()!;
-  player(g).hand.push(school,power,player(g).personalDeck.shift()!);const before=structuredClone(g);
+  player(g).hand.push(school,power,g.library[0].cards.shift()!);const before=structuredClone(g);
   const selected=[personal,school,power];g=applyAction(g,{type:'DISCARD_HAND_LIMIT',playerId:'p1',cardIds:selected.map(c=>c.id)});
   expect(player(g).discard).toEqual(selected);expect(player(g).hand).toHaveLength(7);expect(g.library).toEqual(before.library);
   expect(g.removedCards).toEqual([]);expect(player(g).discard.find(c=>c.id===power.id)?.powerful).toBe(true);
-  expect(player(g).discard.find(c=>c.id===school.id)?.schoolId).toBe(school.schoolId);conserved(g);
+  expect(player(g).discard.find(c=>c.id===school.id)?.schoolId).toBe(school.schoolId);
+  expect(player(g).discard.find(c=>c.id===personal.id)?.schoolId).toBe('cantrip');conserved(g);
   // Azure retrieves these exact exceptions without changing future routing rules.
   g.phase='ACTION';g.currentPlayerId='p1';g.activation={playerId:'p1',actionsUsed:0,exploring:0,sequencedSpellUsed:false,spellsCast:0,discardedExit:false,roomEffectUsed:false,physicalAction:null};
   const azure=g.board.rooms.find(r=>r.effect==='DRAW_DISCARD')!;player(g).wizard.position={...azure.tiles[0]};azure.reconstructed=true;
@@ -447,8 +473,8 @@ describe('mandatory preparation hand limits and the personal-discard exception',
  it('recycles forced school/powerful discards through grimoire draws, then uses normal cast routing',()=>{
   let g=preparationFixture(7);const school=g.library[0].cards.shift()!,power=g.powerfulDeck.shift()!;
   player(g).hand.push(school,power);g=applyAction(g,{type:'DISCARD_HAND_LIMIT',playerId:'p1',cardIds:[school.id,power.id]});
-  // Legal round-boundary fixture: all undrawn personal cards are retained in hand.
-  player(g).hand.push(...player(g).personalDeck.splice(0));g.phase='CLEANUP';g=advance(g);g=advance(g);
+  // No undrawn personal cards: the next Study must recycle these exact overflow exceptions.
+  expect(player(g).personalDeck).toEqual([]);g.phase='CLEANUP';g=advance(g);g=advance(g);
   expect(player(g).hand).toEqual(expect.arrayContaining([school,power]));expect(player(g).discard).toEqual([]);conserved(g);
   g.phase='ACTION';g.currentPlayerId='p1';g.activation={playerId:'p1',actionsUsed:0,exploring:0,sequencedSpellUsed:false,spellsCast:0,discardedExit:false,roomEffectUsed:false};
   player(g).wizard.position={q:0,r:0};player(g).hand=player(g).hand.filter(c=>c.id!==school.id&&c.id!==power.id);
@@ -462,7 +488,7 @@ describe('mandatory preparation hand limits and the personal-discard exception',
  it('normal Study still routes Cantrip home and rejects powerful discards rather than applying the overflow exception',()=>{
   let g=createGame();g.phase='STUDY';const power=g.powerfulDeck.shift()!;player(g).hand.push(power);
   g=applyAction(g,{type:'DRAW_STUDY',playerId:'p1',deckId:'cantrip'});const selected=player(g).hand.filter(c=>c.schoolId==='cantrip').slice(0,2);
-  rejected(g,{type:'DISCARD_STUDY',playerId:'p1',cardIds:[selected[0].id,power.id]},/Powerful spells cannot/);
+  rejected(g,{type:'DISCARD_STUDY',playerId:'p1',cardIds:[selected[0].id,power.id]},/Forgotten spells cannot/);
   g=applyAction(g,{type:'DISCARD_STUDY',playerId:'p1',cardIds:selected.map(c=>c.id)});
   expect(g.library[0].discard).toEqual(selected);expect(player(g).discard).toEqual([]);expect(player(g).hand).toContainEqual(power);conserved(g);
  });
@@ -500,7 +526,7 @@ describe('one-shot Black Rose quest-limit gate',()=>{
 
  it('rejects duplicate/wrong-count/unowned quest selections, unresolved Black Rose, and every other phase',()=>{
   const initial=blackRoseFixture();const quests=heldQuests(player(initial,'p2')),foreign=player(initial).quest!.id;
-  rejected(initial,{type:'DISCARD_QUESTS',playerId:'p2',questIds:quests.slice(0,2).map(q=>q.id)},/Resolve Black Rose/);
+  rejected(initial,{type:'DISCARD_QUESTS',playerId:'p2',questIds:quests.slice(0,2).map(q=>q.id)},/Resolve \(not\) Black Rose/);
   const g=advance(initial);
   for(const questIds of [[],[quests[0].id],quests.slice(0,3).map(q=>q.id),[quests[0].id,quests[0].id],[quests[0].id,foreign],[quests[0].id,'missing']])rejected(g,{type:'DISCARD_QUESTS',playerId:'p2',questIds});
   for(const phase of ['STUDY','PREPARATION','ACTION','CLEANUP'] as const) {

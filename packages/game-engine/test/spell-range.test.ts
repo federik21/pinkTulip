@@ -29,6 +29,14 @@ function expectRejected(g:GameState,action:GameAction) {
  expect(g).toEqual(before);
 }
 
+function physicalCards(g:GameState) {
+ return [
+  ...g.library.flatMap(d=>[...d.cards,...d.discard]),...g.powerfulDeck,...g.removedCards,
+  ...g.players.flatMap(p=>[...p.personalDeck,...p.hand,...p.discard,...Object.values(p.prepared).flatMap(c=>c&&!c.used?[c.card]:[])]),
+  ...[...g.readiedSpells??[],...g.ongoingSpells??[]].map(a=>a.card),
+ ].map(c=>c.id).sort();
+}
+
 describe('authoritative straight-line spell range',()=>{
  for(const mode of modes) {
   for(const range of [2,4]) {
@@ -52,6 +60,8 @@ describe('authoritative straight-line spell range',()=>{
     if(mode==='EVOCATION')expect(next.evocations[0].damageCubes).toBe(1);
     expect(next.players[0].actionTokens).toBe(2);
     expect(next.activation).toMatchObject({playerId:'p1',actionsUsed:1,spellsCast:1,sequencedSpellUsed:true});
+    expect(physicalCards(next)).toEqual(physicalCards(before));
+    expect(physicalCards(next)).toHaveLength(120);expect(new Set(physicalCards(next)).size).toBe(120);
    });
   }
 
@@ -91,12 +101,14 @@ describe('authoritative straight-line spell range',()=>{
   g.players[0].prepared.rapid={card:power,used:false};
   const targeting=targetType==='ROOM'?{roomId:'room-1,1'}:{targetPlayerId:'p2'};
   const action:GameAction={type:'CAST_SPELL',playerId:'p1',slot:'rapid',...targeting};
+  const cards=physicalCards(g);
   expectRejected(g,action);
   const next=applyAction(g,{...action,...(targetType==='ROOM'?{roomId:'room-2,0'}:{dummy:true,roomId:'room-2,0',targetPlayerId:undefined})});
   expect(next.removedCards).toContainEqual(power);
   expect(next.players[0].hand).not.toContainEqual(power);
   expect(next.players[0].actionTokens).toBe(2);
   expect(next.activation).toMatchObject({actionsUsed:1,spellsCast:1,sequencedSpellUsed:false});
+  expect(physicalCards(next)).toEqual(cards);expect(new Set(cards).size).toBe(120);
  });
 
  it('preserves four-step sight across the board and two-step movement that can turn',()=>{

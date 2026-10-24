@@ -32,6 +32,7 @@ function conserved(game: GameState) {
 }
 function physicalCards(game: GameState) {
  return [...game.library.flatMap(d => [...d.cards, ...d.discard]), ...game.powerfulDeck, ...game.removedCards,
+   ...[...game.readiedSpells ?? [], ...game.ongoingSpells ?? []].map(active => active.card),
   ...game.players.flatMap(p => [...p.personalDeck, ...p.hand, ...p.discard,
    ...Object.values(p.prepared).flatMap(slot => slot && !slot.used ? [slot.card] : [])])].map(c => c.id).sort();
 }
@@ -43,6 +44,7 @@ function fixture(name: string) {
  for (const p of game.players) {
   p.connected = true; p.wizard.position = { q:0, r:0 };
   p.quest = game.questDeck.shift()!;
+  p.personalDeck.push(...game.library[0].cards.splice(0, 2));
   p.hand.push(p.personalDeck.shift()!);
  }
  Object.assign(game.players[0].wizard, { damageCubes:6, blackDamage:1,
@@ -183,7 +185,7 @@ describe('actual Transmutation spell snapshots and projection', () => {
   game = history.apply(game, { type:'REDO_ACTION', playerId:'p1' }, 'p1'); expect(game).toEqual(after); conserved(game);
  });
 
- it.each(['Mending Light', "Alchemist's Refuge", "Mage's Due"])('restores actual Black Rose and unattributed mage wounds after %s', name => {
+ it.each(['Mending Light', "Alchemist's Refuge", "Mage's Due"])('restores actual (not) Black Rose and unattributed mage wounds after %s', name => {
   const history = new ActionHistory(), { game:initial } = fixture(name);
   const index = name === "Mage's Due" ? 1 : 0;
   Object.assign(initial.players[index].wizard, { damageCubes:5, blackDamage:2, damageByPlayer:{ [BLACK_ROSE_ID]:1 } });

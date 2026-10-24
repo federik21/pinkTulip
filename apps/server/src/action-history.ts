@@ -14,7 +14,7 @@ const labels: Partial<Record<GameAction['type'], string>> = {
  ACTIVATE_ROOM: 'Activate room', SKIP_PHYSICAL_EFFECTS: 'Skip physical effects',
  INFLICT_ATTACK: 'Attack', EXPLORE: 'Explore', EXPLORE_STEP: 'Move mage',
  END_EXPLORE: 'End movement', DISCARD_EXIT: 'Discard to leave', PUNCH: 'Attack',
- CAST_SPELL: 'Cast spell', CAST_POWERFUL_SPELL: 'Cast powerful spell',
+ CAST_SPELL: 'Cast spell', CAST_POWERFUL_SPELL: 'Cast forgotten spell',
 };
 const drawEffects = new Set<RoomEffect>(['DRAW_POWERFUL', 'DRAW_GRIMOIRE', 'DRAW_DISCARD', 'DRAW_QUEST']);
 const actionPhase = (game: GameState) => game.phase === 'ACTION' || game.phase === 'EVOCATION';
@@ -58,6 +58,10 @@ const onlyAppended = (before: Identified[], after: Identified[]) =>
  before.length <= after.length && before.every((card, index) => same(card, after[index]));
 
 function acquiredHiddenInformation(before: GameState, after: GameState): boolean {
+ // Reveals and bound-model expiry expose formerly hidden cards. Check instance
+ // UUIDs, not discard changes: a reveal must never be undone for either owner.
+ const stillReadied = new Set((after.readiedSpells ?? []).map(active => active.id));
+ if ((before.readiedSpells ?? []).some(active => !stillReadied.has(active.id))) return true;
  if (!same(before.eventDeck, after.eventDeck) || !same(before.questDeck, after.questDeck) ||
      !same(before.powerfulDeck, after.powerfulDeck) ||
      !onlyAppended(before.eventDiscard, after.eventDiscard) ||
@@ -130,7 +134,9 @@ export class ActionHistory {
    return restored;
   }
 
-  // Resolve everything before changing history: failed commands are inert,
+ // SELECT_STARTING_SCHOOL deliberately has no label: public lobby choices
+ // (and the private initial deal on start) can never be undone or replayed.
+ // Resolve everything before changing history: failed commands are inert,
   // including failed opponent commands and failed/stale phase commands.
   const before = snapshot(game);
   let after = applyAction(before, action);

@@ -31,30 +31,50 @@ describe('two to four mage setup',()=>{
   const g=createGame(count);
   expect(g.players).toHaveLength(count);
   expect(new Set(g.players.map(p=>hexKey(p.wizard.position))).size).toBe(count);
-  const cards=g.players.flatMap(p=>p.personalDeck);
-  expect(cards).toHaveLength(12*count);expect(new Set(cards.map(c=>c.id)).size).toBe(12*count);
+  for(const p of g.players) {
+   expect(p.personalDeck).toEqual([]);expect(p.hand).toEqual([]);expect(p.discard).toEqual([]);
+  }
+  const cards=[...g.library.flatMap(d=>[...d.cards,...d.discard]),...g.powerfulDeck];
+  expect(cards).toHaveLength(120);expect(new Set(cards.map(c=>c.id)).size).toBe(120);
+  expect(cards.filter(c=>!c.powerful)).toHaveLength(108);expect(cards.filter(c=>c.powerful)).toHaveLength(12);
+  expect(cards.some(c=>/^p[1-4]-/.test(c.id))).toBe(false);
   expect(g.players.every(p=>g.board.rooms.find(r=>r.id===p.wizard.startingRoomId)?.startingFor===p.id)).toBe(true);
  });
 
  it('waits for a second participant and every joined mage, then supports all four ready seats',()=>{
-  let g=createGame(1);g.players[0].connected=true;g.players[0].ready=true;
+  let g=createGame(1);g.players[0].connected=true;
+  g=applyAction(g,{type:'SELECT_STARTING_SCHOOL',playerId:'p1',schoolId:'cantrip'});
+  g=applyAction(g,{type:'SET_READY',playerId:'p1',ready:true});
   expect(canStartGame(g)).toBe(false);
   expect(()=>applyAction(g,{type:'START_GAME',playerId:'p1'})).toThrow(/At least 2/);
   for(let count=2;count<=4;count++) {
    const before=structuredClone(g);const joined=addPlayerToLobby(g);expect(g).toEqual(before);g=joined;
-   expect(canStartGame(g)).toBe(false);g.players[count-1].connected=true;g.players[count-1].ready=true;
+    expect(g.players[count-1]).toMatchObject({hand:[],personalDeck:[],discard:[]});
+    expect(g.library).toEqual(before.library);expect(g.powerfulDeck).toEqual(before.powerfulDeck);
+  expect(canStartGame(g)).toBe(false);g.players[count-1].connected=true;
+  g=applyAction(g,{type:'SELECT_STARTING_SCHOOL',playerId:`p${count}`,schoolId:'cantrip'});
+  g=applyAction(g,{type:'SET_READY',playerId:`p${count}`,ready:true});
    expect(canStartGame(g)).toBe(true);
   }
   expect(()=>addPlayerToLobby(g)).toThrow(/full/);
+  const stock=[...g.library[0].cards];
   g=applyAction(g,{type:'START_GAME',playerId:'p1'});expect(g.phase).toBe('BLACK_ROSE');
+  for(const [i,p] of g.players.entries()) {
+   expect(p.hand).toEqual([]);expect(p.personalDeck).toEqual(stock.slice(7*i,7*i+6));expect(p.discard).toEqual([stock[7*i+6]]);
+   expect([...p.personalDeck,...p.discard].every(c=>c.schoolId==='cantrip')).toBe(true);
+  }
+  expect(g.library[0].cards).toEqual(stock.slice(28));expect(g.library[0].discard).toEqual([]);
+  const cards=[...g.library.flatMap(d=>[...d.cards,...d.discard]),...g.powerfulDeck,...g.players.flatMap(p=>[...p.personalDeck,...p.hand,...p.discard])];
+  expect(cards).toHaveLength(120);expect(new Set(cards.map(c=>c.id)).size).toBe(120);
   expect(()=>addPlayerToLobby(g)).toThrow(/in progress/);
  });
 
  it('gives all rooms unique non-coordinate names that stay stable through actions',()=>{
-  const g=createGame();const names=g.board.rooms.map(r=>r.name);
-  expect(new Set(names).size).toBe(23);expect(names).toContain('Black Rose Chamber');
+  let g=createGame();const names=g.board.rooms.map(r=>r.name);
+  expect(new Set(names).size).toBe(23);expect(names).toContain('(not) Black Rose Chamber');
   expect(names.every(n=>!/-?\d+,\s*-?\d+/.test(n))).toBe(true);
   g.players[0].connected=true;
+  g=applyAction(g,{type:'SELECT_STARTING_SCHOOL',playerId:'p1',schoolId:'cantrip'});
   expect(applyAction(g,{type:'SET_READY',playerId:'p1',ready:true}).board.rooms.map(r=>r.name)).toEqual(names);
  });
 });

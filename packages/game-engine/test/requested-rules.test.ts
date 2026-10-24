@@ -12,6 +12,11 @@ function actionFixture() {
 }
 const player=(g:GameState,id='p1')=>g.players.find(p=>p.id===id)!;
 const room=(g:GameState,id='room-0,0')=>g.board.rooms.find(r=>r.id===id)!;
+// TEST FIXTURE ONLY: move real library cards into the personal draw supply needed by a scenario.
+function seedPersonalDeck(g:GameState,count=2,playerId='p1') {
+ const cards=g.library[0].cards.splice(0,count);expect(cards).toHaveLength(count);
+ player(g,playerId).personalDeck.push(...cards);
+}
 // TEST FIXTURE ONLY: printed models for isolated combat/activation tests, never a summon API.
 const cadaver=(id:string,playerId='p1',position={q:0,r:0}):Evocation=>({id,playerId,name:'Cadaver',archetype:'UNDEAD',movement:2,attack:2,health:2,passive:'WOUNDED_FURY',position:{...position},damageCubes:0,damageByPlayer:{},activated:false});
 function greyFixture(reconstructed=false) {
@@ -56,8 +61,9 @@ function expectCubesConserved(g:GameState) {
  }
 }
 function expectCardsConserved(g:GameState) {
- const cards=[...g.powerfulDeck,...g.removedCards,...g.library.flatMap(d=>[...d.cards,...d.discard]),...g.players.flatMap(p=>[...p.hand,...p.personalDeck,...p.discard,...Object.values(p.prepared).filter(c=>c&&!c.used).map(c=>c!.card)])];
- expect(cards).toHaveLength(108);expect(new Set(cards.map(c=>c.id)).size).toBe(108);
+ const cards=[...g.powerfulDeck,...g.removedCards,...g.library.flatMap(d=>[...d.cards,...d.discard]),...[...g.readiedSpells??[],...g.ongoingSpells??[]].map(a=>a.card),...g.players.flatMap(p=>[...p.hand,...p.personalDeck,...p.discard,...Object.values(p.prepared).filter(c=>c&&!c.used).map(c=>c!.card)])];
+ expect(cards).toHaveLength(120);expect(new Set(cards.map(c=>c.id)).size).toBe(120);
+ expect(cards.filter(c=>!c.powerful)).toHaveLength(108);expect(cards.filter(c=>c.powerful)).toHaveLength(12);
 }
 
 describe('hex range calculus',()=>{
@@ -93,6 +99,7 @@ function nextActionRound(g:GameState) {
   g=applyAction(g,{type:'END_EVOCATION',playerId:owner});
  }
  expect(g.phase).toBe('CLEANUP');
+ for(const p of g.players)seedPersonalDeck(g,2,p.id);
  g.eventDeck=[{id:'quiet-grey-round',name:'Quiet',description:'No damage',kind:'INSTABILITY',amount:0,rooms:0}];
  g=advance(g);g=advance(g);
  for(const id of ['p1','p2']) {
@@ -118,9 +125,12 @@ describe('strict Action-phase exhaustion',()=>{
  it('starts with exactly two tokens, complete cube ledgers, unused specials and no evocations',()=>{
   const g=createGame();expect(PHYSICAL_TOKENS_PER_ROUND).toBe(2);
   expect(g.players.map(p=>p.actionTokens)).toEqual([2,2]);
-  for(const p of g.players)expect(p.cubes).toEqual({available:25,onBoard:0,onWizard:0,onEvocations:0});
+  for(const p of g.players) {
+   expect(p.cubes).toEqual({available:25,onBoard:0,onWizard:0,onEvocations:0});
+   expect(p.hand).toEqual([]);expect(p.personalDeck).toEqual([]);expect(p.discard).toEqual([]);
+  }
   expect(g.board.rooms.every(r=>r.specialUsed===false)).toBe(true);
-  expect(g.evocations).toEqual([]);expect(g.evocationActivation).toBeNull();
+  expect(g.evocations).toEqual([]);expect(g.evocationActivation).toBeNull();expectCardsConserved(g);
  });
 
  it('rejects passes with either remaining token and while exploring, then automatically skips real exhaustion',()=>{
@@ -613,6 +623,7 @@ describe('free Evocation phase scheduling',()=>{
   player(g,'p2').cubes.available=24;player(g,'p2').cubes.onEvocations=1;g=evocationPhaseFixture(g);
   g=applyAction(g,{type:'ACTIVATE_EVOCATION',playerId:'p1',evocationId:'survivor'});g=applyAction(g,{type:'END_EVOCATION',playerId:'p1'});
   const survivor=structuredClone(g.evocations[0]);expect(survivor.activated).toBe(true);
+  for(const p of g.players)seedPersonalDeck(g,2,p.id);
   g.eventDeck=[{id:'no-model-damage',name:'Quiet',description:'No damage',kind:'INSTABILITY',amount:0,rooms:0}];
   g=advance(g);expect(g.round).toBe(2);expect(g.players.map(p=>p.actionTokens)).toEqual([2,2]);expect(g.evocations).toEqual([survivor]);expectCubesConserved(g);
   g=advance(g);
@@ -641,7 +652,9 @@ describe('reconstructed room specials',()=>{
    for(const effect of effects)for(const reconstructed of [false,true]) {
     let g=actionFixture();const source=g.board.rooms.find(r=>r.effect===effect)!;source.reconstructed=reconstructed;
     player(g).wizard.position={...source.tiles[0]};player(g,'p2').wizard.position={...source.tiles[0]};
-    player(g).discard.push(...player(g).personalDeck.splice(0,3));const before=structuredClone(g),reward=reconstructed?2:1;
+    if(effect==='DRAW_DISCARD'){seedPersonalDeck(g,3);player(g).discard.push(...player(g).personalDeck.splice(0,3));}
+    if(effect==='DRAW_GRIMOIRE')seedPersonalDeck(g,2);
+    const before=structuredClone(g),reward=reconstructed?2:1;
     const adjacent=g.board.rooms.find(r=>!r.startingFor&&hexDistance(r.tiles[0],source.tiles[0])===1)!;
     const roomTargetId=effect==='INSTABILITY'?adjacent.id:undefined;
     if(effect==='INSTABILITY') {
@@ -666,6 +679,7 @@ describe('reconstructed room specials',()=>{
 
  it('locks a reconstructed room globally across both mages, but not another room with the same effect',()=>{
   let g=actionFixture();const sources=g.board.rooms.filter(r=>r.effect==='DRAW_GRIMOIRE');for(const r of sources)r.reconstructed=true;
+  for(const p of g.players)seedPersonalDeck(g,2,p.id);
   player(g).wizard.position={...sources[0].tiles[0]};player(g,'p2').wizard.position={...sources[0].tiles[0]};
   g=applyAction(g,{type:'EXPLORE',playerId:'p1',activateRoomAtStart:true});g=applyAction(g,{type:'END_EXPLORE',playerId:'p1'});
   expectRejected(g,{type:'EXPLORE',playerId:'p1',activateRoomAtStart:true},/special already used/);
@@ -690,6 +704,7 @@ describe('reconstructed room specials',()=>{
   g=applyAction(g,{type:'EXPLORE',playerId:'p1',activateRoomAtStart:true,roomTargetId:adjacent.id});g=applyAction(g,{type:'END_EXPLORE',playerId:'p1'});
   expect(room(g,adjacent.id).cubesByPlayer).toEqual({p1:1});expect(room(g,emerald.id).specialUsed).toBe(false);
   g=explore(g,'p2');expect(g.phase).toBe('CLEANUP');expect(room(g,emerald.id).reconstructed).toBe(true);expect(room(g,emerald.id).specialUsed).toBe(false);expect(room(g,emerald.id).scored).toBe(true);
+  for(const p of g.players)seedPersonalDeck(g,2,p.id);
   g.eventDeck=[{id:'quiet',name:'Quiet',description:'Quiet',kind:'INSTABILITY',amount:0,rooms:0}];g=advance(g);g=advance(g);
   for(const id of ['p1','p2']) {
     g=applyAction(g,{type:'DRAW_STUDY',playerId:id,deckId:'cantrip'});

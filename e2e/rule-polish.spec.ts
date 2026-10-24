@@ -1,5 +1,7 @@
 import { test, expect, Page, WebSocketRoute } from '@playwright/test';
 import { BLACK_ROSE_ID, Card, Evocation, GameAction, GameState, MAGE_COLORS, applyAction, createGame } from '../packages/game-engine/src/index';
+import { expectSpellIcon, expectSpellType } from './spell-ui';
+import { selectControlTab, viewRetinue } from './layout-ui';
 
 const errors=new WeakMap<Page,string[]>();
 test.beforeEach(async ({page})=>{
@@ -17,7 +19,7 @@ function fixtureState(count=2):GameState {
  game.currentPlayerId='p1';
  game.activation={playerId:'p1',actionsUsed:0,exploring:0,sequencedSpellUsed:false,spellsCast:0,discardedExit:false,roomEffectUsed:false,physicalAction:null};
  game.players.forEach((p,i)=>{p.name=['Rose Warden','Blue Seer','Amber Sage','Green Mage'][i];p.connected=true;p.ready=true;p.wizard.position={q:i%2,r:Math.floor(i/2)};});
- game.board.rooms.forEach((room,i)=>{room.name=room.id==='room-0,0'?'Black Rose Chamber':`Chamber ${i+1}`;});
+ game.board.rooms.forEach((room,i)=>{room.name=room.id==='room-0,0'?'(not) Black Rose Chamber':`Chamber ${i+1}`;});
  return game;
 }
 function model(id:string,playerId:string,number:number,position={q:0,r:0}):Evocation {
@@ -57,12 +59,84 @@ const player=(page:Page,id:string)=>page.locator(`.player[data-player-id="${id}"
 const rgb=(color:string)=>`rgb(${[1,3,5].map(start=>parseInt(color.slice(start,start+2),16)).join(', ')})`;
 const colorFor=(id:string)=>rgb(MAGE_COLORS[id]??'#d4cedd');
 
+// Presentation fixtures still use one finite physical pool. Used preparations
+// are references to cards already in a discard/active zone, not extra copies.
+function physicalCardIds(game:GameState):string[] {
+ return [...game.library.flatMap(deck=>[...deck.cards,...deck.discard]),...game.powerfulDeck,...game.removedCards,
+  ...[...game.readiedSpells??[],...game.ongoingSpells??[]].map(active=>active.card),
+  ...game.players.flatMap(p=>[...p.hand,...p.personalDeck,...p.discard,
+  ...Object.values(p.prepared).flatMap(slot=>slot&&!slot.used?[slot.card]:[])])].map(card=>card.id).sort();
+}
+
+for(const viewport of [{width:1440,height:1200},{width:390,height:844}]) {
+ test(`later hand overflow selects exactly the excess and preserves school-origin cards in personal discard at ${viewport.width}px`,async ({page},testInfo)=>{
+  await page.setViewportSize(viewport);
+  let game=fixtureState();game.phase='PREPARATION';game.activation=null;game.currentPlayerId=null;game.round=3;
+  const cantrip=game.library.find(deck=>deck.id==='cantrip')!;
+  const transmutation=game.library.find(deck=>deck.id==='transmutation')!;
+  const enchantment=game.library.find(deck=>deck.id==='enchantment')!;
+  // Model a later overflowing hand, not the corrected four-card first Study.
+  // Every card comes out of its actual school stock, including the prior discard.
+  game.players[0].hand.push(...cantrip.cards.splice(0,6),...transmutation.cards.splice(0,3));
+  game.players[0].discard.push(...enchantment.cards.splice(0,1));
+  game.players[1].hand.push(...enchantment.cards.splice(0,4));
+  const beforeIds=physicalCardIds(game),hand=structuredClone(game.players[0].hand);
+  const discardBefore=structuredClone(game.players[0].discard);
+  const schoolDiscards=structuredClone(game.library.map(deck=>deck.discard));
+  expect(beforeIds).toHaveLength(120);expect(new Set(beforeIds).size).toBe(120);
+  const wire=await mount(page,game),panel=page.locator('.hand-limit-panel'),cards=panel.locator('.spell');
+  await expect(panel.getByRole('heading',{name:'Reduce your hand to 7 cards',exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Prepare spells',exact:true})).toHaveCount(0);
+  await expect(cards).toHaveCount(9);await expect(panel.locator('.spell:disabled')).toHaveCount(0);
+  const confirm=panel.getByRole('button',{name:/^Discard excess cards/});
+  await expect(confirm).toHaveText('Discard excess cards (0/2)');await expect(confirm).toBeDisabled();
+  const discardIndices=[0,8],discards=discardIndices.map(index=>hand[index]);
+  expect(discards.map(card=>card.schoolId)).toEqual(['cantrip','transmutation']);
+  for(const index of discardIndices)await cards.nth(index).click();
+  await cards.nth(1).click();await expect(panel.locator('.spell.chosen')).toHaveCount(2);
+  await expect(confirm).toHaveText('Discard excess cards (2/2)');
+  await cards.nth(8).click();await expect(confirm).toBeDisabled();await cards.nth(8).click();
+  // A peer can finish slots, but cannot advance Action past our unresolved limit.
+  const peer=game.players[1];
+  game=applyAction(game,{type:'PREPARE_CARDS',playerId:peer.id,
+  preparedCardIds:peer.hand.slice(0,3).map(card=>card.id),rapidCardId:peer.hand[3].id});
+  wire.update(game);await expect(page.locator('.phase-track .current span')).toHaveText('Preparation');
+  await expect(confirm).toBeEnabled();
+  await testInfo.attach(`later-overflow-${viewport.width}`,{body:await panel.screenshot(),contentType:'image/png'});
+  await confirm.click();await expect.poll(()=>wire.commands.length).toBe(1);
+  expect(wire.commands[0].action).toEqual({type:'DISCARD_HAND_LIMIT',playerId:'p1',cardIds:discards.map(card=>card.id)});
+  game=applyAction(game,wire.commands[0].action);wire.update(game);wire.ack();
+  await expect(panel).toHaveCount(0);
+  expect(game.players[0].discard).toEqual([...discardBefore,...discards]);
+  expect(game.library.map(deck=>deck.discard)).toEqual(schoolDiscards);
+  expect(physicalCardIds(game)).toEqual(beforeIds);
+  const retained=hand.filter((_,index)=>!discardIndices.includes(index));
+  await expect(page.locator('.phase-panel .spell strong')).toHaveText(retained.map(card=>card.name));
+  await selectControlTab(page,'More');
+  await expect(page.locator('.reference > .hint')).toContainText('Hand 7/7 · Personal discard 3');
+  for(let index=0;index<4;index++)await page.locator('.phase-panel .spell').nth(index).click();
+  await page.getByRole('button',{name:'Prepare spells',exact:true}).click();
+  await expect.poll(()=>wire.commands.length).toBe(2);
+  expect(wire.commands[1].action).toEqual({type:'PREPARE_CARDS',playerId:'p1',
+  preparedCardIds:retained.slice(0,3).map(card=>card.id),rapidCardId:retained[3].id});
+  game=applyAction(game,wire.commands[1].action);wire.update(game);wire.ack();
+  await dismissOverlay(page);await expect(page.locator('.phase-track .current span')).toHaveText('Action');
+  expect(game.players[0].hand).toHaveLength(3);expect(physicalCardIds(game)).toEqual(beforeIds);
+  expect(game.players[0].discard).toEqual([...discardBefore,...discards]);
+  expect(game.library.map(deck=>deck.discard)).toEqual(schoolDiscards);
+  await expect(page.getByRole('alert')).toHaveCount(0);
+ });
+}
+
 for(const viewport of [{width:1440,height:1200},{width:390,height:844}]) {
  for(const schoolId of ['cantrip','transmutation']) {
- test(`Study offers two independent schools and draws/discards ${schoolId} at ${viewport.width}px`,async ({page},testInfo)=>{
+ test(`Study offers independent school supplies and draws/discards ${schoolId} at ${viewport.width}px`,async ({page},testInfo)=>{
   await page.setViewportSize(viewport);
   let game=fixtureState(4);game.phase='STUDY';game.activation=null;game.currentPlayerId=null;
-  for(const p of game.players)p.hand.push(...p.personalDeck.splice(0,2));
+  // Keep both tested schools full; seed hands from real third-school stock.
+  for(const p of game.players)p.hand.push(...game.library.find(d=>d.id==='enchantment')!.cards.splice(0,2));
+  const beforeIds=physicalCardIds(game);
+  expect(beforeIds).toHaveLength(120);expect(new Set(beforeIds).size).toBe(120);
   const wire=await mount(page,game);
   const panel=page.locator('.phase-panel'),schools=panel.locator('.schools button');
   const chosen=panel.locator(`.schools button[data-school-id="${schoolId}"]`);
@@ -71,15 +145,20 @@ for(const viewport of [{width:1440,height:1200},{width:390,height:844}]) {
   const deck=game.library.find(d=>d.id===schoolId)!;
   const otherDeck=game.library.find(d=>d.id===otherId)!;
   await expect(panel.getByRole('heading',{name:'Schools of magic',exact:true})).toBeVisible();
-  await expect(schools).toHaveCount(2);
-  await expect(schools.locator('strong')).toHaveText(['Cantrip','Transmutation']);
+  await expect.poll(()=>schools.count()).toBeGreaterThanOrEqual(2);
+  for(const [id,name] of [['cantrip','Cantrip'],['transmutation','Transmutation']]) {
+   await expect(panel.locator(`.schools button[data-school-id="${id}"] strong`)).toHaveText(name);
+   const supply=game.library.find(d=>d.id===id)!;
+   expect(supply.cards).toHaveLength(36);
+   const patterns=new Set(supply.cards.map(card=>card.name));expect(patterns.size).toBe(12);
+   for(const pattern of patterns)expect(supply.cards.filter(card=>card.name===pattern)).toHaveLength(3);
+  }
   for(const button of [chosen,other]) {
    await expect(button).toContainText('36 draw · 0 discard');
    await expect(button).toBeEnabled();
   }
   await expect(panel).toContainText('Choose a school to draw 4 spells. Each school has 12 spells with 3 copies of each, for 36 cards.');
   await expect(chosen).toContainText(schoolId==='transmutation'?'Heal wounds · Convert cubes':'Damage · Instability');
-  await expect(panel).not.toContainText(/six|School [1-6]/i);
   await testInfo.attach(`schools-${schoolId}-${viewport.width}`,{body:await panel.screenshot({path:testInfo.outputPath('schools.png')}),contentType:'image/png'});
 
   // Availability is per school, never the combined stock or opponents' hands.
@@ -91,14 +170,16 @@ for(const viewport of [{width:1440,height:1200},{width:390,height:844}]) {
   deck.discard.push(game.players[1].hand.pop()!);wire.update(game);
   await expect(chosen).toContainText('3 draw · 1 discard');
   await expect(chosen).toBeEnabled();await expect(other).toBeDisabled();
-  const untouched=structuredClone(otherDeck);
+  const untouched=structuredClone(game.library.filter(d=>d.id!==schoolId));
+  const schoolIds=game.library.map(d=>d.id);
   await chosen.click();
   await expect.poll(()=>wire.commands.length).toBe(1);
   expect(wire.commands[0].action).toEqual({type:'DRAW_STUDY',playerId:'p1',deckId:schoolId});
   await expect(chosen).toBeDisabled();
   game=applyAction(game,wire.commands[0].action);wire.update(game);wire.ack();
+  expect(physicalCardIds(game)).toEqual(beforeIds);
   expect(game.players[0].hand.filter(c=>c.schoolId===schoolId)).toHaveLength(4);
-  expect(game.library.find(d=>d.id===otherId)).toEqual(untouched);
+  expect(game.library.filter(d=>d.id!==schoolId)).toEqual(untouched);
   await expect(panel.locator('.spell')).toHaveCount(6);
   await expect(panel).toContainText('Shared spells return to their own school’s discard');
   await expect(panel.locator('.schools')).toHaveCount(0);
@@ -109,8 +190,9 @@ for(const viewport of [{width:1440,height:1200},{width:390,height:844}]) {
   await expect.poll(()=>wire.commands.length).toBe(2);
   expect(wire.commands[1].action).toEqual({type:'DISCARD_STUDY',playerId:'p1',cardIds:discards.map(c=>c.id)});
   game=applyAction(game,wire.commands[1].action);wire.update(game);wire.ack();
-  expect(game.library).toHaveLength(2);expect(game.library.find(d=>d.id===schoolId)!.discard).toEqual(discards);
-  expect(game.library.find(d=>d.id===otherId)).toEqual(untouched);
+  expect(physicalCardIds(game)).toEqual(beforeIds);
+  expect(game.library.map(d=>d.id)).toEqual(schoolIds);expect(game.library.find(d=>d.id===schoolId)!.discard).toEqual(discards);
+  expect(game.library.filter(d=>d.id!==schoolId)).toEqual(untouched);
   await expect(page.getByText('✓ Study complete. Waiting for the other mages.',{exact:true})).toBeVisible();
  });
  }
@@ -183,8 +265,9 @@ for(const viewport of [{width:1440,height:1200},{width:390,height:844}]) {
   }
   expect(measurements.some(m=>m.fills.every(f=>f.width===0))).toBe(true);
   const actions=await page.locator('.actions-panel').boundingBox();
-  const players=await page.locator('.players-panel').boundingBox();
-  expect(actions!.y+actions!.height).toBeLessThanOrEqual(players!.y);
+  const board=await page.locator('.board-panel').boundingBox();
+  expect(actions!.y+actions!.height).toBeLessThanOrEqual(board!.y);
+  await expect(page.locator('.control-banner .actions-panel')).toHaveCount(1);
   await expect(page.locator('.actions-panel')).toContainText('No cubes available');
   await expect(page.getByRole('button',{name:/pass/i})).toHaveCount(0);
   // Scroll and hit-test the badge itself, not the group's bounding rectangle.
@@ -243,8 +326,8 @@ test('damage bars count wounds with owner, Black Rose and unattributed segments,
  await expect(player(page,'p1').locator('.damage-segment')).toHaveCount(0);
  await expect(player(page,'p2')).toContainText('Unattributed wounds (no cube available): 1');
  await expect(player(page,'p2').locator('[data-owner-id="p1"]')).toHaveCSS('width',await player(page,'p2').locator('[data-owner-id="p3"]').evaluate(el=>getComputedStyle(el).width));
- await page.getByRole('button',{name:'Show evocations for Rose Warden (1)',exact:true}).click();
- const evoc=page.locator('.evocation-card');
+ await selectControlTab(page,'Evocations');
+ const evoc=page.locator('#retinue-p1 .evocation-card');
  await expect(evoc.locator('.damage-count')).toHaveText('1 damage cubes / 2 capacity');
  await expect(evoc.locator('.damage-segment')).toHaveAttribute('style',/width: 50%/);
  await expect(evoc).toContainText('Unattributed wounds');
@@ -279,22 +362,26 @@ test('Preparation permits powers in slots and explains permanent removal and ret
  game.players[0].hand=[power,...[1,2,3].map(n=>({...preparedSpell,id:`prepare-${n}`,name:`Study ${n}`}))];
  const wire=await mount(page,game);
  const panel=page.locator('.phase-panel').filter({has:page.getByRole('heading',{name:'Three ordered spells. One wild card.'})});
- await expect(panel).toContainText('never cast from hand');await expect(panel).toContainText('unused prepared powers return to hand');
+ await expect(panel).toContainText('never cast from hand');await expect(panel).toContainText('unused prepared forgotten spells return to hand');
  for(const card of game.players[0].hand)await panel.getByRole('button').filter({has:page.getByText(card.name,{exact:true})}).click();
  await page.getByRole('button',{name:'Prepare spells',exact:true}).click();
  await expect.poll(()=>wire.commands.length).toBe(1);
  expect(wire.commands[0].action).toEqual({type:'PREPARE_CARDS',playerId:'p1',preparedCardIds:game.players[0].hand.slice(0,3).map(c=>c.id),rapidCardId:'prepare-3'});
 });
 
-test('mage toggles show only selected retinues, stable numbers and owner colors; opponents remain read-only',async ({page})=>{
+test('mage view controls show the own retinue and selected opponents, stable numbers and owner colors; opponents remain read-only',async ({page})=>{
  const game=fixtureState();
  game.evocations=[model('own-three','p1',3),model('own-one','p1',1),model('enemy-two','p2',2)];
  const wire=await mount(page,game);
- await expect(page.locator('.evocations-panel')).toHaveCount(0);
- const ownToggle=page.getByRole('button',{name:'Show evocations for Rose Warden (2)',exact:true});
+ await expect(page.locator('.evocations-panel:visible')).toHaveCount(0);
+ await viewRetinue(page,'p1');
+ await expect(page.locator('#retinue-p1')).toBeVisible();
+ await expect(page.locator('#retinue-p2')).toBeHidden();
  const otherToggle=page.getByRole('button',{name:'Show evocations for Blue Seer (1)',exact:true});
- await ownToggle.click();await otherToggle.click();
- await expect(page.locator('.evocations-panel')).toHaveCount(2);
+ await expect(otherToggle).toHaveAttribute('aria-expanded','false');
+ await otherToggle.click();
+ await expect(page.getByRole('button',{name:'Hide evocations for Blue Seer (1)',exact:true})).toHaveAttribute('aria-expanded','true');
+ await expect(page.locator('.evocations-panel:visible')).toHaveCount(2);
  for(const evoc of game.evocations) {
   const marker=page.locator(`.evocation-marker[data-evocation-id="${evoc.id}"]`),card=page.locator(`.evocation-card[data-evocation-id="${evoc.id}"]`);
   await expect(marker.locator('text')).toHaveText(String(evoc.number));
@@ -312,26 +399,32 @@ test('mage toggles show only selected retinues, stable numbers and owner colors;
  await page.getByRole('button',{name:/^Activate Cadaver #3/}).click();
  await expect.poll(()=>wire.commands.length).toBe(1);
  expect(wire.commands[0].action).toEqual({type:'ACTIVATE_EVOCATION',playerId:'p1',evocationId:'own-three'});wire.ack();
- await page.getByRole('button',{name:'Hide evocations for Rose Warden (2)',exact:true}).click();
+ await expect(page.getByRole('button',{name:'Hide evocations for Rose Warden (2)',exact:true})).toHaveCount(0);
  await page.getByRole('button',{name:'Hide evocations for Blue Seer (1)',exact:true}).click();
+ await expect(page.locator('#retinue-p2')).toBeHidden();
+ await expect(page.locator('#retinue-p1')).toBeVisible();
+ await selectControlTab(page,'Actions');
+ await expect(page.locator('.evocations-panel:visible')).toHaveCount(0);
  game.phase='EVOCATION';game.activation=null;game.evocations.reverse();wire.update(game);await dismissOverlay(page);
- await expect(page.locator('.evocations-panel')).toHaveCount(0);
- await page.getByRole('button',{name:'Show evocations for Rose Warden (2)',exact:true}).click();
+ await expect(page.getByRole('tab',{name:'Evocations',exact:true})).toHaveAttribute('aria-selected','true');
+ await expect(page.locator('.evocations-panel:visible')).toHaveCount(1);
  await expect(page.locator('.evocation-card[data-evocation-id="own-three"] .evocation-number')).toHaveText('#3');
- await expect(page.locator('#retinue-p2')).toHaveCount(0);
+ await expect(page.locator('#retinue-p2')).toBeHidden();
  // Losing #1 must never renumber the survivor.
  game.evocations=game.evocations.filter(e=>e.id!=='own-one');wire.update(game);
  await expect(page.locator('.evocation-card[data-evocation-id="own-three"] .evocation-number')).toHaveText('#3');
  await expect(page.locator('.evocation-marker[data-evocation-id="own-three"] text')).toHaveText('3');
 });
 
-test('active own evocation can attack or finish with all retinue details hidden',async ({page})=>{
+test('active own evocation can attack or finish with mage details and opponent retinues closed',async ({page})=>{
  const game=fixtureState();game.phase='EVOCATION';game.activation=null;
  game.players[1].wizard.position={q:0,r:0};
  game.evocations=[model('active-own','p1',2)];
  game.evocationActivation={evocationId:'active-own',playerId:'p1',movesRemaining:2,returnToAction:false};
  const wire=await mount(page,game);
- await expect(page.locator('.evocations-panel')).toHaveCount(0);
+ await expect(page.locator('.player[open]')).toHaveCount(0);
+ await expect(page.locator('#retinue-p1')).toBeVisible();
+ await expect(page.locator('#retinue-p2')).toBeHidden();
  await expect(page.locator('.evocation-controls')).toContainText('Cadaver #2');
  const attack=page.getByRole('button',{name:/Cadaver attack Blue Seer/});await expect(attack).toBeEnabled();
  await attack.click();await expect.poll(()=>wire.commands.length).toBe(1);
@@ -445,7 +538,7 @@ test('history clears discard-exit choice; missing or false metadata never create
  await expect(page.locator('.board-panel h2')).toHaveText('Discard exit · choose an adjacent space');
  await page.getByRole('button',{name:'Undo action',exact:true}).click();await expect.poll(()=>wire.commands.length).toBe(1);
  await expect(page.getByLabel('Card to discard for exit')).toHaveValue('');
- await expect(page.locator('.board-panel h2')).toHaveText('Chambers of the Black Rose');
+ await expect(page.locator('.board-panel h2')).toHaveText('Chambers of the (not) Black Rose');
 });
 
 test('Black Rose score, first player and Black Rose game-over winner are public without extra mage rows',async ({page})=>{
@@ -455,12 +548,74 @@ test('Black Rose score, first player and Black Rose game-over winner are public 
  await expect(page.locator('.black-rose-score')).toContainText('35 VP');
  await expect(page.locator('.black-rose-score')).toContainText('3 kills');
  await expect(player(page,'p1').getByRole('img',{name:'First player',exact:true})).toBeVisible();
+ await selectControlTab(page,'More');
  await expect(page.locator('.reference')).toContainText('round 3');
- for(const text of ['4 cubes · 2 / 1 / 0 VP','5 cubes · 4 / 2 / 1 VP','6 cubes · 5 / 3 / 1 VP','10 cubes · 6 / 3 / 1 VP','Black Rose competes for kills, not quests'])await expect(page.locator('.reference')).toContainText(text);
+ for(const text of ['4 cubes · 2 / 1 / 0 VP','5 cubes · 4 / 2 / 1 VP','6 cubes · 5 / 3 / 1 VP','10 cubes · 6 / 3 / 1 VP','(not) Black Rose competes for kills, not quests'])await expect(page.locator('.reference')).toContainText(text);
  game.phase='GAME_OVER';game.currentPlayerId=null;game.activation=null;game.winner=BLACK_ROSE_ID;game.endgameScored=true;wire.update(game);await dismissOverlay(page);
- await expect(page.locator('.victory h2')).toHaveText('♛ Black Rose wins');
- await expect(page.locator('.victory')).toContainText('Black Rose: 35 VP · 3 kills');
+ await expect(page.locator('.victory h2')).toHaveText('♛ (not) Black Rose wins');
+ await expect(page.locator('.victory')).toContainText('(not) Black Rose: 35 VP · 3 kills');
  await expect(page.locator('.victory')).toContainText('Final majorities and first-player bonus included');
  await expect(page.locator('.players-panel .player')).toHaveCount(2);
  await expect(page.locator('.actions-panel')).toHaveCount(0);
 });
+
+for(const viewport of [{width:1440,height:1200},{width:390,height:844}]) {
+test(`glossary, Ready versus Active and accessible spell-type icons at ${viewport.width}px`,async ({page},testInfo)=>{
+ const game=fixtureState();
+ const take=(name:string)=>{
+  const deck=game.library.find(d=>d.cards.some(c=>c.name===name))!;
+  return deck.cards.splice(deck.cards.findIndex(c=>c.name===name),1)[0];
+ };
+ const cases=[
+  {slot:'slot1',name:'Arcane Bolt',type:'COMBAT',label:'Combat'},
+  {slot:'slot2',name:'Mending Light',type:'CONTINGENCY',label:'Contingency'},
+  {slot:'slot3',name:'Threshold Snare',type:'TRAP',label:'Trap'},
+  {slot:'rapid',name:'Thorn Retort',type:'PROTECTION',label:'Protection'},
+ ] as const;
+ for(const item of cases)game.players[0].prepared[item.slot]={card:take(item.name),used:false};
+ const own=take('Threshold Snare'),foreign=take('Mending Ward'),ongoing=take("Pilgrim's Mark");
+ game.readiedSpells=[{id:'own-active',playerId:'p1',card:own,roomId:'room-1,0'},
+  {id:'foreign-active',playerId:'p2',card:foreign,targetPlayerId:'p2'}];
+ game.ongoingSpells=[{id:'ongoing-active',playerId:'p1',card:ongoing,targetPlayerId:'p1'}];
+ game.activeSpellOrder=['own-active','foreign-active','ongoing-active'];
+ game.players[0].hand=[game.powerfulDeck.pop()!];
+ Object.assign(game.players[1].wizard,{damageCubes:1,damageByPlayer:{[BLACK_ROSE_ID]:1}});
+ Object.assign(game.board.rooms.find(r=>r.id==='room-0,0')!,{instability:1,cubesByPlayer:{[BLACK_ROSE_ID]:1}});
+ await page.setViewportSize(viewport);await mount(page,game);
+ await expect(page.locator('.brand')).toContainText(/\(not\) BLACK ROSE/i);
+ await expect(page.locator('footer')).toContainText(/\(not\) BLACK ROSE/i);
+ await expect(page.locator('.black-rose-score')).toHaveAttribute('aria-label','(not) Black Rose score');
+ await expect(page.locator('.black-rose-score')).toContainText('(not) Black Rose');
+ await expect(player(page,'p2').locator('.damage-contributions')).toContainText('(not) Black Rose: 1');
+ await expect(page.locator('.mage-legend')).toContainText('(not) Black Rose · neutral');
+ await hex(page,'room-0,0').click();
+ await expect(page.locator('.room-detail .contributions')).toContainText('(not) Black Rose: 1');
+ await expect(page.locator('.powerful-panel').getByRole('heading',{name:'Forgotten spells',exact:true})).toBeVisible();
+ await selectControlTab(page,'More');
+ await expect(page.locator('.reference')).toContainText('Forgotten spells:');
+ await expect(page.locator('.app')).not.toContainText(/Central powers|Black Rose spells|Readied & ongoing|Readied and ongoing|Hidden ready spell|Ready secretly|Offensive/);
+ expect(await page.locator('.app').textContent()).not.toMatch(/(?<!\(not\) )Black Rose/i);
+ for(const item of cases) {
+  const card=page.locator('.prepared .spell').filter({has:page.locator('strong',{hasText:new RegExp(`^${item.name}$`)})});
+  await expect(card.locator('.spell-type')).toHaveAttribute('data-spell-type',item.type);
+  await expectSpellType(card.locator('.spell-type'),item.label);
+  await expect(card).toContainText('Ready');
+  await expectSpellIcon(card,item.label);
+ }
+ const active=page.getByRole('region',{name:'Active and ongoing spells',exact:true});
+ await expect(active.getByRole('heading',{name:'Active & ongoing',exact:true})).toBeVisible();
+ await expectSpellType(active.locator('.own-spell .spell-type'),'Trap · Active');
+ await expect(active.locator('.own-spell strong')).toHaveText(own.name);
+ const hidden=active.locator('.hidden-spell');
+ await expect(hidden.locator('strong')).toHaveText('Hidden active spell');
+ await expect(hidden.locator('.spell-type')).toHaveText('Face down · Active');
+ await expect(hidden.getByRole('img')).toHaveCount(0);
+ const markup=await hidden.evaluate(element=>element.outerHTML);
+ for(const secret of [foreign.id,foreign.name,foreign.rulesText!,'Protection spell'])expect(markup).not.toContain(secret);
+ await expect(active.locator('.ongoing-spell strong')).toHaveText(ongoing.name);
+ await expectSpellType(active.locator('.ongoing-spell .spell-type'),'Contingency · Ongoing');
+ await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+ await testInfo.attach(`spell-types-${viewport.width}`,{body:await page.locator('.cards.prepared').screenshot({path:testInfo.outputPath('spell-types.png')}),contentType:'image/png'});
+ await testInfo.attach(`active-spells-${viewport.width}`,{body:await active.screenshot({path:testInfo.outputPath('active-spells.png')}),contentType:'image/png'});
+});
+}

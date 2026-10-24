@@ -1,4 +1,5 @@
 import { test, expect, type Locator, type Page, type WebSocketRoute } from '@playwright/test';
+import { openMageDetails, selectControlTab, viewRetinue } from './layout-ui';
 import { applyAction, BLACK_ROSE_ID, createGame, MAGE_COLORS } from '../packages/game-engine/src/index';
 import type { Card, Evocation, GameAction, GameState, Hex } from '../packages/game-engine/src/index';
 
@@ -160,12 +161,11 @@ async function expectDamage(card: Locator, model: { health: number; damageCubes:
 }
 async function expectModels(page: Page, game: GameState) {
   for (const p of game.players) {
-    const card = player(page, p.id);
+    const card = await openMageDetails(page, p.id);
     await expectDamage(card, p.wizard);
     await expect(card.locator('[title="Available cubes"]')).toHaveText(`◆ ${p.cubes.available} available`);
     await expect(card.locator('.cube-pool')).toHaveText(`◆ On mages: ${p.cubes.onWizard} · On evocations: ${p.cubes.onEvocations} · In rooms: ${p.cubes.onBoard}`);
-    const toggle = card.getByRole('button', { name: /evocations/ });
-    if (await toggle.getAttribute('aria-expanded') === 'false') await toggle.click();
+    await viewRetinue(page, p.id);
     await expect(page.locator(`#retinue-${p.id} .evocation-card`)).toHaveCount(game.evocations.filter(e => e.playerId === p.id).length);
   }
   for (const e of game.evocations) await expectDamage(page.locator(`.evocation-card[data-evocation-id="${e.id}"]`), e);
@@ -189,6 +189,7 @@ async function cast(page: Page, wire: Wire, expected: Cast) {
   if (before.activation!.actionsUsed === 0) {
     expect(after.activation).toMatchObject({ playerId: 'p1', actionsUsed: 1, spellsCast: 1, sequencedSpellUsed: expected.slot !== 'rapid' });
     await expect(page.locator('.phase-panel .badge')).toHaveText('1 turn actions left');
+    await selectControlTab(page, 'Actions');
     await expect(page.getByRole('button', { name: /^End turn/ })).toBeEnabled(); // Wait for the request ACK too.
   } else {
     expect(after.currentPlayerId).toBe('p2');
@@ -228,7 +229,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       const after = await cast(page, wire, { type: 'CAST_SPELL', playerId: 'p1', slot: 'slot1', targetPlayerId: 'p1' });
       expect(after.players[0].wizard).toMatchObject({ damageCubes: 2, damageByPlayer: {}, blackDamage: 1 });
       expect(after.players[1].cubes).toEqual({ available: 25, onWizard: 0, onEvocations: 0, onBoard: 0 });
-      await expect(player(page, 'p1')).toContainText('Black Rose: 1');
+      await expect(player(page, 'p1')).toContainText('(not) Black Rose: 1');
       await expect(player(page, 'p1')).toContainText('Unattributed wounds (no cube available): 1');
     });
 
@@ -292,6 +293,9 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
         const wire = await mount(page, game);
         await prepared(page).click(); await noDummy(page);
         await hex(page, 'room-1,0').click();
+        // The room represents all its tiles, including models in a secondary tile.
+        await expect(hex(page, 'room-1,0').locator('[data-mage-id="p3"]')).toHaveCount(1);
+        await expect(hex(page, 'room-1,0').locator('.evocation-marker[data-evocation-id="off-axis"]')).toHaveCount(1);
         await expectOptions(page, category === 'MAGE' ? ['p2'] : category === 'EVOCATION' ? ['legal-enemy'] : ['p2', 'legal-enemy']);
         await expect(hex(page, 'room-1,0')).toHaveClass(/reachable/);
         await expect(castButton(page)).toBeEnabled();
@@ -398,7 +402,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       });
     }
 
-    test('switching cards clears selected model, room and dummy mode; offensive Cantrip dummy remains harmless', async ({ page }) => {
+    test('switching cards clears selected model, room and dummy mode; Combat Cantrip dummy remains harmless', async ({ page }) => {
       const game = fixture(); prepare(game, 'Splinter Hex'); prepare(game, 'Vital Thread', 'rapid');
       wound(game, 'p1', { p3: 2 }); wound(game, 'own-one', { p3: 1 }); syncCubes(game);
       const wire = await mount(page, game);
@@ -425,7 +429,9 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       const after = await cast(page, wire, { type: 'CAST_SPELL', playerId: 'p1', slot: 'slot1', roomId: 'room-0,0', dummy: true });
       expect(after.players.map(p => p.wizard)).toEqual(healed.players.map(p => p.wizard)); expect(after.evocations).toEqual(healed.evocations);
       expect(roomAt(after)).toMatchObject({ instability: 1, cubesByPlayer: { p1: 1 } });
-      expect(after.library.map(d => d.discard.length)).toEqual([1, 1]);
+      expect(after.library.map(d => ({ id: d.id, discards: d.discard.length }))).toEqual([
+        { id: 'cantrip', discards: 1 }, { id: 'transmutation', discards: 1 }, { id: 'enchantment', discards: 0 },
+      ]);
     });
   });
 }

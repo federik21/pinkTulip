@@ -11,7 +11,12 @@ export function publicState(game: GameState, viewer: PlayerId | null, history: A
  copy.eventDeck=[]; copy.questDeck=[];
  copy.powerfulDeck=copy.powerfulDeck.map((_,i)=>hiddenCard(i));
  for(const deck of copy.library) deck.cards=deck.cards.map((_,i)=>hiddenCard(i));
+ // Mask the whole hidden instance: bindings can disclose its target/trigger.
+ if(copy.readiedSpells) copy.readiedSpells=copy.readiedSpells.map((active,i)=>active.playerId===viewer
+  ? active : {id:active.id,playerId:active.playerId,card:hiddenCard(i)});
  for(const p of copy.players) {
+  // The school choice and personal discard are public. Future personal cards
+  // stay hidden even from their owner; only the owner's hand is private-visible.
   p.personalDeck=p.personalDeck.map((_,i)=>hiddenCard(i));
   if(p.id===viewer) continue;
   p.hand=p.hand.map((_,i)=>hiddenCard(i)); p.quest=null;p.additionalQuests=[];
