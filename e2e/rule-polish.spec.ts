@@ -1,7 +1,7 @@
 import { test, expect, Page, WebSocketRoute } from '@playwright/test';
 import { BLACK_ROSE_ID, Card, Evocation, GameAction, GameState, MAGE_COLORS, applyAction, createGame } from '../packages/game-engine/src/index';
 import { expectSpellIcon, expectSpellType } from './spell-ui';
-import { expectReference, selectControlTab, selectSpells, viewRetinue } from './layout-ui';
+import { assignPreparationCard, closeControls, expectReference, pressHistory, selectControlTab, selectSpells, viewRetinue } from './layout-ui';
 
 const errors=new WeakMap<Page,string[]>();
 test.beforeEach(async ({page})=>{
@@ -87,7 +87,8 @@ for(const viewport of [{width:1440,height:1200},{width:390,height:844}]) {
   expect(beforeIds).toHaveLength(120);expect(new Set(beforeIds).size).toBe(120);
   const wire=await mount(page,game),panel=page.locator('.hand-limit-panel'),cards=panel.locator('.spell');
   await expect(panel.getByRole('heading',{name:'Reduce your hand to 7 cards',exact:true})).toBeVisible();
-  await expect(page.getByRole('button',{name:'Prepare spells',exact:true})).toHaveCount(0);
+  await expect(page.locator('.preparation-panel')).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'Done',exact:true})).toHaveCount(0);
   await expect(cards).toHaveCount(9);await expect(panel.locator('.spell:disabled')).toHaveCount(0);
   const confirm=panel.getByRole('button',{name:/^Discard excess cards/});
   await expect(confirm).toHaveText('Discard excess cards (0/2)');await expect(confirm).toBeDisabled();
@@ -112,10 +113,10 @@ for(const viewport of [{width:1440,height:1200},{width:390,height:844}]) {
   expect(game.library.map(deck=>deck.discard)).toEqual(schoolDiscards);
   expect(physicalCardIds(game)).toEqual(beforeIds);
   const retained=hand.filter((_,index)=>!discardIndices.includes(index));
-  await expect(page.locator('.phase-panel .spell strong')).toHaveText(retained.map(card=>card.name));
+  await expect(page.locator('.preparation-panel .cards .spell strong')).toHaveText(retained.map(card=>card.name));
   await expectReference(page,'Hand 7/7 · Personal discard 3');
-  for(let index=0;index<4;index++)await page.locator('.phase-panel .spell').nth(index).click();
-  await page.getByRole('button',{name:'Prepare spells',exact:true}).click();
+  for(const [index,slot] of ([1,2,3,'Quick'] as const).entries())await assignPreparationCard(page,page.locator('.preparation-panel .cards .spell').nth(index),slot);
+  await page.locator('.preparation-panel').getByRole('button',{name:'Done',exact:true}).click();
   await expect.poll(()=>wire.commands.length).toBe(2);
   expect(wire.commands[1].action).toEqual({type:'PREPARE_CARDS',playerId:'p1',
   preparedCardIds:retained.slice(0,3).map(card=>card.id),rapidCardId:retained[3].id});
@@ -274,11 +275,11 @@ for(const viewport of [{width:1440,height:1200},{width:390,height:844}]) {
    }
   }
   expect(measurements.some(m=>m.fills.every(f=>f.width===0))).toBe(true);
-  const actions=await page.locator('.actions-panel').boundingBox();
-  const board=await page.locator('.board-panel').boundingBox();
-  expect(actions!.y+actions!.height).toBeLessThanOrEqual(board!.y);
+  await expect(page.locator('.actions-panel')).toBeHidden();
+  await selectControlTab(page,'Physical actions');
   await expect(page.locator('.control-banner .actions-panel')).toHaveCount(1);
   await expect(page.locator('.actions-panel')).toContainText('No cubes available');
+  await closeControls(page);
   await expect(page.getByRole('button',{name:/pass/i})).toHaveCount(0);
   // Scroll and hit-test the badge itself, not the group's bounding rectangle.
   await page.locator('.board-viewport').evaluate(el=>{el.scrollLeft=el.scrollWidth;});
@@ -374,10 +375,19 @@ test('Preparation permits powers in slots and explains permanent removal and ret
  const panel=page.locator('.phase-panel').filter({has:page.getByRole('heading',{name:'Prepare 2–4 spells',exact:true})});
  await expect(panel).toContainText('Forgotten spells must be prepared before casting.');
  await expectReference(page,'Prepared forgotten spells cost one turn action and are permanently removed on casting; unused preparations return to hand next round.');
- for(const card of game.players[0].hand)await panel.getByRole('button').filter({has:page.getByText(card.name,{exact:true})}).click();
- await page.getByRole('button',{name:'Prepare spells',exact:true}).click();
+ for(const [index,slot] of ([1,2,3,'Quick'] as const).entries())await assignPreparationCard(page,panel.locator('.cards .spell').nth(index),slot);
+ await panel.getByRole('button',{name:'Done',exact:true}).click();
  await expect.poll(()=>wire.commands.length).toBe(1);
  expect(wire.commands[0].action).toEqual({type:'PREPARE_CARDS',playerId:'p1',preparedCardIds:game.players[0].hand.slice(0,3).map(c=>c.id),rapidCardId:'prepare-3'});
+ // Four placements do not bypass the enclosing single-flight network gate.
+ await expect(panel.getByRole('button',{name:'Done',exact:true})).toBeDisabled();
+ await expect(panel.locator('.cards .spell').first()).toBeDisabled();
+ await expect(panel.getByRole('button',{name:'Reset selection',exact:true})).toBeDisabled();
+ wire.update(game); // An unrelated STATE is not the matching request ACK.
+ await expect(panel.getByRole('button',{name:'Done',exact:true})).toBeDisabled();
+ wire.ack();
+ await expect(panel.getByRole('button',{name:'Done',exact:true})).toBeEnabled();
+ expect(wire.commands).toHaveLength(1);
 });
 
 test('mage view controls show the own retinue and selected opponents, stable numbers and owner colors; opponents remain read-only',async ({page})=>{
@@ -411,13 +421,14 @@ test('mage view controls show the own retinue and selected opponents, stable num
  await expect.poll(()=>wire.commands.length).toBe(1);
  expect(wire.commands[0].action).toEqual({type:'ACTIVATE_EVOCATION',playerId:'p1',evocationId:'own-three'});wire.ack();
  await expect(page.getByRole('button',{name:'Hide evocations for Rose Warden (2)',exact:true})).toHaveCount(0);
+ await selectControlTab(page,'Evocations');
  await page.getByRole('button',{name:'Hide evocations for Blue Seer (1)',exact:true}).click();
  await expect(page.locator('#retinue-p2')).toBeHidden();
  await expect(page.locator('#retinue-p1')).toBeVisible();
  await selectControlTab(page,'Actions');
  await expect(page.locator('.evocations-panel:visible')).toHaveCount(0);
  game.phase='EVOCATION';game.activation=null;game.evocations.reverse();wire.update(game);await dismissOverlay(page);
- await expect(page.getByRole('tab',{name:'Evocations',exact:true})).toHaveAttribute('aria-selected','true');
+ await selectControlTab(page,'Evocations');
  await expect(page.locator('.evocations-panel:visible')).toHaveCount(1);
  await expect(page.locator('.evocation-card[data-evocation-id="own-three"] .evocation-number')).toHaveText('#3');
  await expect(page.locator('#retinue-p2')).toBeHidden();
@@ -435,6 +446,7 @@ test('active own evocation can attack or finish with mage details and opponent r
  const wire=await mount(page,game);
  for(const summary of await page.locator('.player summary').all())await summary.click();
  await expect(page.locator('.player[open]')).toHaveCount(0);
+ await selectControlTab(page,'Evocations');
  await expect(page.locator('#retinue-p1')).toBeVisible();
  await expect(page.locator('#retinue-p2')).toBeHidden();
  await expect(page.locator('.evocation-controls')).toContainText('Cadaver #2');
@@ -484,6 +496,7 @@ test('evocation targets include only enemy models in the same room and update af
  game.evocations=[model('own-active','p1',1),model('own-friendly','p1',2),model('same-room-enemy','p2',1),model('adjacent-enemy','p3',1,{q:1,r:0})];
  game.evocationActivation={evocationId:'own-active',playerId:'p1',movesRemaining:2,returnToAction:false};
  const wire=await mount(page,game);
+ await selectControlTab(page,'Evocations');
  const controls=page.locator('.evocation-controls');
  await expect(controls.getByRole('button',{name:/^Cadaver attack/})).toHaveCount(2);
  await expect(controls.getByRole('button',{name:/^Cadaver attack Blue Seer/})).toBeEnabled();
@@ -512,6 +525,7 @@ test('evocation UI recognizes different tiles belonging to one room, not just eq
  game.evocations=[model('room-attacker','p1',1)];
  game.evocationActivation={evocationId:'room-attacker',playerId:'p1',movesRemaining:0,returnToAction:false};
  await mount(page,game);
+ await selectControlTab(page,'Evocations');
  await expect(page.locator('.evocation-controls').getByRole('button',{name:/^Cadaver attack Blue Seer/})).toBeEnabled();
 });
 
@@ -519,37 +533,39 @@ test('history clears targeting, stays available after handoff, and is disabled p
  const game=fixtureState();game.history={canUndo:true,canRedo:true,undoLabel:'Move a mage',redoLabel:'Attack'};
  game.players[0].prepared.slot1={card:preparedSpell,used:false};
  const wire=await mount(page,game);
- await page.locator('.prepared .spell').click();await page.getByRole('button',{name:'Target dummy · no damage',exact:true}).click();await hex(page,'room-0,0').click();
- await expect(page.locator('.room-detail button')).toHaveCount(1);
- await page.getByRole('button',{name:'Undo action',exact:true}).click();await expect.poll(()=>wire.commands.length).toBe(1);
+ const history=(name:'Undo action'|'Redo action')=>page.getByRole('button',{name,exact:true,includeHidden:true});
+ await selectSpells(page);await page.locator('.prepared .spell').click();await page.getByRole('button',{name:'Target dummy · no damage',exact:true}).click();await hex(page,'room-0,0').click();
+ await expect(page.locator('.room-detail button').filter({hasNotText:/Target (model|dummy)/})).toHaveCount(1);
+ await pressHistory(page,'Undo action');await expect.poll(()=>wire.commands.length).toBe(1);
  expect(wire.commands[0].action).toEqual({type:'UNDO_ACTION',playerId:'p1'});
  await expect(page.locator('.room-detail,.spell.chosen,.target-mode')).toHaveCount(0);
- await expect(page.getByRole('button',{name:'Undo action',exact:true})).toBeDisabled();
- await expect(page.getByRole('button',{name:'Redo action',exact:true})).toBeDisabled();
- await expect(page.locator('.history-panel')).toContainText('No undo across draws');
- await expect(page.locator('.history-panel')).toContainText('Undo: Move a mage');wire.ack();
+ await expect(history('Undo action')).toBeDisabled();
+ await expect(history('Redo action')).toBeDisabled();
+ await expect(history('Undo action')).toHaveAttribute('title','Undo: Move a mage');
+ await expect(history('Redo action')).toHaveAttribute('title','Redo: Attack');wire.ack();
  game.currentPlayerId='p2';game.activation!.playerId='p2';wire.update(game);
  await expect(page.locator('.actions-panel')).toHaveCount(0);
- await expect(page.getByRole('button',{name:'Undo action',exact:true})).toBeEnabled();
- await page.getByRole('button',{name:'Undo action',exact:true}).click();await expect.poll(()=>wire.commands.length).toBe(2);
+ await expect(history('Undo action')).toBeEnabled();
+ await pressHistory(page,'Undo action');await expect.poll(()=>wire.commands.length).toBe(2);
  expect(wire.commands[1].action).toEqual({type:'UNDO_ACTION',playerId:'p1'});wire.ack();
- await page.getByRole('button',{name:'Redo action',exact:true}).click();await expect.poll(()=>wire.commands.length).toBe(3);
+ await pressHistory(page,'Redo action');await expect.poll(()=>wire.commands.length).toBe(3);
  expect(wire.commands[2].action).toEqual({type:'REDO_ACTION',playerId:'p1'});wire.ack();
  wire.close();await expect(page.locator('.header-meta')).toContainText('Offline');
- await expect(page.getByRole('button',{name:'Undo action',exact:true})).toBeDisabled();
- await expect(page.getByRole('button',{name:'Redo action',exact:true})).toBeDisabled();
+ await expect(history('Undo action')).toHaveCount(0);
+ await expect(history('Redo action')).toHaveCount(0);
 });
 
 test('history clears discard-exit choice; missing or false metadata never creates usable history controls',async ({page})=>{
  const game=fixtureState();game.players[0].wizard.position={q:3,r:-2};game.players[0].hand=[preparedSpell];
  const wire=await mount(page,game);
- await expect(page.locator('.history-panel')).toHaveCount(0);
- game.history={canUndo:false,canRedo:false};wire.update(game);await expect(page.locator('.history-panel')).toHaveCount(0);
+ await expect(page.locator('.turn-banner .turn-history')).toHaveCount(0);
+ game.history={canUndo:false,canRedo:false};wire.update(game);await expect(page.locator('.turn-banner .turn-history')).toHaveCount(0);
  game.history={canUndo:true,canRedo:false};wire.update(game);
- await page.getByLabel('Card to discard for exit').selectOption(preparedSpell.id);
- await expect(page.locator('.board-panel h2')).toHaveText('Discard exit · choose an adjacent space');
+ await selectControlTab(page,'Physical actions');
+ await page.getByLabel('Card to discard to move').selectOption(preparedSpell.id);
+ await expect(page.locator('.board-panel h2')).toHaveText('Discard to move · choose an adjacent space');
  await page.getByRole('button',{name:'Undo action',exact:true}).click();await expect.poll(()=>wire.commands.length).toBe(1);
- await expect(page.getByLabel('Card to discard for exit')).toHaveValue('');
+ await expect(page.getByLabel('Card to discard to move')).toHaveValue('');
  await expect(page.locator('.board-panel h2')).toHaveText('Chambers of the (not) Black Rose');
 });
 
@@ -599,6 +615,7 @@ test(`glossary, Ready versus Active and accessible spell-type icons at ${viewpor
  await expect(page.locator('.black-rose-score')).toContainText('(not) Black Rose');
  await expect(player(page,'p2').locator('.damage-contributions')).toContainText('(not) Black Rose: 1');
  await expect(page.locator('.board-panel .room-legend,.board-panel .mage-legend')).toHaveCount(0);
+ await closeControls(page);
  await page.getByRole('button',{name:'Lodge information',exact:true}).click();
  const information=page.getByRole('dialog',{name:'Lodge information',exact:true});
  await expect(information.locator('.mage-legend')).toBeVisible();
@@ -607,9 +624,9 @@ test(`glossary, Ready versus Active and accessible spell-type icons at ${viewpor
  await expect(information).toBeHidden();
  await hex(page,'room-0,0').click();
  await expect(page.locator('.room-detail .contributions')).toContainText('(not) Black Rose: 1');
+ await selectSpells(page);
  await expect(page.locator('.powerful-panel').getByRole('heading',{name:'Forgotten spells',exact:true})).toBeVisible();
  await expectReference(page,'Forgotten spells:');
- await selectSpells(page);
  await expect(page.locator('.app')).not.toContainText(/Central powers|Black Rose spells|Readied & ongoing|Readied and ongoing|Hidden ready spell|Ready secretly|Offensive/);
  expect(await page.locator('.app').textContent()).not.toMatch(/(?<!\(not\) )Black Rose/i);
  for(const item of cases) {

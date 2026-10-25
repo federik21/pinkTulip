@@ -181,7 +181,7 @@ describe.each(targets)('%s public target helpers',target=>{
    const category=target==='MODEL'||target===kind;
    const expected=target==='SELF'?own&&kind==='MAGE':category&&(!own||!!(spell.heal||spell.convert));
    expect(spellCanTargetModel(spell,'p1',own?'p1':'p2',kind)).toBe(expected);expect(spell).toEqual(before);
-   expect(canUseSpellDummy(spell)).toBe(target==='MODEL'&&!spell.heal&&!spell.convert);
+  expect(canUseSpellDummy(spell)).toBe(['MAGE','EVOCATION','MODEL'].includes(target));
   });
  }
 });
@@ -209,13 +209,17 @@ describe('authoritative target selection and legality',()=>{
    else {const result=cast(s,selection);expect(model(result,kind,index).damageCubes).toBe(1);conserved(result);}
   });
  }
- it.each(['MAGE','EVOCATION','MODEL'] as const)('%s requires a real typed target; rejects forgeries and dummy bypass',target=>{
+ it.each(['MAGE','EVOCATION','MODEL'] as const)('%s requires a real typed target or an explicit dummy; rejects forgeries and mixed payloads',target=>{
   const s=fixture();prepare(s,card(target,{heal:1,convert:1}));
   for(const selection of [{},{targetPlayerId:'missing'},{targetEvocationId:'missing'},
    {targetPlayerId:'evoc-2'},{targetEvocationId:'p2'},{targetEvocationId:'p2-wizard'},
    {targetPlayerId:'p2',targetEvocationId:'evoc-2'},{roomId:'room-0,0'},
-   {targetPlayerId:'p2',roomId:'room-0,0'},{dummy:true,roomId:'room-0,0'},
-   {dummy:true,roomId:'room-0,0',targetPlayerId:'p2'}])reject(s,selection,/Select one|not found|payload|room|Dummy/);
+   {targetPlayerId:'p2',roomId:'room-0,0'},{dummy:true},
+   {dummy:true,roomId:'room-0,0',targetPlayerId:'p2'},
+   {dummy:true,roomId:'room-0,0',targetEvocationId:'evoc-2'}])reject(s,selection,/Select one|Select a room|not found|payload|room|Dummy/);
+  const before=structuredClone(s),result=cast(s,{dummy:true,roomId:'room-0,0'});
+  expect(result.players.map(p=>p.wizard)).toEqual(before.players.map(p=>p.wizard));
+  expect(result.evocations).toEqual(before.evocations);conserved(result);
  });
  it('accepts wizard IDs only in the mage field',()=>{
   const s=fixture();prepare(s,'Renewing Word');wound(s,'MAGE',1,{p3:4});
@@ -278,30 +282,30 @@ describe('authoritative target selection and legality',()=>{
  it.each(targets)('canPlayerAct uses legal %s targets without requiring a nonzero effect',target=>{
   const s=fixture();s.players[0].actionTokens=0;prepare(s,card(target,{heal:1}));
   if(target==='EVOCATION')s.evocations=[];
-  expect(canPlayerAct(s,s.players[0])).toBe(target!=='EVOCATION');
+  expect(canPlayerAct(s,s.players[0])).toBe(true);
   if(target==='EVOCATION'){s.evocations=fixture().evocations;expect(canPlayerAct(s,s.players[0])).toBe(true);}
  });
- it.each(['MAGE','EVOCATION','MODEL'] as const)('canPlayerAct rejects unavailable %s offensive targets instead of inventing a dummy',target=>{
+ it.each(['MAGE','EVOCATION','MODEL'] as const)('canPlayerAct includes a legal %s offensive dummy when real targets are unavailable',target=>{
   const s=fixture();s.players[0].actionTokens=0;prepare(s,card(target,{damage:1}));
   for(const p of s.players.slice(1))p.wizard.position={q:1,r:1};
   for(const e of s.evocations)e.position={q:1,r:1};
-  expect(canPlayerAct(s,s.players[0])).toBe(target==='MODEL');
+  expect(canPlayerAct(s,s.players[0])).toBe(true);
  });
- it.each(['MAGE','EVOCATION','MODEL'] as const)('canPlayerAct excludes protected/off-axis support targets for %s',target=>{
+ it.each(['MAGE','EVOCATION','MODEL'] as const)('canPlayerAct retains a dummy without weakening protected/off-axis real %s targets',target=>{
   const s=fixture();s.players[0].actionTokens=0;prepare(s,card(target,{heal:1}));
-  // MAGE/MODEL support may always target the caster; use a negative range only
-  // for own-position exclusion, then restore range with no legal evocation.
-  if(target==='EVOCATION') {
-   for(const e of s.evocations)e.position={q:1,r:1};expect(canPlayerAct(s,s.players[0])).toBe(false);
-   for(const e of s.evocations)e.position={q:3,r:-2};expect(canPlayerAct(s,s.players[0])).toBe(false);
-   s.evocations[0].position={q:1,r:0};expect(canPlayerAct(s,s.players[0])).toBe(true);
-  } else expect(canPlayerAct(s,s.players[0])).toBe(true);
+  const kind=target==='EVOCATION'?'EVOCATION':'MAGE';
+  const selection=kind==='EVOCATION'?{targetEvocationId:'evoc-2'}:{targetPlayerId:'p2'};
+  model(s,kind,1).position={q:1,r:1};reject(s,selection,/out of range/);
+  expect(canPlayerAct(s,s.players[0])).toBe(true);
+  model(s,kind,1).position={q:3,r:-2};reject(s,selection,/starting room/);
+  expect(canPlayerAct(s,s.players[0])).toBe(true);
  });
- it('canPlayerAct observes turn cap, sequenced quota and typed legality after a cast handoff',()=>{
+ it('canPlayerAct sees the next-turn evocation dummy without bypassing the current numbered quota or turn cap',()=>{
   const s=fixture();s.players[0].actionTokens=0;s.evocations=[];
   prepare(s,'Mending Light','slot1');prepare(s,"Summoner's Balm",'slot2');
   const result=cast(s,{},'slot1');expect(result.currentPlayerId).toBe('p2');
-  expect(canPlayerAct(result,result.players[0])).toBe(false);
+  expect(canPlayerAct(result,result.players[0])).toBe(true);
+  reject(result,{dummy:true,roomId:'room-0,0'},/Not your turn/,'slot2');
   const other=fixture();other.players[0].actionTokens=0;prepare(other,'Mending Light');other.activation!.actionsUsed=2;
   expect(canPlayerAct(other,other.players[0])).toBe(false);
  });

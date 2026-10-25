@@ -41,7 +41,7 @@ export function spellCanTargetModel(card:Card,casterId:string,ownerId:string,kin
  return casterId!==ownerId || (card.heal??0)>0 || (card.convert??0)>0 || getSpellType(card)==='PROTECTION' || (card.ongoing && getSpellType(card)==='CONTINGENCY')===true;
 }
 export function canUseSpellDummy(card:Card):boolean {
- return card.target==='MODEL' && !card.heal && !card.convert && !card.ongoing && !['TRAP','PROTECTION'].includes(getSpellType(card));
+ return card.target==='MODEL' || card.target==='MAGE' || card.target==='EVOCATION';
 }
 export const areAdjacent = (a: Hex, b: Hex) => hexDistance(a,b) === 1;
 export function areInSameRoom(game:Pick<GameState,'board'>,a:Hex,b:Hex):boolean {
@@ -880,7 +880,7 @@ function castSpell(s: GameState, p: Player, action: Extract<GameAction,{type:'CA
  const spell=card!;
  let targets: ReturnType<typeof modelTarget>[]=[]; let room: Room | undefined;
  if(spell.target==='ROOM' || action.dummy) {
-  assert(!action.dummy || canUseSpellDummy(spell),'Dummy targeting is only for MODEL spells without healing or conversion');
+  assert(!action.dummy || canUseSpellDummy(spell),'Dummy targeting requires a MAGE, EVOCATION or MODEL spell');
   assert(!action.targetPlayerId&&!action.targetEvocationId,'Choose either a room/dummy or a model');
   assert(action.roomId,'Select a room'); room=getRoom(s,action.roomId!);
   assert(!room.startingFor,'Starting rooms cannot be targeted');
@@ -904,9 +904,11 @@ function castSpell(s: GameState, p: Player, action: Extract<GameAction,{type:'CA
  const actor=snapshot(s,p.id)!;
  const reactive=['TRAP','PROTECTION'].includes(getSpellType(spell));
  assert(!reactive || spell.trigger,'Active hidden spells require a trigger');
- assert(!spell.ongoing || refs.length===1,'Ongoing spells must bind one model');
+ assert(!spell.ongoing || action.dummy || refs.length===1,'Ongoing spells must bind one model');
  prepared!.used=true;
- if(reactive || spell.ongoing) {
+ // A dummy is not a real model: consume the card normally without creating
+ // hidden/ongoing bindings or redirecting its model effects to room occupants.
+ if(!action.dummy && (reactive || spell.ongoing)) {
   const target=targets[0];
   const active:ActiveSpell={id:crypto.randomUUID(),playerId:p.id,card:spell,
    ...(spell.target!=='ROOM' && target?.mage?{targetPlayerId:target.mage.id}:{}),
@@ -918,9 +920,9 @@ function castSpell(s: GameState, p: Player, action: Extract<GameAction,{type:'CA
  else discardCard(s,p,spell);
  a.spellsCast++;a.actionsUsed++;
  if(action.slot!=='rapid')a.sequencedSpellUsed=true;
- s.log.push(reactive?`${p.name} activates a hidden spell for 1 action (no physical token).`:`${p.name} casts ${spell.name}${action.dummy?' on a dummy (no damage)':''} for 1 action (no physical token).`);
+ s.log.push(reactive&&!action.dummy?`${p.name} activates a hidden spell for 1 action (no physical token).`:`${p.name} casts ${spell.name}${action.dummy?' on a dummy (no model effects)':''} for 1 action (no physical token).`);
  modelEvent(s,'SPELL_CAST',actor);
- if(!reactive) {
+ if(!reactive || action.dummy) {
   if(room && spell.instability>0)placeInstability(s,room,spell.instability,p);
   if((spell.convert??0)>0) {
    if(spell.target==='ROOM')resolveInstruction(s,p,{effect:'CONVERT',amount:spell.convert!,target:'BOUND_ROOM'},undefined,room?.id,actor);
@@ -940,6 +942,8 @@ export function applyAction(state: GameState, action: GameAction): GameState {
  instructionContexts.set(s,{generations:new Map(),bindings:new Map(),resolutions:0});
  for(const active of [...s.readiedSpells,...s.ongoingSpells])bindActiveSpell(s,active);
  assert(s.phase!=='GAME_OVER','The game is over');
+ // Wire payloads can include fields excluded by the TypeScript action union.
+ assert(!('dummy' in action) || action.type==='CAST_SPELL' || action.type==='CAST_POWERFUL_SPELL','Dummy targeting is only available for spell cards');
  const p=getPlayer(s,action.playerId);
  switch(action.type) {
   case 'UNDO_ACTION': case 'REDO_ACTION': throw new GameRuleError('History commands must be intercepted by the server; the engine does not process undo/redo');
@@ -1012,7 +1016,7 @@ export function applyAction(state: GameState, action: GameAction): GameState {
     assert(Array.isArray(p.studyCardIds) && p.studyCardIds.length===4 && new Set(p.studyCardIds).size===4 && action.cardIds.every(id=>p.studyCardIds!.includes(id)),'Discard only spells drawn from the library this Study');
     for(const id of action.cardIds) discardCard(s,p,p.hand.splice(p.hand.findIndex(c=>c.id===id),1)[0]);
    p.studyDone=true;
-  if(s.players.every(p=>p.studyDone)) { s.phase='PREPARATION'; s.log.push('PREPARATION — choose 2 to 4 spells: up to 3 ordered and 1 optional flexible spell.'); }
+  if(s.players.every(p=>p.studyDone)) { s.phase='PREPARATION'; s.log.push('PREPARATION — place 2 to 4 spells: up to 3 numbered slots and 1 optional Quick slot.'); }
    break;
   }
   case 'DISCARD_QUESTS': {
@@ -1044,13 +1048,22 @@ export function applyAction(state: GameState, action: GameAction): GameState {
    requirePhase(s,'PREPARATION'); assert(!p.preparationDone,'Already prepared');
    assert(p.hand.length<=p.cardLimit,'Discard down to the hand limit before preparing cards');
     assert(Array.isArray(action.preparedCardIds),'Choose ordered spells');
-    assert(action.rapidCardId===undefined || typeof action.rapidCardId==='string','Flexible spell must be a card ID');
-    const ids=[...action.preparedCardIds,...(action.rapidCardId===undefined?[]:[action.rapidCardId])];
-    assert(action.preparedCardIds.length<=3 && ids.length>=2 && ids.length<=4 && new Set(ids).size===ids.length,'Choose 2 to 4 different spells, at most 3 ordered and 1 flexible');
+    assert(Array.from(action.preparedCardIds).every(id=>id===null||typeof id==='string'),'Ordered spells must be card IDs or empty slots');
+    assert(action.rapidCardId===undefined || typeof action.rapidCardId==='string','Quick spell must be a card ID');
+    // Null placeholders preserve the player's exact numbered destinations.
+    // Legacy contiguous string arrays remain valid and unchanged.
+    const numbered=action.preparedCardIds.filter((id):id is string=>id!==null);
+    const ids=[...numbered,...(action.rapidCardId===undefined?[]:[action.rapidCardId])];
+    assert(action.preparedCardIds.length<=3 && ids.length>=2 && ids.length<=4 && new Set(ids).size===ids.length,'Choose 2 to 4 different spells, at most 3 numbered and 1 Quick');
    assert(ids.every(id=>p.hand.some(c=>c.id===id)),'Spell not in hand');
-   for(const [i,id] of ids.entries()) {
+   for(const [i,id] of action.preparedCardIds.entries()) {
+    if(id===null)continue;
     const card=p.hand.splice(p.hand.findIndex(c=>c.id===id),1)[0];
-    p.prepared[i===action.preparedCardIds.length ? 'rapid' : slots[i]]={card,used:false};
+    p.prepared[slots[i]]={card,used:false};
+   }
+   if(action.rapidCardId!==undefined) {
+    const card=p.hand.splice(p.hand.findIndex(c=>c.id===action.rapidCardId),1)[0];
+    p.prepared.rapid={card,used:false};
    }
    p.preparationDone=true;
   if(s.players.every(p=>p.preparationDone)) { s.phase='ACTION'; s.log.push('ACTION — up to 2 total actions per turn, including spell casts and discard-to-move; at most one numbered spell per turn.'); startActivation(s,s.players[0]); }
@@ -1151,8 +1164,8 @@ export function applyAction(state: GameState, action: GameAction): GameState {
   const a=requireActivation(s,p.id);assert(a.exploring===0,'Finish exploring first');
   requireNoPendingPhysical(a);
   requireTurnAction(a);
-  assert(isInStartingRoom(s,p),'Discard exit is only available in a starting room');
-  assert(!a.discardedExit,'Already used a discard exit this turn');
+  const leavingStart=isInStartingRoom(s,p);
+  assert(!a.discardedExit,'Already used a discard-to-move this turn');
   validateExitDestination(s,p,action.destination);
   const handIndex=p.hand.findIndex(c=>c.id===action.cardId);
   let card:Card;
@@ -1163,7 +1176,7 @@ export function applyAction(state: GameState, action: GameAction): GameState {
    const prepared=p.prepared[key!]!;card=prepared.card;prepared.used=true;
   }
   discardCard(s,p,card);a.discardedExit=true;a.actionsUsed++;
-  s.log.push(`${p.name} discards ${card.name} to leave the starting room by 1 space (1 action, no physical token).`);
+  s.log.push(`${p.name} discards ${card.name} to ${leavingStart?'leave the starting room':'move'} by 1 space (1 action, no physical token).`);
   moveModel(s,snapshot(s,p.id)!,action.destination);
   afterAction(s);break;
   }

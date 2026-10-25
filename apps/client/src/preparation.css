@@ -1,0 +1,72 @@
+.preparation-panel { min-width: 0; }
+.preparation-toolbar {
+  position: sticky;
+  top: 10px;
+  z-index: 40;
+  margin: 20px 0;
+  padding: 14px;
+  border: 1px solid #6a5542;
+  border-radius: 12px;
+  background: #211b25f5;
+  box-shadow: 0 8px 24px #0005;
+  backdrop-filter: blur(16px);
+}
+.preparation-panel .preparation-order {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+.preparation-order .preparation-slot {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  padding: 0;
+  border: 1px dashed #66556c;
+  border-radius: 8px;
+  background: #17131d;
+}
+.preparation-slot.is-filled { border-style: solid; border-color: #a88a5f; background: #d7b67b10; }
+.preparation-destination {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+  min-height: 86px;
+  padding: 12px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+.preparation-destination:disabled { opacity: 1; cursor: default; }
+.preparation-destination:not(:disabled) { box-shadow: inset 0 0 0 1px var(--gold); }
+.preparation-slot.is-filled .preparation-destination { padding-right: 42px; }
+.preparation-destination b { color: var(--gold); font-size: 12px; }
+.preparation-destination span { color: #d9cddd; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.preparation-remove {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 44px;
+  min-height: 44px;
+  padding: 8px;
+  border: 0;
+  background: transparent;
+  color: #c3a6b2;
+}
+.preparation-status { margin: 12px 0; color: #d8c2a1; font-size: 12px; line-height: 1.5; }
+.preparation-toolbar .button-row { margin: 0; justify-content: flex-end; flex-wrap: wrap; }
+.preparation-toolbar .button-row button { min-height: 44px; }
+.preparation-toolbar .primary { min-width: 110px; }
+.preparation-panel .cards { scroll-margin-top: 230px; }
+@media (max-width: 720px) {
+  .preparation-toolbar { top: 6px; padding: 10px; }
+  .preparation-panel .preparation-order { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .preparation-destination { min-height: 76px; padding: 9px; gap: 4px; }
+  .preparation-destination b, .preparation-destination span { font-size: 11px; }
+  .preparation-status { margin: 9px 0; font-size: 11px; }
+  .preparation-toolbar .button-row { gap: 8px; }
+  .preparation-toolbar .button-row button { flex: 1; padding: 10px; }
+  .preparation-panel .cards { scroll-margin-top: 300px; }
+}

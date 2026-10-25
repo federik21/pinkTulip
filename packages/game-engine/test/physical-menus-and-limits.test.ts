@@ -428,6 +428,126 @@ describe('movement, attacks and authoritative health',()=>{
  });
 });
 
+describe('physical attacks cannot opt into spell-only dummy targeting',()=>{
+ const dummyError=/^Dummy targeting is only available for spell cards$/;
+ function targets(event:'MAGE_ATTACK'|'EVOCATION_ATTACK') {
+  const g=actionFixture('ROOM_DAMAGE');
+  g.evocations=['p1','p2'].map((playerId,i)=>({id:i===0?'own':'enemy',playerId,name:'Cadaver',archetype:'UNDEAD',
+   movement:2,attack:2,health:6,passive:'WOUNDED_FURY',position:{...player(g).wizard.position},
+   damageCubes:0,damageByPlayer:{},activated:false}));
+  // Move a physical card into an ongoing reaction: a forged attack must not
+  // resolve damage, retaliation, feedback, logs or any active-spell changes.
+  const card=g.library[0].cards.shift()!;
+  card.ongoing={trigger:{event,relation:'ENEMY',scope:'ANY'},effects:[{effect:'DAMAGE',amount:1,target:'EVENT_ACTOR'}]};
+  g.ongoingSpells=[{id:'attack-retort',playerId:'p2',card}];g.activeSpellOrder=['attack-retort'];
+  return g;
+ }
+
+ it.each(['INFLICT_ATTACK','PUNCH'] as const)('%s rejects forged dummy selection even with real enemy mage/evocation IDs, then still attacks normally',type=>{
+  const initial=targets('MAGE_ATTACK'),g=type==='INFLICT_ATTACK'?begin(initial,'ATTACK'):initial;
+  const source=g.board.rooms.find(r=>r.effect==='ROOM_DAMAGE')!;
+  for(const selection of [{targetId:'p2'},{targetId:'enemy'},{},{roomId:source.id},
+   {targetId:'dummy'},{targetId:`dummy-${source.id}`,roomId:source.id}]) {
+   rejected(g,{type,playerId:'p1',...selection,dummy:true} as unknown as GameAction,dummyError);
+  }
+  for(const dummy of [false,undefined]) {
+   rejected(g,{type,playerId:'p1',targetId:'p2',dummy} as unknown as GameAction,dummyError);
+  }
+  // These were already invalid; removing dummy must not introduce a fallback target.
+  for(const selection of [{},{targetId:'missing'},{targetId:'dummy'}]) {
+   rejected(g,{type,playerId:'p1',...selection} as unknown as GameAction,/not found/);
+  }
+  // A legacy room-first attack must not activate Crimson before rejecting.
+  if(type==='PUNCH')rejected(g,{type,playerId:'p1',targetId:'p2',roomEffect:'START',dummy:true} as unknown as GameAction,dummyError);
+  expect(player(g).actionTokens).toBe(type==='INFLICT_ATTACK'?1:2);
+  expect(g.activation?.actionsUsed).toBe(type==='INFLICT_ATTACK'?1:0);conserved(g);
+  for(const targetId of ['p2-wizard','enemy']) {
+   let next=applyAction(g,{type,playerId:'p1',targetId});
+   if(targetId==='enemy')expect(next.evocations.find(e=>e.id==='enemy')?.damageByPlayer).toEqual({p1:2});
+   else expect(player(next,'p2').wizard.damageByPlayer).toEqual({p1:2});
+   expect(player(next).wizard.damageByPlayer).toEqual({p2:1});
+   expect(next.feedbackEvents?.some(e=>e.kind==='SPELL_TRIGGERED'&&e.trigger==='MAGE_ATTACK')).toBe(true);
+   if(type==='INFLICT_ATTACK') {
+    expect(next.activation?.physicalAction?.mainEffectUsed).toBe(true);next=skip(next);
+    expect(next.activation?.physicalAction).toBeNull();
+   }
+   expect(player(next).actionTokens).toBe(1);expect(next.activation?.actionsUsed).toBe(1);conserved(next);
+  }
+  if(type==='INFLICT_ATTACK') {
+   const skipped=skip(g);expect(skipped.activation?.physicalAction).toBeNull();
+   expect(skipped.players).toEqual(g.players);expect(skipped.activation?.actionsUsed).toBe(1);conserved(skipped);
+  }
+ });
+
+ it.each(['ACTION','EVOCATION'] as const)('rejects dummy EVOCATION_ATTACK in %s without consuming the active model, then accepts real mage and evocation targets',phase=>{
+  const initial=targets('EVOCATION_ATTACK');initial.phase=phase;if(phase==='EVOCATION')initial.activation=null;
+  const g=applyAction(initial,{type:'ACTIVATE_EVOCATION',playerId:'p1',evocationId:'own'});
+  const source=g.board.rooms.find(r=>r.effect==='ROOM_DAMAGE')!;
+  for(const selection of [{targetId:'p2'},{targetId:'enemy'},{},{roomId:source.id},
+   {targetId:'dummy'},{targetId:`dummy-${source.id}`,roomId:source.id}]) {
+   rejected(g,{type:'EVOCATION_ATTACK',playerId:'p1',...selection,dummy:true} as unknown as GameAction,dummyError);
+  }
+  rejected(g,{type:'EVOCATION_ATTACK',playerId:'p1',targetId:'p2',dummy:false} as unknown as GameAction,dummyError);
+  for(const selection of [{},{targetId:'missing'},{targetId:'dummy'}]) {
+   rejected(g,{type:'EVOCATION_ATTACK',playerId:'p1',...selection} as unknown as GameAction,/not found/);
+  }
+  expect(g.evocationActivation).toMatchObject({evocationId:'own',movesRemaining:2,returnToAction:phase==='ACTION'});
+  expect(g.evocations[0].activated).toBe(phase==='EVOCATION');
+  expect(player(g).actionTokens).toBe(phase==='ACTION'?1:2);conserved(g);
+  for(const targetId of ['p2-wizard','enemy']) {
+   const next=applyAction(g,{type:'EVOCATION_ATTACK',playerId:'p1',targetId});
+   if(targetId==='enemy')expect(next.evocations.find(e=>e.id==='enemy')?.damageByPlayer).toEqual({p1:2});
+   else expect(player(next,'p2').wizard.damageByPlayer).toEqual({p1:2});
+   expect(next.evocations.find(e=>e.id==='own')?.damageByPlayer).toEqual({p2:1});
+   expect(next.feedbackEvents?.some(e=>e.kind==='SPELL_TRIGGERED'&&e.trigger==='EVOCATION_ATTACK')).toBe(true);
+   expect(next.evocationActivation).toBeNull();expect(next.currentPlayerId).toBe(phase==='ACTION'?'p1':'p2');
+   expect(player(next).actionTokens).toBe(player(g).actionTokens);conserved(next);
+  }
+ });
+
+ it.each(['ACTION','EVOCATION'] as const)('still allows Finish evocation after a rejected dummy attack in %s',phase=>{
+  const initial=targets('EVOCATION_ATTACK');initial.phase=phase;if(phase==='EVOCATION')initial.activation=null;
+  const g=applyAction(initial,{type:'ACTIVATE_EVOCATION',playerId:'p1',evocationId:'own'});
+  rejected(g,{type:'EVOCATION_ATTACK',playerId:'p1',targetId:'p2',dummy:true} as unknown as GameAction,dummyError);
+  rejected(g,{type:'END_EVOCATION',playerId:'p1',dummy:false} as unknown as GameAction,dummyError);
+  const next=applyAction(g,{type:'END_EVOCATION',playerId:'p1'});
+  expect(next.evocationActivation).toBeNull();expect(next.currentPlayerId).toBe(phase==='ACTION'?'p1':'p2');
+  expect(next.players).toEqual(g.players);expect(next.evocations).toEqual(g.evocations);
+  expect(next.ongoingSpells).toEqual(g.ongoingSpells);expect(next.feedbackEvents).toEqual(g.feedbackEvents);
+  expect(next.log).toEqual(g.log);expect(next.activation?.actionsUsed).toBe(phase==='ACTION'?1:undefined);conserved(next);
+ });
+
+ it('rejects any dummy property on other non-spell commands before charging or resolving effects',()=>{
+  const initial=targets('MAGE_ATTACK');
+  for(const action of [
+   {type:'BEGIN_PHYSICAL_ACTION',playerId:'p1',kind:'ATTACK',dummy:false},
+   {type:'ACTIVATE_EVOCATION',playerId:'p1',evocationId:'own',dummy:true},
+   {type:'EXPLORE',playerId:'p1',dummy:undefined},
+  ])rejected(initial,action as unknown as GameAction,dummyError);
+  const pending=begin(initial,'ATTACK');
+  for(const type of ['ACTIVATE_ROOM','SKIP_PHYSICAL_EFFECTS'] as const) {
+   rejected(pending,{type,playerId:'p1',dummy:false} as unknown as GameAction,dummyError);
+  }
+  conserved(initial);conserved(pending);
+ });
+
+ it.each(['MAGE','EVOCATION','MODEL'] as const)('keeps %s spell-card dummy casts legal, token-free and card-conserving',target=>{
+  const g=actionFixture('ROOM_DAMAGE'),card=player(g).personalDeck.shift()!;
+  Object.assign(card,{target,spellType:'COMBAT',damage:4,heal:2,convert:1,instability:1,range:0});
+  delete card.trigger;delete card.triggerEffects;delete card.ongoing;
+  player(g).prepared.rapid={card,used:false};const before=structuredClone(g);
+  const source=g.board.rooms.find(r=>r.effect==='ROOM_DAMAGE')!;
+  const next=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',dummy:true,roomId:source.id});
+  expect(g).toEqual(before);expect(next.players.map(p=>p.wizard)).toEqual(before.players.map(p=>p.wizard));
+  expect(next.evocations).toEqual(before.evocations);expect(next.readiedSpells).toEqual(before.readiedSpells);
+  expect(next.ongoingSpells).toEqual(before.ongoingSpells);expect(next.activeSpellOrder).toEqual(before.activeSpellOrder);
+  expect(next.feedbackEvents).toEqual(before.feedbackEvents);expect(player(next).prepared.rapid).toEqual({card,used:true});
+  expect(next.activation).toMatchObject({actionsUsed:1,spellsCast:1});expect(player(next).actionTokens).toBe(2);
+  expect(room(next,source.id)).toMatchObject({instability:1,cubesByPlayer:{p1:1}});
+  expect(next.library[0].discard).toContainEqual(card);conserved(next);
+ });
+});
+
 describe('mandatory preparation hand limits and the personal-discard exception',()=>{
  it('rejects preparation over seven before slot removal, then accepts exactly the limit',()=>{
   let g=preparationFixture();rejected(g,prepareAction(g),/hand limit/);expect(player(g).prepared.slot1).toBeNull();

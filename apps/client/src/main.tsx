@@ -4,7 +4,8 @@ import { ACTIONS_PER_TURN, getSpellType, canUseSpellDummy, spellCanTargetModel, 
 import { ActiveEvocationControls, EvocationsPanel, targetModels } from './EvocationsPanel';
 import { PhysicalActionsPanel } from './PhysicalActionsPanel';
 import { CombatFeedback, FeedbackPulse, useGameFeedback } from './CombatFeedback';
-import { ControlBanner, ControlTab } from './ControlBanner';
+import { ControlBanner, ControlTab, QuickAccess } from './ControlBanner';
+import { ChronicleDrawer } from './ChronicleDrawer';
 import { MageRoster } from './MageRoster';
 import { ActiveSpellsPanel, TrapReminders } from './ActiveSpellsPanel';
 import { QuestsPanel, QuickReference } from './MorePanels';
@@ -15,13 +16,15 @@ import { InfoPopup } from './InfoPopup';
 import { ModelEffectMarkers } from './ModelEffects';
 import { MAGE_SYMBOLS as emoji, MAGE_COLOR_NAMES, SPELL_TYPE_LABELS, SPELL_TARGET_LABELS, SPELL_TARGET_DESCRIPTIONS, cubeSegments, evocationNumber, mageStyle, ownerColor, ownerName, roomModelLayout, roomNameLines, roomStatus } from './presentation';
 import './style.css';
+import './quick-access.css';
+import './preparation.css';
 
 const WS_URL=import.meta.env.VITE_WS_URL??`${location.protocol==='https:'?'wss':'ws'}://${location.hostname}:8080`;
 const phaseInfo={
  LOBBY:['✦','Gather the mages','2–4 mages. Choose a school: start with 6 cards in your personal deck, 1 in personal discard, and an empty hand.'],
  BLACK_ROSE:['✺','(not) Black Rose','An event reshapes the lodge. Personal quests follow.'],
  STUDY:['▤','Study','Draw 2 personal spells, then 4 from any mix of schools. Discard 2 of those 4 library cards only.'],
- PREPARATION:['✧','Preparation','Prepare 2–4 spells. The third numbered spell and fourth flexible spell are optional.'],
+ PREPARATION:['✧','Preparation','Choose a card, then tap its numbered or Quick slot. Place at least 2 spells, then tap Done.'],
  ACTION:['⚔','Action','Up to 2 actions total: Explore, Attack, spell casts, or discard-to-move.'],
  EVOCATION:['☠','Evocation','Activate each summon once. Move, then attack an enemy in its room, one model at a time.'],
  CLEANUP:['❖','Cleanup','Full rooms rebuild, award contribution points and return cubes once. Endgame follows round 3 or 30 VP, including the (not) Black Rose.'],
@@ -34,7 +37,7 @@ const randomName=()=>['Ember','Moon','Storm','Rune','Thorn'][Math.floor(Math.ran
 
 function SpellCard({card,label,selected,disabled,onClick,used=false}:{card:Card;label?:string;selected?:boolean;disabled?:boolean;onClick?:()=>void;used?:boolean}) {
  const spellType=getSpellType(card);
- return <button type="button" className={`spell ${card.powerful?'powerful':''} ${selected?'chosen':''} ${used?'used':''}`} disabled={disabled} onClick={onClick}>
+ return <button type="button" className={`spell ${card.powerful?'powerful':''} ${selected?'chosen':''} ${used?'used':''}`} aria-pressed={onClick?!!selected:undefined} disabled={disabled} onClick={onClick}>
   <span className="eyebrow">{label??'Spell'} · {SPELL_TARGET_LABELS[card.target]}</span>
   <span className="spell-type" data-spell-type={spellType}><SpellTypeIcon type={spellType}/><span>{SPELL_TYPE_LABELS[spellType]}{card.ongoing?' · Ongoing':''}</span></span>
   <strong>{card.name}</strong><span className="spell-rune"><SchoolIcon schoolId={card.schoolId} powerful={card.powerful}/></span>
@@ -58,13 +61,43 @@ function StudyPanel({game,me,send}:{game:GameState;me:Player;send:Send}) {
 }
 
 function PreparationPanel({me,send}:{me:Player;send:Send}) {
- const [selected,setSelected]=useState<string[]>([]);
+ const [selected,setSelected]=useState<string|null>(null);
+ const [placed,setPlaced]=useState<Record<Slot,string|null>>({slot1:null,slot2:null,slot3:null,rapid:null});
+ const count=slotKeys.filter(slot=>placed[slot]!==null).length;
+ const selectedCard=me.hand.find(card=>card.id===selected);
+ const destination=(slot:Slot)=>slot==='rapid'?'Quick slot':`slot ${slot.slice(-1)}`;
+ const place=(slot:Slot)=>{
+  if(!selectedCard)return;
+  setPlaced(old=>{
+   const next={...old};
+   for(const key of slotKeys)if(next[key]===selectedCard.id)next[key]=null;
+   next[slot]=selectedCard.id;
+   return next;
+  });
+  setSelected(null);
+ };
+ const submit=()=>{
+  if(count<2)return;
+  const preparedCardIds=[placed.slot1,placed.slot2,placed.slot3];
+  while(preparedCardIds.length&&preparedCardIds[preparedCardIds.length-1]===null)preparedCardIds.pop();
+  send({type:'PREPARE_CARDS',playerId:me.id,preparedCardIds,...(placed.rapid?{rapidCardId:placed.rapid}:{})});
+ };
  if(me.preparationDone)return <div className="notice">✓ Spells prepared. Waiting for the other mages.</div>;
  if(me.hand.length>me.cardLimit)return <HandLimitPanel me={me} send={send}/>;
- return <section className="phase-panel"><span className="eyebrow">Plan your sequence</span><h2>Prepare 2–4 spells</h2><p>Select at least 2 spells in order. The third numbered spell and fourth ✧ flexible spell are optional. Numbered spells must be cast progressively; the flexible spell can be cast on any turn. Unselected cards stay in hand. Forgotten spells must be prepared before casting.</p>
-  <div className="preparation-order">{['1','2','3','✧ Flexible'].map((label,i)=><div key={label}><b>{label}</b><span>{me.hand.find(c=>c.id===selected[i])?.name??'Select a spell'}</span></div>)}</div>
-  <div className="cards">{me.hand.map(card=>{const index=selected.indexOf(card.id);return <SpellCard key={card.id} card={card} label={index<0?'Spell':index===3?'✧ Flexible':`Order ${index+1}`} selected={index>=0} onClick={()=>setSelected(old=>old.includes(card.id)?old.filter(id=>id!==card.id):old.length<4?[...old,card.id]:old)}/>;})}</div>
-  <div className="button-row"><button onClick={()=>setSelected([])}>Reset selection</button><button className="primary" disabled={selected.length<2||selected.length>4} onClick={()=>send({type:'PREPARE_CARDS',playerId:me.id,preparedCardIds:selected.slice(0,3),...(selected[3]?{rapidCardId:selected[3]}:{})})}>Prepare spells</button></div>
+ return <section className="phase-panel preparation-panel"><span className="eyebrow">Plan your sequence</span><h2>Prepare 2–4 spells</h2><p>Tap one card, then the slot where you want to prepare it. Numbered spells cast in order; the ✧ Quick spell can be cast on any turn. Place at least 2 spells. Unplaced cards stay in hand. Forgotten spells must be prepared before casting.</p>
+  <div className="preparation-toolbar">
+   <div className="preparation-order" role="group" aria-label="Prepared spell slots">{slotKeys.map((slot,index)=>{
+    const card=me.hand.find(card=>card.id===placed[slot]);
+    return <div key={slot} className={`preparation-slot${card?' is-filled':''}`} data-preparation-slot={slot}>
+     <button type="button" className="preparation-destination" aria-label={`Place in ${destination(slot)}`} disabled={!selectedCard} onClick={()=>place(slot)}><b>{slot==='rapid'?'✧ Quick':`Slot ${index+1}`}</b><span>{card?.name??'Empty slot'}</span></button>
+     {card&&<button type="button" className="preparation-remove" aria-label={`Remove from ${destination(slot)}`} onClick={()=>setPlaced(old=>({...old,[slot]:null}))}>✕</button>}
+    </div>;
+   })}</div>
+   <div className="preparation-status" role="status" aria-live="polite">{selectedCard?`${selectedCard.name} selected. Tap a slot to place it.`:`${count}/4 spells placed. ${count<2?'Place at least 2 to finish.':'Ready when you are.'}`}</div>
+   <div className="button-row"><button type="button" disabled={!count&&!selected} onClick={()=>{setSelected(null);setPlaced({slot1:null,slot2:null,slot3:null,rapid:null});}}>Reset selection</button><button type="button" className="primary" disabled={count<2} onClick={submit}>Done</button></div>
+  </div>
+  <div className="cards">{me.hand.map(card=>{const slot=slotKeys.find(key=>placed[key]===card.id);return <SpellCard key={card.id} card={card} label={slot?`In ${destination(slot)}`:'Choose this spell'} selected={selected===card.id} onClick={()=>setSelected(old=>old===card.id?null:card.id)}/>;})}</div>
+  <p className="hint">To move or replace a prepared spell, select its card and tap another slot. Use ✕ to empty a slot, or Reset selection to start again.</p>
  </section>;
 }
 
@@ -93,6 +126,9 @@ function App() {
  const [dummy,setDummy]=useState(false),[exitCardId,setExitCardId]=useState('');
  const [retinueVisible,setRetinueVisible]=useState<Record<string,boolean>>({});
  const [controlTab,setControlTab]=useState<ControlTab>('actions');
+ const [chronicleOpen,setChronicleOpen]=useState(false);
+ const [quickControls,setQuickControls]=useState(false),[quickMode,setQuickMode]=useState(false);
+ const quickOpener=useRef<HTMLElement|null>(null);
  const [infoPopup,setInfoPopup]=useState<'lodge'|'reference'|null>(null);
  const [historyRevision,setHistoryRevision]=useState(0);
  const feedback=useGameFeedback(game);
@@ -115,6 +151,7 @@ function App() {
  },[]);
  const phase=game?.phase,round=game?.round;
  useEffect(()=>{
+  setQuickControls(false);
   setSelectedSlot(null);setSelectedRoom(null);setSelectedModelId('');setDummy(false);setExitCardId('');
   if(!phase||phase==='LOBBY')return;
   setOverlay(phase);const timer=window.setTimeout(()=>setOverlay(null),2400);return()=>window.clearTimeout(timer);
@@ -139,6 +176,7 @@ function App() {
     if(requestRef.current)return;
     const requestId=`${Date.now()}-${++requestCount.current}`;
     requestRef.current=requestId;setPending(true);
+    if(action.type==='PERFORM_MOVEMENT'||action.type==='ACTIVATE_EVOCATION'||action.type==='DISCARD_EXIT')setQuickControls(false);
     if(action.type==='UNDO_ACTION'||action.type==='REDO_ACTION') {
      setSelectedSlot(null);setSelectedRoom(null);setSelectedModelId('');setDummy(false);setExitCardId('');setHistoryRevision(n=>n+1);
     }
@@ -161,14 +199,22 @@ function App() {
  const activeEvocation=game.evocations.find(e=>e.id===game.evocationActivation?.evocationId);
  const movingEvocation=enabled&&game.evocationActivation?.playerId===me.id&&activeEvocation;
  const actingPlayer=enabled&&(game.phase==='ACTION'||game.phase==='EVOCATION')?game.players.find(p=>p.id===game.currentPlayerId):undefined;
+ const turnActionsUsed=active?.actionsUsed??0;
+ const showHistory=!!game.history&&(game.history.canUndo||game.history.canRedo);
+ const endTurnDisabled=pending||!!active?.physicalAction||!!active?.exploring||(turnActionsUsed<1&&!active?.spellsCast&&!active?.discardedExit);
+ const openQuickControls=(tab:ControlTab)=>{
+  quickOpener.current=document.activeElement instanceof HTMLElement?document.activeElement:null;
+  setControlTab(tab);setQuickMode(true);setQuickControls(true);
+  window.requestAnimationFrame(()=>document.getElementById(`controls-tab-${tab}`)?.focus({preventScroll:true}));
+ };
+ const closeQuickControls=()=>{setQuickControls(false);quickOpener.current?.focus({preventScroll:true});};
  const toggleRetinue=(playerId:string)=>{
   setRetinueVisible(prev=>({...prev,[playerId]:!prev[playerId]}));
   setControlTab('evocations');
  };
  const viewRetinue=(ownerId:string)=>{
   if(ownerId!==me.id)setRetinueVisible(prev=>({...prev,[ownerId]:true}));
-  setControlTab('evocations');
-  document.getElementById('controls-tab-evocations')?.focus();
+  openQuickControls('evocations');
  };
  const powerfulCards=me.hand.filter(c=>c.powerful);
  const spell=active?.physicalAction?null:selectedSlot?me.prepared[selectedSlot]?.card:null;
@@ -189,19 +235,39 @@ function App() {
   send({type:'CAST_SPELL',playerId:me.id,slot:selectedSlot,...targeting});
   setSelectedSlot(null);
  };
+ const targetModes=spell&&canUseSpellDummy(spell)?<>
+      <div className="button-row target-mode">
+       <button type="button" className={!dummy?'primary':''} aria-pressed={!dummy} onClick={()=>{setDummy(false);setSelectedRoom(null);setSelectedModelId('');}}>Target model</button>
+       <button type="button" className={dummy?'primary':''} aria-pressed={dummy} onClick={()=>{setDummy(true);setSelectedRoom(null);setSelectedModelId('');}}>Target dummy · no damage</button>
+      </div>
+      {dummy&&<p className="hint dummy-target-help">Select any non-starting room in range on a straight hex line, occupied or empty. Only printed room instability resolves. Damage, healing, conversion and model-bound effects are ignored. The spell still costs its card and 1 turn action.</p>}
+     </>:null;
+ // With the dashboard closed after choosing a spell, the same toggle stays reachable beside the target confirmation.
+ const dockedModes=!quickControls&&game.phase==='ACTION'?targetModes:null;
  const spellControls=<>
     {game.phase==='ACTION'&&<section className="phase-panel"><div className="section-heading"><div><span className="eyebrow">Your prepared grimoire · 1 action per cast</span><h2>{game.evocationActivation?.playerId===me.id?'Finish your evocation activation':myTurn?'Choose your next action':'Watch the other mage’s turn'}</h2></div><span className="badge">{myTurn?`${turnActionsRemaining} turn actions left`:me.passed?'Passed':'Waiting'}</span></div>
     {inStart&&<div className="notice">Leave your starting room with Explore or a discarded card before casting or attacking.</div>}
     {myTurn&&active?.physicalAction&&<div className="notice">Finish or skip your {active.physicalAction.kind==='EXPLORE'?'Explore':'Attack'} effects before casting spells.</div>}
-      <div className="cards prepared">{slotKeys.map((key,i)=>{const c=me.prepared[key];return c&&<SpellCard key={key} card={c.card} used={c.used} label={key==='rapid'?'✧ Flexible':`Spell ${i+1}`} selected={key===selectedSlot} disabled={pending||!myTurn||turnActionsRemaining===0||inStart||!!active?.physicalAction||!!active?.exploring||c.used||(key!=='rapid'&&(key!==nextSlot||!!active?.sequencedSpellUsed))} onClick={()=>{setSelectedSlot(old=>old===key?null:key);setSelectedRoom(selectedSlot!==key&&c.card.target==='SELF'?game.board.rooms.find(r=>r.tiles.some(h=>hexKey(h)===hexKey(me.wizard.position)))?.id??null:null);setSelectedModelId('');setDummy(false);setExitCardId('');setToast(c.card.target==='SELF'?'Your mage is selected. Confirm the spell to cast on yourself.':'Choose a highlighted room, then an eligible target.');}}/>;})}</div>
-    {spell&&<><p className="hint">1 turn action per spell; no physical token. One numbered spell per turn. Range follows a straight hex line.</p>{activatingSpell&&<p className="notice">Activate face down. Other mages see the type, not the card or binding. Untriggered cards return to hand at Cleanup.</p>}{spell.ongoing&&<p className="notice">Ongoing: reacts automatically until the bound mage is defeated or Cleanup discards it.</p>}<p className="spell-target-help hint">Target: {SPELL_TARGET_DESCRIPTIONS[spell.target]}. Damage never harms your mage or your evocations. Heal removes wounds from each selected model, including friendly models. Convert replaces other-colored {spell.target==='ROOM'?'instability cubes in the room':'damage cubes on an enemy model'} with your available cubes; it does not add damage or instability. Damage conversion is ignored on your own mage and evocations; other spell effects still resolve.</p>{canUseSpellDummy(spell)&&<div className="button-row target-mode"><button className={!dummy?'primary':''} onClick={()=>{setDummy(false);setSelectedRoom(null);setSelectedModelId('');}}>Target enemy model</button><button className={dummy?'primary':''} onClick={()=>{setDummy(true);setSelectedRoom(null);setSelectedModelId('');}}>Target dummy · no damage</button></div>}{dummy&&<p className="hint">Select any non-starting room in range on a straight hex line. Only non-damage effects, such as instability, resolve—even if a model is present.</p>}</>}
+      <div className="cards prepared">{slotKeys.map((key,i)=>{const c=me.prepared[key];return c&&<SpellCard key={key} card={c.card} used={c.used} label={key==='rapid'?'✧ Quick':`Spell ${i+1}`} selected={key===selectedSlot} disabled={pending||!myTurn||turnActionsRemaining===0||inStart||!!active?.physicalAction||!!active?.exploring||c.used||(key!=='rapid'&&(key!==nextSlot||!!active?.sequencedSpellUsed))} onClick={()=>{setSelectedSlot(old=>old===key?null:key);setSelectedRoom(selectedSlot!==key&&c.card.target==='SELF'?game.board.rooms.find(r=>r.tiles.some(h=>hexKey(h)===hexKey(me.wizard.position)))?.id??null:null);setSelectedModelId('');setDummy(false);setExitCardId('');if(quickControls)closeQuickControls();setToast(c.card.target==='SELF'?'Your mage is selected. Confirm the spell to cast on yourself.':'Choose a highlighted room, then an eligible target.');}}/>;})}</div>
+    {spell&&<>
+     <p className="hint">1 turn action per spell; no physical token. One numbered spell per turn. Range follows a straight hex line.</p>
+     {activatingSpell&&!dummy&&<p className="notice">Activate face down. Other mages see the type, not the card or binding. Untriggered cards return to hand at Cleanup.</p>}
+     {spell.ongoing&&!dummy&&<p className="notice">Ongoing: reacts automatically until the bound mage is defeated or Cleanup discards it.</p>}
+     <p className="spell-target-help hint">Target: {SPELL_TARGET_DESCRIPTIONS[spell.target]}. Damage never harms your mage or your evocations. Heal removes wounds from each selected model, including friendly models. Convert replaces other-colored {spell.target==='ROOM'?'instability cubes in the room':'damage cubes on an enemy model'} with your available cubes; it does not add damage or instability. Damage conversion is ignored on your own mage and evocations; other spell effects still resolve.</p>
+     {quickControls&&targetModes}
+    </>}
     </section>}
     <ActiveSpellsPanel game={game} viewerId={me.id}/>
     {powerfulCards.length>0&&<section className="powerful-panel"><span className="eyebrow">The central chamber's gift · saved in hand</span><h2>Forgotten spells</h2><p>Prepare in a later round; never cast directly from hand. Casting permanently removes the card. Unused prepared forgotten spells return to hand next round.</p><div className="cards">{powerfulCards.map(card=><SpellCard key={card.id} card={card} label="✺ Prepare in a later round" disabled/>)}</div><p className="hint">Supply: {game.powerfulDeck.length} remaining · {game.removedCards.length} permanently removed</p></section>}
  </>;
  return <div className="app"><header><a className="brand" href="/">✺ <span>(not) BLACK ROSE <small>ONLINE LODGE</small></span></a><div className="header-meta"><button type="button" className="info-button" onClick={()=>setInfoPopup('reference')}>Quick reference</button><span className="badge">{roomId}</span><span>Round {game.round}</span><span className={connected?'online':'error'}>{connected?'● Live':'○ Offline'}</span></div></header>
   <nav className="phase-track">{(['BLACK_ROSE','STUDY','PREPARATION','ACTION','EVOCATION','CLEANUP'] as const).map((phase,i)=><div key={phase} className={game.phase===phase?'current':''}><small>0{i+1}</small><span>{phaseInfo[phase][1]}</span></div>)}</nav>
-  {actingPlayer&&<div className="turn-banner" style={mageStyle(actingPlayer.id)} role="status" aria-live="polite"><span className="acting-mage-icon" aria-hidden="true">{emoji[actingPlayer.id]}</span><div><span className="eyebrow">{actingPlayer.id===me.id?'Your turn':'Mage acting'}</span><strong>{actingPlayer.name}</strong><small>{game.evocationActivation?'Controlling an evocation':game.phase==='EVOCATION'?'Choosing an evocation':'Taking an Action turn'}</small></div></div>}
+  {actingPlayer&&<div className="turn-banner" style={mageStyle(actingPlayer.id)}><span className="acting-mage-icon" aria-hidden="true">{emoji[actingPlayer.id]}</span><div className="turn-banner-text" role="status" aria-live="polite"><span className="eyebrow">{actingPlayer.id===me.id?'Your turn':'Mage acting'}</span><strong>{actingPlayer.name}</strong><small>{game.evocationActivation?'Controlling an evocation':game.phase==='EVOCATION'?'Choosing an evocation':'Taking an Action turn'}</small></div>
+   {(showHistory||myTurn)&&<div className="turn-banner-controls">
+    {showHistory&&<div className="turn-history" role="group" aria-label="Action history"><button type="button" aria-label="Undo action" title={game.history?.undoLabel?`Undo: ${game.history.undoLabel}`:undefined} disabled={!enabled||pending||!game.history?.canUndo} onClick={()=>send({type:'UNDO_ACTION',playerId:me.id})}><span aria-hidden="true">↶ </span>Undo</button><button type="button" aria-label="Redo action" title={game.history?.redoLabel?`Redo: ${game.history.redoLabel}`:undefined} disabled={!enabled||pending||!game.history?.canRedo} onClick={()=>send({type:'REDO_ACTION',playerId:me.id})}>Redo<span aria-hidden="true"> ↷</span></button></div>}
+    {myTurn&&<button type="button" className="primary end-turn" disabled={endTurnDisabled} onClick={()=>{setExitCardId('');send({type:'END_ACTIVATION',playerId:me.id});}}>End turn <span className="turn-action-count">({turnActionsUsed}/{ACTIONS_PER_TURN})</span></button>}
+   </div>}
+  </div>}
   {overlay&&<div className="phase-overlay" role="status" onClick={()=>setOverlay(null)}><span>{phaseInfo[overlay][0]}</span><small>ROUND {game.round}</small><h1>{phaseInfo[overlay][1]}</h1><p>{phaseInfo[overlay][2]}</p><small>Click to continue</small></div>}
   {toast&&<div className="toast" role="status">{toast}</div>}
   <CombatFeedback game={game} feedback={feedback}/>
@@ -216,7 +282,7 @@ function App() {
     {game.phase==='CLEANUP'&&<section className="phase-panel"><span className="eyebrow">The end of the round</span><h2>❖ The lodge settles</h2><p>Full rooms have rebuilt, awarded contribution points and returned their cubes once. They accept no more instability; their double specials are now ready. Endgame follows Cleanup in round 3, or when any mage or the (not) Black Rose reaches 30 VP.</p>{isHost?<button className="primary" disabled={!enabled||pending} onClick={continuePhase}>Begin round {game.round+1} →</button>:<p className="waiting">Waiting for the creator to begin the next round…</p>}</section>}
     {game.phase==='GAME_OVER'&&<section className="phase-panel victory"><span className="eyebrow">The Rose has chosen</span><h2>♛ {game.winner?ownerName(game,game.winner):'The lodge'} wins</h2><p>{[...game.players.map(p=>`${p.name}: ${p.victoryPoints} VP`),`(not) Black Rose: ${game.blackRose.victoryPoints} VP · ${game.blackRose.kills} kills`].join(' · ')}</p><p className="hint">{game.endgameScored?'Final majorities and first-player bonus included.':'Final scores are being resolved.'}</p><button onClick={()=>location.reload()}>Return to lobby</button></section>}
     <TrapReminders game={game} viewerId={me.id}/>
-    <ControlBanner selected={controlTab} onSelect={setControlTab}
+    <ControlBanner selected={controlTab} onSelect={setControlTab} floating={quickControls} onClose={closeQuickControls}
     actions={<>{game.phase==='ACTION'&&game.currentPlayerId===me.id&&!game.evocationActivation?<PhysicalActionsPanel key={historyRevision} game={game} me={me} enabled={enabled} pending={pending} exitCardId={exitCardId} setExitCardId={setExitCardId} clearSpell={()=>{setSelectedSlot(null);setSelectedRoom(null);setSelectedModelId('');setDummy(false);}} send={send}/>:<div className="control-waiting"><h2>Physical actions</h2><p>{game.evocationActivation?'An evocation is active. Open Evocations to continue.':game.phase==='ACTION'?`${game.players.find(p=>p.id===game.currentPlayerId)?.name??'Another mage'} is acting.`:'Physical actions are available during the Action phase.'}</p></div>}</>}
     spells={spellControls}
      evocations={<>
@@ -227,9 +293,8 @@ function App() {
       {game.players.filter(p=>p.id!==me.id).map(p=><div key={p.id} hidden={!retinueVisible[p.id]}><EvocationsPanel game={game} playerId={p.id} viewerId={me.id} enabled={enabled} pending={pending} send={send}/></div>)}
      </>}
     quests={<QuestsPanel me={me}/>}
-     history={(game.history?.canUndo||game.history?.canRedo)&&<section className="history-panel" aria-label="Action history"><span className="eyebrow">Your recent actions</span><div className="button-row"><button disabled={!enabled||pending||!game.history.canUndo} onClick={()=>send({type:'UNDO_ACTION',playerId:me.id})}>Undo action</button><button disabled={!enabled||pending||!game.history.canRedo} onClick={()=>send({type:'REDO_ACTION',playerId:me.id})}>Redo action</button></div><p className="hint">{game.history.undoLabel&&`Undo: ${game.history.undoLabel}. `}{game.history.redoLabel&&`Redo: ${game.history.redoLabel}. `}No undo across draws, quest draws, random retrievals or phase changes. A same-phase handoff can be undone until the opponent acts. The server decides availability.</p></section>}
     />
-    <section className="board-panel"><div className="section-heading"><div><span className="eyebrow">The lodge</span><h2>{movingEvocation&&activeEvocation?`${activeEvocation.name} #${evocationNumber(game,activeEvocation)} · choose an adjacent space`:exitCardId&&inStart?'Discard exit · choose an adjacent space':spell?`Target: ${spell.name}${dummy?' · dummy':''}`:active?.exploring&&myTurn?'Explore · choose an adjacent space':'Chambers of the (not) Black Rose'}</h2></div><button type="button" className="info-button" aria-label="Lodge information" onClick={()=>setInfoPopup('lodge')}>ⓘ Info</button></div>
+    <section className="board-panel"><div className="section-heading"><div><span className="eyebrow">The lodge</span><h2>{movingEvocation&&activeEvocation?`${activeEvocation.name} #${evocationNumber(game,activeEvocation)} · choose an adjacent space`:exitCardId&&myTurn?'Discard to move · choose an adjacent space':spell?`Target: ${spell.name}${dummy?' · dummy':''}`:active?.exploring&&myTurn?'Explore · choose an adjacent space':'Chambers of the (not) Black Rose'}</h2></div><button type="button" className="info-button" aria-label="Lodge information" onClick={()=>setInfoPopup('lodge')}>ⓘ Info</button></div>
       <div className="board-viewport" tabIndex={0} role="region" aria-label="Scrollable lodge board"><svg className="board" viewBox="-210 -165 420 330" role="group" aria-label="Hexagonal lodge board">{game.board.rooms.map(r=>{
       const h=r.tiles[0],x=(h.q+h.r/2)*62,y=h.r*54;
       const occupants=game.players.filter(p=>r.tiles.some(tile=>hexKey(p.wizard.position)===hexKey(tile)));
@@ -238,13 +303,13 @@ function App() {
       const contributions=Object.entries(r.cubesByPlayer).filter(([,n])=>n>0);
       const segments=cubeSegments(r.cubesByPlayer,r.instability,r.instabilityLimit);
       const evocationReachable=!!movingEvocation&&(game.evocationActivation?.movesRemaining??0)>0&&hexDistance(h,movingEvocation.position)===1&&!r.startingFor;
-      const mageReachable=myTurn&&(!!active?.exploring||!!exitCardId&&turnActionsRemaining>0&&inStart&&!active?.physicalAction&&!active?.discardedExit)&&hexDistance(h,me.wizard.position)===1&&!r.startingFor;
+      const mageReachable=myTurn&&(!!active?.exploring||!!exitCardId&&turnActionsRemaining>0&&!active?.physicalAction&&!active?.discardedExit)&&hexDistance(h,me.wizard.position)===1&&!r.startingFor;
       const reachable=evocationReachable||mageReachable;
       const targetable=myTurn&&turnActionsRemaining>0&&!!spell&&canTarget(r);
       const choose=()=>{
       if(pending)return;
       if(evocationReachable)send({type:'EVOCATION_STEP',playerId:me.id,destination:h});
-      else if(mageReachable&&exitCardId&&inStart&&!active?.exploring){send({type:'DISCARD_EXIT',playerId:me.id,cardId:exitCardId,destination:h});setExitCardId('');}
+      else if(mageReachable&&exitCardId&&!active?.exploring){send({type:'DISCARD_EXIT',playerId:me.id,cardId:exitCardId,destination:h});setExitCardId('');}
       else if(reachable)send({type:'EXPLORE_STEP',playerId:me.id,destination:h});
       else {setSelectedRoom(r.id);setSelectedModelId('');}
       };
@@ -262,22 +327,23 @@ function App() {
       {!r.startingFor&&!r.reconstructed&&contributions.map(([id,n],i)=><g className="cube-owner" transform={`translate(${(i-(contributions.length-1)/2)*5},26)`} key={id}><title>{ownerName(game,id)}: {n} cubes</title><circle r={2.5} fill={ownerColor(id)}/><text y={1.3}>{n}</text></g>)}
       </g>;
      })}</svg></div>
-    {room&&<div className="room-detail"><strong>{room.name} {room.reconstructed?'· Rebuilt':''}</strong><span>{room.startingFor?'Protected starting room · Exit only; no voluntary reentry':room.reconstructed?`Double special · ${roomStatus(room)} · no further cube placement`:`${room.color??'Central'} · ${room.instability}/${room.instabilityLimit} instability · Rewards ${room.rewards.join(' / ')} VP${room.instability>=room.instabilityLimit?' · Full: locked to new cubes; rebuilds at Cleanup, then unlocks its double special.':''}`}</span>
+    {room&&<div className={`room-detail${quickMode&&spell&&!quickControls?' quick-target':''}`}><strong>{room.name} {room.reconstructed?'· Rebuilt':''}</strong><span>{room.startingFor?'Protected starting room · Exit only; no voluntary reentry':room.reconstructed?`Double special · ${roomStatus(room)} · no further cube placement`:`${room.color??'Central'} · ${room.instability}/${room.instabilityLimit} instability · Rewards ${room.rewards.join(' / ')} VP${room.instability>=room.instabilityLimit?' · Full: locked to new cubes; rebuilds at Cleanup, then unlocks its double special.':''}`}</span>
     {room.effect&&<span>{room.reconstructed?'Double special':'Free effect'}: {ROOM_EFFECT_LABELS[room.effect]}{room.reconstructed?` ×2 · ${room.specialUsed?'Used this Action phase':'Ready · once per Action phase'}`:' · once within Explore or Attack, before or after its primary effect.'}</span>}
     {!room.reconstructed&&<div className="contributions">{Object.entries(room.cubesByPlayer).filter(([,n])=>n>0).map(([id,n])=><span style={mageStyle(id)} key={id}>{emoji[id]??'✺'} {ownerName(game,id)}: {n}</span>)}</div>}
+    {dockedModes}
     {spell&&spell.target!=='ROOM'&&spell.target!=='SELF'&&!dummy&&<label className="action-setting">Spell target model<select aria-label="Spell target model" value={selectedModelId} onChange={e=>setSelectedModelId(e.target.value)}><option value="">First eligible model in this room</option>{spellModelsInRoom(room).map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label>}
     {spell?.target==='SELF'&&<p className="hint">This spell targets only your mage.</p>}
-    {spell&&<button className="primary" disabled={pending||!myTurn||turnActionsRemaining===0||!canTarget(room)} onClick={cast}>{activatingSpell?'Activate':'Cast'} {spell.name} {spell.target==='SELF'?'on yourself':'here'}{dummy?' on dummy':''}</button>}
+    {spell&&<button className="primary" disabled={pending||!myTurn||turnActionsRemaining===0||!canTarget(room)} onClick={cast}>{activatingSpell&&!dummy?'Activate':'Cast'} {spell.name} {spell.target==='SELF'?'on yourself':'here'}{dummy?' on dummy':''}</button>}
     </div>}
+    {!room&&dockedModes&&quickMode&&<div className="quick-modes">{dockedModes}</div>}
     </section>
     <MageRoster game={game} viewerId={me.id} actingPlayerId={actingPlayer?.id} onViewRetinue={viewRetinue}/>
    </div>
-  <aside>
-    <section className="log-panel"><div className="section-heading"><h2>Chronicle</h2><span className="hint">Latest events first</span></div><div className="log" role="log">{game.log.slice(-45).reverse().map((entry,i)=><div key={`${game.log.length-i}`}><span>✧</span>{entry}</div>)}</div></section>
-   </aside>
+  <ChronicleDrawer open={chronicleOpen} entries={game.log} players={game.players} onClose={()=>setChronicleOpen(false)}/>
   {infoPopup==='reference'&&<InfoPopup id="quick-reference" title="Quick reference" onClose={()=>setInfoPopup(null)}><QuickReference game={game} me={me}/></InfoPopup>}
   {infoPopup==='lodge'&&<InfoPopup id="lodge-info" title="Lodge information" onClose={()=>setInfoPopup(null)}><p className="board-help">Select a chamber to inspect it or confirm a spell target. Scroll the board on smaller screens. Protected starting cells allow exits only. Segmented badges show instability / capacity by mage color; light gray is (not) Black Rose. Full rooms rebuild at Cleanup. Rebuilt rooms show READY / USED instead of returned cubes. Numbered circles are owner-colored evocations. Bound models show shield, trap and ✧ ongoing-effect icons. Your hidden bindings are visible only to you; ongoing effects are public. Repeated effects show counts on mage and evocation cards.</p><div className="room-legend">{ROOM_COLORS.map(color=><span data-color={color} key={color}><i/>{color} · {game.board.rooms.filter(room=>room.color===color).length}</span>)}</div><div className="mage-legend" aria-label="Mage colors">{game.players.map(p=><span style={mageStyle(p.id)} data-player-id={p.id} key={p.id}><i aria-hidden="true"/>{emoji[p.id]} {p.name} · {MAGE_COLOR_NAMES[p.id]}</span>)}<span className="neutral-owner"><i aria-hidden="true"/>✺ (not) Black Rose · neutral</span></div><dl className="room-effect-reference">{ROOM_COLORS.map(color=><React.Fragment key={color}><dt>{color}</dt><dd>{ROOM_EFFECT_LABELS[game.board.rooms.find(room=>room.color===color)?.effect??'DRAW_POWERFUL']}</dd></React.Fragment>)}</dl><p>The central chamber grants Forgotten spells. Room effects are optional within a physical action; rebuilt rooms double their special, once per Action phase.</p></InfoPopup>}
   </main><footer>(not) BLACK ROSE WARS · Unofficial prototype · 2–4 mages · Original placeholder cards</footer>
+  <QuickAccess selected={controlTab} expanded={quickControls} chronicleOpen={chronicleOpen} onSelect={openQuickControls} onChronicle={()=>setChronicleOpen(true)}/>
  </div>;
 }
 

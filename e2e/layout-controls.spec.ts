@@ -1,6 +1,6 @@
 import { test, expect, type Page, type WebSocketRoute } from '@playwright/test';
 import { createGame, type Card, type Evocation, type GameAction, type GameState } from '../packages/game-engine/src/index';
-import { selectControlTab, selectSpells, viewRetinue } from './layout-ui';
+import { closeChronicle, closeControls, openChronicle, selectControlTab, selectSpells, viewRetinue } from './layout-ui';
 import { expectSpellIcon, expectSpellType } from './spell-ui';
 
 const faults = new WeakMap<Page, string[]>();
@@ -51,7 +51,7 @@ function fixture(): GameState {
   game.history = { canUndo: true, canRedo: true, undoLabel: 'Move a mage', redoLabel: 'Attack' };
   Object.assign(game.players[0].wizard, { damageCubes: 3, damageByPlayer: { p2: 2 }, blackDamage: 1 });
   game.players[1].cubes.onWizard = 2; game.players[1].cubes.available = 23;
-  game.log = ['Layout fixture: the Chronicle stays outside every tab.'];
+  game.log = ['Layout fixture: the Chronicle drawer stays independent of every tab.'];
   return game;
 }
 
@@ -82,7 +82,8 @@ async function mount(page: Page, game: GameState) {
     close() { socket.close({ code: 1000, reason: 'Layout fixture offline' }); },
   };
 }
-const tab = (page: Page, name: string) => page.getByRole('tab', { name, exact: true });
+// The tabs live in the dock-opened dashboard; the selection persists while it is closed.
+const tab = (page: Page, name: string) => page.getByRole('tab', { name, exact: true, includeHidden: true });
 const ownActivation = (page: Page) => page.locator('#retinue-p1').getByRole('button', { name: /^Activate Cadaver #1/ });
 
 for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844 }]) {
@@ -91,6 +92,8 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
 
     test('four accessible keyboard tabs wrap; Spells owns magic while the map, roster, history and Chronicle remain independent', async ({ page }, info) => {
       const game = fixture(), wire = await mount(page, game);
+      await expect(page.getByRole('tablist', { name: 'Lodge controls', exact: true })).toBeHidden();
+      await selectControlTab(page, 'Physical actions');
       const tabs = page.getByRole('tablist', { name: 'Lodge controls', exact: true });
       await expect(tabs).toHaveAttribute('aria-orientation', 'horizontal');
       await expect(tabs.getByRole('tab')).toHaveText(['Physical actions', 'Spells', 'Evocations', 'Quests']);
@@ -117,28 +120,36 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       await expect(page.getByRole('tabpanel', { name: 'Evocations', exact: true })).toBeFocused();
       await selectSpells(page);
       await page.locator('.prepared .spell').click();
-      await expect(page.locator('.prepared .spell.chosen')).toHaveCount(1);
+      await expect(page.locator('.control-banner')).toBeHidden();
+      await expect(page.locator('#controls-panel-spells .prepared .spell.chosen')).toHaveCount(1);
       for (const name of ['Physical actions', 'Spells', 'Evocations', 'Quests'] as const) {
         await selectControlTab(page, name);
         await expect(page.locator('.board-panel')).toBeVisible();
         await expect(page.locator('.prepared .spell.chosen')).toBeVisible({ visible: name === 'Spells' });
+        await expect(page.locator('.control-banner')).toHaveClass(/is-floating/);
         await expect(page.locator('#controls-panel-spells .prepared .spell.chosen')).toHaveCount(1);
-        await expect(page.getByRole('log')).toContainText(game.log[0]);
-        await expect(page.locator('aside .log-panel')).toHaveCount(1);
+        await expect(page.locator('dialog#chronicle-drawer')).toBeHidden();
+        const chronicle = await openChronicle(page);
+        await expect(chronicle.getByRole('log')).toContainText(game.log[0]);
+        await closeChronicle(page);
+        await expect(tab(page, name)).toHaveAttribute('aria-selected', 'true');
+        await expect(page.locator('#controls-panel-spells .prepared .spell.chosen')).toHaveCount(1);
+        await expect(page.locator('aside .log-panel')).toHaveCount(0);
+        await expect(page.locator('#chronicle-drawer .log-panel')).toHaveCount(1);
         await expect(page.locator('aside .players-panel')).toHaveCount(0);
         await expect(page.locator('main .players-panel')).toBeVisible();
-        await expect(page.locator('.history-panel')).toBeVisible();
-        await expect(page.locator('.control-banner .history-panel')).toHaveCount(1);
+        await expect(page.locator('.turn-banner .turn-history')).toBeVisible();
+        await expect(page.locator('.control-banner .turn-history')).toHaveCount(0);
         await expect(page.getByRole('button', { name: 'Undo action', exact: true })).toBeEnabled();
-        await expect(page.locator('.control-panel .board-panel, .control-panel .players-panel, .control-panel .log-panel, .control-panel .history-panel')).toHaveCount(0);
+        await expect(page.locator('.control-panel .board-panel, .control-panel .players-panel, .control-panel .log-panel, .control-panel .turn-history')).toHaveCount(0);
         const bounds = await page.locator('.control-banner').evaluate(banner => {
           const box = banner.getBoundingClientRect(), map = document.querySelector('.board-panel')!.getBoundingClientRect();
           const roster = document.querySelector('.players-panel')!.getBoundingClientRect();
           return { above: box.bottom <= map.top, left: box.left, right: box.right, viewport: innerWidth,
             rosterBelow: roster.top >= map.bottom, overflow: document.documentElement.scrollWidth > innerWidth };
         });
-        expect(bounds.above).toBe(true); expect(bounds.left).toBeGreaterThanOrEqual(0);
-        expect(bounds.rosterBelow).toBe(true);
+        await expect(page.locator('.control-banner')).toHaveClass(/is-floating/);
+        expect(bounds.left).toBeGreaterThanOrEqual(0);
         expect(bounds.right).toBeLessThanOrEqual(bounds.viewport); expect(bounds.overflow).toBe(false);
         await expect(page.locator('#retinue-p1')).toBeVisible({ visible: name === 'Evocations' });
         await expect(page.locator('.reference')).toBeHidden();
@@ -148,14 +159,16 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       }
       await expect(page.locator('.quest-panel h3')).toHaveText(`◇ ${game.players[0].quest!.name}`);
       // Switching tabs must preserve the prepared target and keyboard-operable map.
+      await closeControls(page);
       const center = page.locator('.hex[data-room-id="room-0,0"]');
       await center.focus(); await page.keyboard.press('Enter');
       await expect(page.locator('.room-detail')).toBeVisible();
       await expect(tab(page, 'Quests')).toHaveAttribute('aria-selected', 'true');
-      await expect(page.locator('.prepared .spell.chosen')).toHaveCount(1);
+      await expect(page.locator('#controls-panel-spells .prepared .spell.chosen')).toHaveCount(1);
       wire.update(structuredClone(game));
       await expect(tab(page, 'Quests')).toHaveAttribute('aria-selected', 'true');
       expect(wire.commands).toEqual([]);
+      await selectControlTab(page, 'Quests');
       await info.attach(`layout-quests-${viewport.width}`, { body: await page.locator('.control-banner').screenshot(), contentType: 'image/png' });
       await page.locator('.players-panel').screenshot({path:info.outputPath('mage-summaries.png'),animations:'disabled'});
     });
@@ -166,6 +179,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       const peer = structuredClone(game); peer.phase = 'EVOCATION'; peer.activation = null; peer.currentPlayerId = 'p2';
       wire.update(peer); await expect(page.locator('.phase-track .current span')).toHaveText('Evocation'); await dismissOverlay(page);
       await expect(tab(page, 'Evocations')).toHaveAttribute('aria-selected', 'true');
+      await selectControlTab(page, 'Evocations');
       await expect(page.locator('.evocation-phase')).toContainText('Blue Seer is controlling their evocations.');
       await expect(page.locator('#retinue-p1')).toBeVisible(); await expect(ownActivation(page)).toBeDisabled();
       await expect(page.locator('#retinue-p2')).toBeHidden();
@@ -205,18 +219,22 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       paid.activation!.actionsUsed = 1; paid.players[0].actionTokens = 1;
       wire.update(paid); wire.ack();
       await expect(tab(page, 'Evocations')).toHaveAttribute('aria-selected', 'true');
+      await selectControlTab(page, 'Evocations');
       await page.getByRole('button', { name: 'Finish evocation', exact: true }).click();
       await expect.poll(() => wire.commands.length).toBe(2);
       expect(wire.commands[1].action).toEqual({ type: 'END_EVOCATION', playerId: 'p1' });
       paid.evocationActivation = null; wire.update(paid); wire.ack();
       await expect(tab(page, 'Physical actions')).toHaveAttribute('aria-selected', 'true');
+      await selectControlTab(page, 'Physical actions');
       await expect(page.getByRole('button', { name: /^Explore/ })).toBeEnabled();
+      await closeControls(page);
       await expect(page.locator('.board-panel')).toBeVisible();
     });
 
-    test('Physical actions and history stay in the top banner; pending, peer-disconnected and offline states cannot issue duplicate commands', async ({ page }) => {
+    test('Physical actions and history stay in the dock dashboard; pending, peer-disconnected and offline states cannot issue duplicate commands', async ({ page }) => {
       const game = fixture(), wire = await mount(page, game);
       const explore = page.getByRole('button', { name: /^Explore/ });
+      await selectControlTab(page, 'Physical actions');
       await expect(page.locator('.control-banner .actions-panel')).toHaveCount(1);
       await explore.click(); await expect.poll(() => wire.commands.length).toBe(1);
       expect(wire.commands[0].action).toEqual({ type: 'BEGIN_PHYSICAL_ACTION', playerId: 'p1', kind: 'EXPLORE' });
@@ -243,7 +261,8 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       await expect(page.getByText(/Game paused\. Waiting for the disconnected mage/)).toBeVisible();
       await expect(page.locator('.actions-panel button:enabled, .prepared .spell:enabled')).toHaveCount(0);
       await selectControlTab(page, 'Evocations'); await expect(ownActivation(page)).toBeDisabled();
-      await expect(page.getByRole('button', { name: 'Undo action', exact: true })).toBeDisabled();
+      await expect(page.locator('.turn-banner')).toHaveCount(0);
+      await expect(page.getByRole('button', { name: 'Undo action', exact: true })).toHaveCount(0);
       wire.update(game); await selectControlTab(page, 'Physical actions'); await expect(explore).toBeEnabled();
       const peerTurn = structuredClone(game); peerTurn.currentPlayerId = 'p2'; peerTurn.activation!.playerId = 'p2';
       wire.update(peerTurn); await expect(page.locator('.control-waiting')).toContainText('Blue Seer is acting.');
@@ -254,8 +273,9 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       await selectControlTab(page, 'Evocations'); await expect(ownActivation(page)).toBeDisabled();
       for (const name of ['Spells', 'Quests', 'Physical actions'] as const) {
         await selectControlTab(page, name);
-        await expect(page.getByRole('button', { name: 'Undo action', exact: true })).toBeDisabled();
-        await expect(page.getByRole('button', { name: 'Redo action', exact: true })).toBeDisabled();
+        await expect(page.getByRole('button', { name: 'Undo action', exact: true })).toHaveCount(0);
+        await expect(page.getByRole('button', { name: 'Redo action', exact: true })).toHaveCount(0);
+        await expect(page.getByRole('button', { name: /^End turn/ })).toHaveCount(0);
       }
       expect(wire.commands).toHaveLength(1);
       await expect(page.getByRole('alert')).toContainText('Connection closed.');
@@ -319,6 +339,47 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       await expect(page.locator('.player[data-player-id="p2"] summary .critical-attributes dd')).toHaveText('2/7');
       await expect(page.locator('.player[data-player-id="p2"] summary .player-stats')).toHaveText('⚡ 1 tokens');
       await expect(page.locator('.player[open]')).toHaveCount(2); expect(wire.commands).toEqual([]);
+    });
+
+    test('sticky turn banner carries Undo, Redo and End turn (0/2 disabled, enabled from 1/2), only on your turn', async ({ page }) => {
+      const game = fixture(), wire = await mount(page, game);
+      const banner = page.locator('.turn-banner'), end = banner.getByRole('button', { name: /^End turn/ });
+      await expect(banner).toBeVisible(); await expect(banner.locator('.eyebrow')).toHaveText('Your turn');
+      await expect(end).toHaveText('End turn (0/2)'); await expect(end).toBeDisabled();
+      await expect(banner.getByRole('button', { name: 'Undo action', exact: true })).toBeEnabled();
+      await expect(banner.getByRole('button', { name: 'Redo action', exact: true })).toBeEnabled();
+      await expect(page.getByRole('button', { name: /^End turn/ })).toHaveCount(1);
+      expect(await banner.evaluate(element => getComputedStyle(element).position)).toBe('sticky');
+      await page.locator('.board-panel').scrollIntoViewIfNeeded();
+      await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+      const top = await banner.evaluate(element => element.getBoundingClientRect().top);
+      expect(top).toBeGreaterThanOrEqual(-1); expect(top).toBeLessThan(16);
+      const one = structuredClone(game); one.activation!.actionsUsed = 1; wire.update(one);
+      await expect(end).toHaveText('End turn (1/2)'); await expect(end).toBeEnabled();
+      await end.click(); await expect.poll(() => wire.commands.length).toBe(1);
+      expect(wire.commands[0].action).toEqual({ type: 'END_ACTIVATION', playerId: 'p1' });
+      await expect(end).toBeDisabled(); wire.ack();
+      const two = structuredClone(game); two.activation!.actionsUsed = 2; two.activation!.physicalAction = { kind: 'EXPLORE', mainEffectUsed: false, movementStarted: false };
+      wire.update(two); await expect(end).toHaveText('End turn (2/2)'); await expect(end).toBeDisabled();
+      const peer = structuredClone(game); peer.currentPlayerId = 'p2'; peer.activation!.playerId = 'p2';
+      wire.update(peer);
+      await expect(banner.locator('.eyebrow')).toHaveText('Mage acting');
+      await expect(banner.getByRole('button', { name: /^End turn/ })).toHaveCount(0);
+      await expect(page.getByRole('button', { name: /^End turn/ })).toHaveCount(0);
+    });
+
+    test('prepared Trap, Protection and Ongoing cards print their effect inside the dashboard card', async ({ page }) => {
+      const game = fixture(), wire = await mount(page, game);
+      game.players[0].prepared.slot2 = { card: take(game, 'Thorn Retort'), used: false };
+      game.players[0].prepared.slot3 = { card: take(game, 'Threshold Snare'), used: false };
+      game.players[0].prepared.rapid = { card: take(game, 'Thorned Path'), used: false };
+      wire.update(game);
+      await selectSpells(page);
+      for (const slot of ['slot2', 'slot3', 'rapid'] as const) {
+        const card = game.players[0].prepared[slot]!.card;
+        const rules = page.locator('#controls-panel-spells .prepared .spell', { hasText: card.name }).locator('.spell-rules');
+        await expect(rules).toBeVisible(); await expect(rules).toHaveText(card.rulesText!);
+      }
     });
   });
 }

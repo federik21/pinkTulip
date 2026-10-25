@@ -3,7 +3,7 @@ import { applyAction, createGame } from '../packages/game-engine/src/index';
 import type { Card, GameState } from '../packages/game-engine/src/index';
 import { ActionHistory } from '../apps/server/src/action-history';
 import { publicState } from '../apps/server/src/public-state';
-import { expectReference, selectStudyDraw } from './layout-ui';
+import { assignPreparationCard, expectReference, selectStudyDraw } from './layout-ui';
 
 // Observe genuine server projections; never intercept sockets or inject setup.
 function observeState(page: Page) {
@@ -188,9 +188,9 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
         await expect(page.getByRole('heading', { name: 'Reduce your hand to 7 cards', exact: true })).toHaveCount(0);
       }
       for (const [index, page] of pages.entries()) {
-        const preparations = page.locator('.phase-panel .spell'); await expect(preparations).toHaveCount(4);
-        for (let card = 0; card < 4; card++) await preparations.nth(card).click();
-        await page.getByRole('button', { name: 'Prepare spells', exact: true }).click();
+        const preparations = page.locator('.preparation-panel .cards .spell'); await expect(preparations).toHaveCount(4);
+        for (const [card, slot] of ([1, 2, 3, 'Quick'] as const).entries()) await assignPreparationCard(page, preparations.nth(card), slot);
+        await page.locator('.preparation-panel').getByRole('button', { name: 'Done', exact: true }).click();
         await expect.poll(() => states[index]().players[index].preparationDone).toBe(true);
         if (!index) for (const peer of pages) await expect(peer.locator('.phase-track .current span')).toHaveText('Preparation');
       }

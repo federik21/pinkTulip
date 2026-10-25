@@ -80,6 +80,74 @@ describe('starting personal-deck public projection', () => {
   expect(Object.values(foreign.prepared).filter(slot => slot && !slot.used)).toHaveLength(count - 1);
  });
 
+ it.each([
+  ['1+3',[0,null,2],false],['2+3',[null,1,2],false],
+  ['2+Quick',[null,1,null],true],['3+Quick',[null,null,2],true],
+  ['1+3+Quick',[0,null,2],true],['2+3+Quick',[null,1,2],true],
+ ] as const)('projects exact gapped occupancy %s without foreign identities, types, rules or preparation history',(label,numbered,quick) => {
+  const history = new ActionHistory(); let game = createGame(); game.phase = 'PREPARATION'; game.round = 1;
+  for (const p of game.players) p.connected = true;
+  const deck = game.library.find(d => d.id === 'enchantment')!;
+  // Use real cards with all four explicit types and private printed rules.
+  const cards = ['Threshold Snare', 'Thorn Retort', "Pilgrim's Mark", 'Thorned Path']
+   .map(name => deck.cards.find(card => card.name === name)!);
+  expect(new Set(cards.map(card => card.spellType))).toEqual(new Set(['TRAP', 'PROTECTION', 'CONTINGENCY', 'COMBAT']));
+  expect(cards.every(card => !!card.rulesText)).toBe(true);
+  const selected = new Set(cards.map(card => card.id)); deck.cards = deck.cards.filter(card => !selected.has(card.id));
+  game.players[0].hand.push(...cards);
+  const opponent = game.library[0].cards.splice(0, 2); game.players[1].hand.push(...opponent);
+  const original = physicalCards(game).map(card => card.id).sort(), before = structuredClone(game);
+  expect(original).toHaveLength(120); expect(new Set(original).size).toBe(120);
+  const check = (state: GameState) => {
+   const authoritative = structuredClone(state);
+   for (const viewer of ['p1', 'p2', null]) {
+    const projected = publicState(state, viewer, history);
+    const wire = JSON.parse(JSON.stringify(projected)) as GameState;
+    for (const [i, actual] of state.players.entries()) {
+     const p = wire.players[i];
+     for (const slot of ['slot1', 'slot2', 'slot3', 'rapid'] as const) {
+      const prepared = actual.prepared[slot];
+      expect(p.prepared[slot]).toEqual(actual.id === viewer || prepared === null ? prepared : { card:hidden(0), used:prepared.used });
+     }
+     expect(p.hand).toEqual(actual.id === viewer ? actual.hand : actual.hand.map((_, index) => hidden(index)));
+     if (actual.id !== viewer) {
+      expect(JSON.stringify(p.prepared)).not.toMatch(/spellType|rulesText|schoolId|trigger|ongoing/);
+      for (const card of i === 0 ? cards : opponent) {
+       expect(JSON.stringify(wire)).not.toContain(`"${card.id}"`);
+       expect(JSON.stringify(wire)).not.toContain(JSON.stringify(card.name));
+      }
+     }
+    }
+    expect(wire.history).toEqual({ canUndo:false, canRedo:false });
+    expect(history.status(state, viewer)).toEqual({ canUndo:false, canRedo:false });
+    const occupied = Object.values(projected.players[0].prepared).find(slot => slot !== null)!;
+    occupied.card.name = 'projection-only mutation';
+   }
+   expect(state).toEqual(authoritative); expect(state).not.toHaveProperty('history');
+   expect(physicalCards(state).map(card => card.id).sort()).toEqual(original);
+   expect(new Set(physicalCards(state).map(card => card.id)).size).toBe(120);
+  };
+  const input = game;
+  game = history.apply(game, { type:'PREPARE_CARDS', playerId:'p1',
+   ...(quick ? { rapidCardId:cards[3].id } : {}), preparedCardIds:numbered.map(i => i === null ? null : cards[i].id) }, 'p1');
+  expect(input).toEqual(before);
+  const expected = numbered.map(i => i === null ? null : { card:cards[i], used:false });
+  expect(game.players[0].prepared).toEqual({ slot1:expected[0], slot2:expected[1], slot3:expected[2], rapid:quick ? { card:cards[3], used:false } : null });
+  expect(before.players[0].prepared).toEqual({ rapid:null, slot1:null, slot2:null, slot3:null });
+  expect(before.players[0].hand).toEqual(cards); expect(game.phase).toBe('PREPARATION'); check(game);
+  const pending = structuredClone(game), pendingInput = game;
+  game = history.apply(game, { type:'PREPARE_CARDS', playerId:'p2', rapidCardId:opponent[1].id,
+   preparedCardIds:[null, null, opponent[0].id] }, 'p2');
+  expect(pendingInput).toEqual(pending);
+  expect(game.players[1].prepared).toEqual({ slot1:null, slot2:null, slot3:{ card:opponent[0], used:false }, rapid:{ card:opponent[1], used:false } });
+  expect(pending.phase).toBe('PREPARATION'); expect(pending.players[1].hand).toEqual(opponent);
+  expect(game.phase).toBe('ACTION'); expect(game.currentPlayerId).toBe('p1'); check(game);
+  const completed = structuredClone(game);
+  for (const p of game.players) for (const type of ['UNDO_ACTION', 'REDO_ACTION'] as const)
+   expect(() => history.apply(game, { type, playerId:p.id }, p.id)).toThrow(/No action available to undo|No action available to redo/);
+  expect(game).toEqual(completed); check(game);
+ });
+
  it.each(['cantrip', 'transmutation', 'enchantment'])('keeps exact %s identities hidden from every viewer until drawn', schoolId => {
   const history = new ActionHistory(); let game = createGame(4);
   const original = physicalCards(game).map(card => card.id).sort();

@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { resolve } from 'node:path';
 import { WebSocket } from 'ws';
-import { canUseSpellDummy, isWithinSpellRange, spellCanTargetModel } from '../packages/game-engine/src/engine';
+import { isWithinSpellRange, spellCanTargetModel } from '../packages/game-engine/src/engine';
 import type { ActiveSpell, Card, GameAction, GameState, Hex, Player } from '../packages/game-engine/src/types';
 import { checkHealingFacts, checkPublicFeedback } from './public-feedback';
 
@@ -32,7 +32,9 @@ function spellTarget(state: GameState, id: string, card: Card): SpellSelection |
   spellCanTargetModel(card, id, owner, kind) && isWithinSpellRange(p.wizard.position, position, card.range) &&
   !state.board.rooms.some(r => r.startingFor && r.tiles.some(h => sameHex(h, position)));
  if (card.target === 'SELF') return legal(id, 'MAGE', p.wizard.position) ? {} : undefined;
- if (card.target === 'ROOM' || canUseSpellDummy(card)) {
+ // These scenarios deliberately exercise real support and hidden bindings;
+ // dummy casts have separate engine/server/browser coverage.
+ if (card.target === 'ROOM') {
   const rooms = state.board.rooms.filter(r => !r.startingFor && r.tiles.some(h => isWithinSpellRange(p.wizard.position, h, card.range)) &&
    (!card.damage || !state.players.some(t => t.id !== id && r.tiles.some(h => sameHex(h, t.wizard.position))) &&
     !state.evocations.some(e => e.playerId !== id && r.tiles.some(h => sameHex(h, e.position)))));
@@ -41,7 +43,7 @@ function spellTarget(state: GameState, id: string, card: Card): SpellSelection |
   rooms.sort((a, b) => Number(!!card.convert && !b.scored && !b.reconstructed && Object.entries(b.cubesByPlayer).some(([owner, n]) => owner !== id && n > 0)) -
    Number(!!card.convert && !a.scored && !a.reconstructed && Object.entries(a.cubesByPlayer).some(([owner, n]) => owner !== id && n > 0)));
   const room = rooms[0];
-  return room ? { roomId:room.id, ...(canUseSpellDummy(card) ? { dummy:true } : {}) } : undefined;
+  return room ? { roomId:room.id } : undefined;
  }
  const mage = [...state.players].sort((a, b) => b.wizard.damageCubes - a.wizard.damageCubes)
   .find(t => legal(t.id, 'MAGE', t.wizard.position) && (!card.damage || t.id === id));

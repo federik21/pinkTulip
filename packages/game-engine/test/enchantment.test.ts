@@ -148,18 +148,24 @@ describe('reactive targeting, quotas and dummy compatibility',()=>{
   expect(spellCanTargetModel(c,'p1','p1',kind)).toBe(true);expect(canPlayerAct(s,player(s))).toBe(true);
   const result=cast(s,'p1',kind==='MAGE'?{targetPlayerId:id}:{targetEvocationId:id});expect(result.readiedSpells).toHaveLength(1);
  });
- it.each(['TRAP','PROTECTION'] as const)('%s cannot fake a MODEL dummy despite zero support stats',spellType=>{
+ it.each(['TRAP','PROTECTION'] as const)('%s MODEL dummy is consumed without hidden readiness or bindings',spellType=>{
   const s=fixture(),c=custom('Hidden model',on('MAGE_ATTACK'),[],{target:'MODEL',spellType});prepare(s,c);
-  expect(canUseSpellDummy(c)).toBe(false);reject(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',dummy:true,roomId:center},/Dummy/);
+  expect(canUseSpellDummy(c)).toBe(true);
   player(s).actionTokens=0;for(const p of s.players.slice(1))p.wizard.position={q:1,r:1};
-  expect(canPlayerAct(s,player(s))).toBe(spellType==='PROTECTION');
+  expect(canPlayerAct(s,player(s))).toBe(true);
+  const result=cast(s,'p1',{dummy:true,roomId:center});
+  expect(result.readiedSpells).toEqual([]);expect(result.ongoingSpells).toEqual([]);expect(result.activeSpellOrder).toEqual([]);
+  expect(player(result).discard).toContainEqual(c);expect(player(result).prepared.rapid).toEqual({card:c,used:true});
+  expect(result.feedbackEvents).toEqual(s.feedbackEvents);expect(physicalCards(result)).toEqual(physicalCards(s));
  });
- it('ongoing MODEL spells cannot use dummy targeting, but legacy MODEL offense can',()=>{
+ it('ongoing MODEL spells and legacy MODEL offense both allow dummy targeting without binding',()=>{
   const c:Card={id:'model',name:'Model',kind:'SPELL',target:'MODEL',range:2,damage:1,instability:0};
   expect(canUseSpellDummy(c)).toBe(true);
   const bound={...c,ongoing:{trigger:on('ENTER_ROOM','BOUND_MODEL','ANY'),effects:[]}};
-  expect(canUseSpellDummy(bound)).toBe(false);
-  const s=fixture();prepare(s,bound);reject(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:center,dummy:true},/Dummy/);
+  expect(canUseSpellDummy(bound)).toBe(true);
+  const s=fixture();prepare(s,bound);const result=cast(s,'p1',{roomId:center,dummy:true});
+  expect(result.ongoingSpells).toEqual([]);expect(result.activeSpellOrder).toEqual([]);
+  expect(player(result).discard).toEqual([bound]);expect(result.players.map(p=>p.wizard)).toEqual(s.players.map(p=>p.wizard));
  });
  it.each([
   {roomId:'room-1,1'}, {roomId:'room-3,-2'}, {roomId:center,targetPlayerId:'p2'}, {targetPlayerId:'p2'},

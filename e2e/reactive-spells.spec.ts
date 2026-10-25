@@ -4,7 +4,7 @@ import type { ActiveSpell, Card, Evocation, GameAction, GameState, Room, SpellTy
 import { ActionHistory } from '../apps/server/src/action-history';
 import { publicState } from '../apps/server/src/public-state';
 import { expectSpellIcon, expectSpellType } from './spell-ui';
-import { openMageDetails, selectControlTab, selectSpells, viewRetinue } from './layout-ui';
+import { closeChronicle, closeControls, openChronicle, openMageDetails, selectControlTab, selectSpells, viewRetinue } from './layout-ui';
 
 type Cast = Extract<GameAction, { type: 'CAST_SPELL' }>;
 type Slot = Cast['slot'];
@@ -164,10 +164,11 @@ const readied = (page: Page, active: ActiveSpell) => activeZone(page).locator(`a
 const ongoing = (page: Page, active: ActiveSpell) => activeZone(page).locator(`article.ongoing-spell[data-active-spell-id="${active.id}"]`);
 const prepared = (page: Page, name: string, slot: Slot = 'slot1') => page.locator('.prepared .spell').filter({
   has: page.locator('strong', { hasText: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`) }),
-}).filter({ has: page.locator('.eyebrow', { hasText: slot === 'rapid' ? /\bFlexible\b/ : new RegExp(`^Spell ${slot.slice(-1)}\\b`) }) });
+}).filter({ has: page.locator('.eyebrow', { hasText: slot === 'rapid' ? /\bQuick\b/ : new RegExp(`^Spell ${slot.slice(-1)}\\b`) }) });
 const targetSelect = (page: Page) => page.getByRole('combobox', { name: 'Spell target model', exact: true });
 const confirm = (page: Page) => page.locator('.room-detail').getByRole('button', { name: /^(Activate|Cast) / });
-const chronicle = (page: Page) => page.getByRole('log');
+// CSS includes the mounted log in a closed native dialog; role locators do not.
+const chronicle = (page: Page) => page.locator('#chronicle-drawer [role="log"]');
 async function command(page: Page, wire: Wire, click: () => Promise<unknown>, expected: GameAction): Promise<Reply> {
   const index = wire.replies.length;
   await click(); await expect.poll(() => wire.replies.length).toBe(index + 1);
@@ -175,9 +176,20 @@ async function command(page: Page, wire: Wire, click: () => Promise<unknown>, ex
   await expect(page.getByRole('alert')).toHaveCount(0);
   return reply;
 }
-async function noDummy(page: Page) {
-  await expect(page.locator('.target-mode')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Target dummy · no damage', exact: true })).toHaveCount(0);
+async function expectTargetModes(page: Page) {
+  const selected = page.locator('.prepared .spell.chosen');
+  await expect(selected).toHaveCount(1);
+  const eligible = /·\s*(Mage|Evocation|Model)$/.test((await selected.locator('.eyebrow').textContent())!.trim());
+  await expect(page.locator('.target-mode')).toHaveCount(eligible ? 1 : 0);
+  const model = page.getByRole('button', { name: 'Target model', exact: true });
+  const dummy = page.getByRole('button', { name: 'Target dummy · no damage', exact: true });
+  await expect(model).toHaveCount(eligible ? 1 : 0);
+  await expect(dummy).toHaveCount(eligible ? 1 : 0);
+  if (eligible) {
+    await expect(model).toHaveAttribute('aria-pressed', 'true');
+    await expect(dummy).toHaveAttribute('aria-pressed', 'false');
+  }
+  await expect(page.locator('.dummy-target-help')).toHaveCount(0);
 }
 async function expectOptions(page: Page, ids: string[]) {
   await expect(targetSelect(page)).toBeVisible();
@@ -187,9 +199,10 @@ async function expectOptions(page: Page, ids: string[]) {
   await expect(targetSelect(page).locator('option').first()).toHaveText('First eligible model in this room');
 }
 async function expectChronicle(page: Page, game: GameState) {
-  await expect(page.getByRole('heading', { name: 'Chronicle', exact: true })).toBeVisible();
+  const dialog = await openChronicle(page);
   // Each entry has a decorative rune; assert the actual latest-first DOM order.
-  await expect(chronicle(page).locator(':scope > div')).toHaveText(game.log.slice(-45).reverse().map(entry => `✧${entry}`));
+  await expect(dialog.getByRole('log').locator(':scope > div')).toHaveText(game.log.slice(-45).reverse().map(entry => `✧${entry}`));
+  await closeChronicle(page);
 }
 async function screenshot(testInfo: TestInfo, name: string, locator: Locator) {
   await testInfo.attach(name, { body: await locator.screenshot({ path: testInfo.outputPath(`${name}.png`), animations: 'disabled' }),
@@ -331,7 +344,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       for (const active of hidden) {
         for (const secret of [active.id, active.card.id, active.card.name, active.card.rulesText!]) expect(markup).not.toContain(secret);
       }
-      await selectSpells(page);
+      await closeControls(page);
       await page.locator('.board-viewport').evaluate(element => { element.scrollLeft = element.scrollWidth; });
       await expectMarkerGeometry(page);
       const icon = boardEffects(page, 'p1').locator('.model-effect').first();
@@ -474,7 +487,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
         const card = mage(game).prepared[item.slot]!.card, button = prepared(page, item.name, item.slot);
         expect(card.schoolId).toBe('enchantment'); expect(getSpellType(card)).toBe(item.type);
         await expect(button.locator('strong')).toHaveText(item.name);
-        await expect(button.locator('.eyebrow')).toHaveText(`${item.slot === 'rapid' ? '✧ Flexible' : `Spell ${item.slot.slice(-1)}`} · ${item.target}`);
+        await expect(button.locator('.eyebrow')).toHaveText(`${item.slot === 'rapid' ? '✧ Quick' : `Spell ${item.slot.slice(-1)}`} · ${item.target}`);
         await expect(button.locator('.spell-type')).toHaveAttribute('data-spell-type', item.type);
         await expectSpellType(button.locator('.spell-type'), item.label);
         const typeName = item.label.split(' · ')[0];
@@ -485,9 +498,9 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
           await expect(button.locator('.spell-rules')).not.toContainText('Ready secretly');
         }
       }
-      await prepared(page, "Pilgrim's Mark", 'rapid').click(); await noDummy(page);
-      await expect(confirm(page)).toHaveText("Cast Pilgrim's Mark on yourself");
       await screenshot(testInfo, `enchantment-school-cards-${viewport.width}`, page.locator('.cards.prepared'));
+      await prepared(page, "Pilgrim's Mark", 'rapid').click(); await expectTargetModes(page);
+      await expect(confirm(page)).toHaveText("Cast Pilgrim's Mark on yourself");
     });
 
     for (const scenario of readiness) {
@@ -496,13 +509,13 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
         prepare(game, 'Runic Remedy', 'slot2'); prepare(game, "Pilgrim's Mark", 'rapid');
         game.evocations = [servant('own-one', 'p1'), servant('enemy-one', 'p2')];
         const wire = await mount(page, game), button = prepared(page, scenario.name);
-        await button.click(); await noDummy(page);
         await expectSpellType(button.locator('.spell-type'), scenario.label);
+        await button.click(); await expectTargetModes(page);
         if (scenario.target === 'SELF') {
           await expect(hex(page)).toHaveClass(/selected/);
           await expect(confirm(page)).toHaveText(`Activate ${scenario.name} on yourself`);
           await hex(page, east).click(); await expect(confirm(page)).toBeDisabled();
-          await button.click(); await button.click(); // Reopening SELF must reset a stale room selection.
+          await selectSpells(page); await button.click(); await selectSpells(page); await button.click(); // Reopening SELF must reset a stale room selection.
           await expect(hex(page)).toHaveClass(/selected/);
           await expect(targetSelect(page)).toHaveCount(0);
         } else {
@@ -519,7 +532,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
           } else await expect(targetSelect(page)).toHaveCount(0);
           await expect(confirm(page)).toHaveText(`Activate ${scenario.name} here`);
         }
-        await noDummy(page); await expect(confirm(page)).toBeEnabled();
+        await expectTargetModes(page); await expect(confirm(page)).toBeEnabled();
         expect(wire.replies).toHaveLength(0);
         const before = wire.state;
         await command(page, wire, () => confirm(page).click(), { type: 'CAST_SPELL', playerId: 'p1', slot: 'slot1', ...scenario.selection });
@@ -631,12 +644,15 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       await expectChronicle(page, wire.state);
       await expect(chronicle(page).locator(':scope > div').filter({ hasText: 'reveals Threshold Snare' })).toHaveCount(1);
       for (const viewer of ['p1', 'p2', null]) expect(school(publicState(wire.state, viewer, wire.history)).discard).toEqual([card]);
+      await closeControls(page);
       await command(page, wire, () => hex(page).click(),
         { type: 'EXPLORE_STEP', playerId: 'p1', destination: { q: 0, r: 0 } });
+      await selectControlTab(page, 'Actions');
       await command(page, wire, () => page.getByRole('button', { name: 'Skip remaining effects', exact: true }).click(),
         { type: 'SKIP_PHYSICAL_EFFECTS', playerId: 'p1' });
       // Re-entering the same room must not fire a spent physical copy again.
       await beginExplore(page, wire);
+      await closeControls(page);
       await command(page, wire, () => hex(page, east).click(),
         { type: 'EXPLORE_STEP', playerId: 'p1', destination: { q: 1, r: 0 } });
       expect(mage(wire.state).wizard.damageCubes).toBe(2);
@@ -697,7 +713,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       Object.assign(exit, { instability: 1, cubesByPlayer: { p2: 1 } });
       Object.assign(mage(game).wizard, { damageCubes: 8, damageByPlayer: { p2: 8 } }); syncCubes(game);
       const wire = await mount(page, game), button = prepared(page, card.name);
-      await button.click(); await noDummy(page);
+      await button.click(); await expectTargetModes(page);
       await expect(hex(page)).toHaveClass(/selected/);
       await expect(confirm(page)).toHaveText("Cast Pilgrim's Mark on yourself");
       await expect(targetSelect(page)).toHaveCount(0);
@@ -722,6 +738,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       await expect(effect.locator('small'), 'Ongoing SELF binding identifies the mage')
         .toHaveText('Rose Warden · Bound to Rose Warden');
       await beginExplore(page, wire);
+      await closeControls(page);
       await command(page, wire, () => hex(page, east).click(),
         { type: 'EXPLORE_STEP', playerId: 'p1', destination: { q: 1, r: 0 } });
       await expect(hex(page).locator('.model-effect-markers[data-model-id="p1"]')).toHaveCount(0);
@@ -739,6 +756,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       expect(wire.state.ongoingSpells).toEqual([active]);
       await selectControlTab(page, 'Actions');
       await expect(page.locator('.movement-progress strong')).toHaveText('1 movement remaining');
+      await closeControls(page);
       await command(page, wire, () => hex(page).click(),
         { type: 'EXPLORE_STEP', playerId: 'p1', destination: { q: 0, r: 0 } });
       await expect(hex(page, east).locator('.model-effect-markers[data-model-id="p1"]')).toHaveCount(0);
@@ -751,6 +769,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       expect(wire.state.currentPlayerId).toBe('p1'); // Pending physical effects delay handoff.
       expect(wire.state.log.filter(entry => entry === "Interrupt ENTER_ROOM: Rose Warden reacts with Pilgrim's Mark.")).toHaveLength(2);
       await expectChronicle(page, wire.state);
+      await selectControlTab(page, 'Actions');
       await command(page, wire, () => page.getByRole('button', { name: 'Skip remaining effects', exact: true }).click(),
         { type: 'SKIP_PHYSICAL_EFFECTS', playerId: 'p1' });
       expect(wire.state.currentPlayerId).toBe('p2');
@@ -770,6 +789,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       wire.dispatch({ type: 'END_ACTIVATION', playerId: 'p2' });
       expect(wire.state.currentPlayerId).toBe('p1');
       await beginExplore(page, wire);
+      await closeControls(page);
       await command(page, wire, () => hex(page, exit.id).click(),
         { type: 'EXPLORE_STEP', playerId: 'p1', destination: exit.tiles[0] });
       expect(room(wire.state, exit.id).cubesByPlayer).toEqual({ p2: 1 });

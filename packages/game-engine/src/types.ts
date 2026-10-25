@@ -87,7 +87,8 @@ export type GameAction =
  | { type: 'DISCARD_STUDY'; playerId: PlayerId; cardIds: string[] }
  | { type: 'DISCARD_QUESTS'; playerId: PlayerId; questIds: string[] }
  | { type: 'DISCARD_HAND_LIMIT'; playerId: PlayerId; cardIds: string[] }
- | { type: 'PREPARE_CARDS'; playerId: PlayerId; rapidCardId?: string; preparedCardIds: string[] }
+ // Numbered entries retain their slot index; null means an intentionally empty slot.
+ | { type: 'PREPARE_CARDS'; playerId: PlayerId; rapidCardId?: string; preparedCardIds: (string | null)[] }
  | { type: 'END_ACTIVATION'; playerId: PlayerId }
  | { type: 'PASS_ROUND'; playerId: PlayerId }
  | { type: 'ACTIVATE_EVOCATION'; playerId: PlayerId; evocationId: string }

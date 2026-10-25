@@ -575,7 +575,7 @@ async function main() {
     if (mage) return { targetPlayerId:mage.id };
     const model = [...epoch.evocations].sort((a, b) => b.damageCubes - a.damageCubes)
      .find(e => legal(e.playerId, 'EVOCATION', e.position) && (!card.damage || e.playerId === id));
-    assert.ok(model, `A real safe ${card.target} target is required; support cannot use a dummy`);
+    assert.ok(model, `This planned cast requires a real safe ${card.target} target`);
     return { targetEvocationId:model.id };
    }
     const room = epoch.board.rooms.find(r => !r.startingFor && r.tiles.some(h => isWithinSpellRange(p.wizard.position, h, card.range)) &&

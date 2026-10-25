@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
-import { openMageDetails, selectControlTab, selectSpells, viewRetinue } from './layout-ui';
+import { closeControls, openMageDetails, selectControlTab, selectSpells, viewRetinue } from './layout-ui';
 import { applyAction, BLACK_ROSE_ID, createGame, MAGE_COLORS } from '../packages/game-engine/src/index';
 import type { Card, Evocation, GameAction, GameState, Hex, Room } from '../packages/game-engine/src/index';
 
@@ -125,16 +125,27 @@ const player = (page: Page, id: string) => page.locator(`.player[data-player-id=
 // Printed names and slot prefixes stay stable if card-type badges are added.
 const prepared = (page: Page, name: string, slot: Slot = 'slot1') => page.locator('.prepared .spell').filter({
   has: page.getByText(name, { exact: true }),
-}).filter({ has: page.locator('.eyebrow', { hasText: slot === 'rapid' ? /\bFlexible\b/ : new RegExp(`^Spell ${slot.slice(-1)}\\b`) }) });
+}).filter({ has: page.locator('.eyebrow', { hasText: slot === 'rapid' ? /\bQuick\b/ : new RegExp(`^Spell ${slot.slice(-1)}\\b`) }) });
 const targetSelect = (page: Page) => page.getByRole('combobox', { name: 'Spell target model', exact: true });
 const castButton = (page: Page) => page.locator('.room-detail').getByRole('button', { name: /^Cast / });
 const color = (id: string) => {
   const value = MAGE_COLORS[id] ?? '#d4cedd';
   return `rgb(${[1, 3, 5].map(start => parseInt(value.slice(start, start + 2), 16)).join(', ')})`;
 };
-async function noDummy(page: Page) {
-  await expect(page.locator('.target-mode')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Target dummy · no damage', exact: true })).toHaveCount(0);
+async function expectTargetModes(page: Page) {
+  const selected = page.locator('.prepared .spell.chosen');
+  await expect(selected).toHaveCount(1);
+  const eligible = /·\s*(Mage|Evocation|Model)$/.test((await selected.locator('.eyebrow').textContent())!.trim());
+  await expect(page.locator('.target-mode')).toHaveCount(eligible ? 1 : 0);
+  const model = page.getByRole('button', { name: 'Target model', exact: true });
+  const dummy = page.getByRole('button', { name: 'Target dummy · no damage', exact: true });
+  await expect(model).toHaveCount(eligible ? 1 : 0);
+  await expect(dummy).toHaveCount(eligible ? 1 : 0);
+  if (eligible) {
+    await expect(model).toHaveAttribute('aria-pressed', 'true');
+    await expect(dummy).toHaveAttribute('aria-pressed', 'false');
+  }
+  await expect(page.locator('.dummy-target-help')).toHaveCount(0);
 }
 async function expectOptions(page: Page, ids: string[]) {
   const select = targetSelect(page);
@@ -175,6 +186,7 @@ async function expectModels(page: Page, game: GameState) {
 }
 async function cast(page: Page, wire: Wire, expected: Cast) {
   const index = wire.replies.length;
+  await closeControls(page);
   await expect(castButton(page)).toBeEnabled();
   await castButton(page).click();
   await expect.poll(() => wire.replies.length).toBe(index + 1);
@@ -239,10 +251,10 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
         await expect(castButton(page)).toHaveText(`Cast ${name} on yourself`);
         await expect(button.locator('.heal-effect')).toContainText(`${card.heal} heal`);
         if (card.convert) await expect(button.locator('.convert-effect')).toContainText(`${card.convert} convert · damage cubes`);
-        await expect(targetSelect(page)).toHaveCount(0); await noDummy(page);
+        await expect(targetSelect(page)).toHaveCount(0); await expectTargetModes(page);
         await hex(page, 'room-0,1').click(); await expect(castButton(page)).toBeDisabled();
-        await button.click(); await expect(castButton(page)).toHaveCount(0);
-        await button.click(); await expect(hex(page)).toHaveClass(/selected/);
+        await selectSpells(page); await button.click(); await expect(castButton(page)).toHaveCount(0);
+        await selectSpells(page); await button.click(); await expect(hex(page)).toHaveClass(/selected/);
         expect(wire.replies).toHaveLength(0);
         await expectModels(page, wire.state);
         const after = await cast(page, wire, { type: 'CAST_SPELL', playerId: 'p1', slot: 'slot1', targetPlayerId: 'p1' });
@@ -281,7 +293,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
           const amount = card[scenario.effect]!;
           await expect(button.locator(`.${scenario.effect}-effect`)).toContainText(`${amount} ${scenario.effect}`);
           if (scenario.effect === 'convert') await expect(button.locator('.convert-effect')).toContainText('damage cubes');
-          await button.click(); await noDummy(page); await hex(page).click();
+          await button.click(); await expectTargetModes(page); await hex(page).click();
           await expectOptions(page, [...scenario.ids]); await expect(targetSelect(page)).toHaveValue('');
           await targetSelect(page).selectOption(id);
           const before = wire.state, mage = before.players.some(p => p.id === id);
@@ -330,7 +342,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
         game.players[3].wizard.position = { ...protectedPosition };
         game.evocations = [evocation('legal', 'p2', boundary), evocation('off-axis', 'p3', offAxis), evocation('protected', 'p4', protectedPosition)];
         const wire = await mount(page, game);
-        await prepared(page, name).click(); await noDummy(page); await hex(page, room.id).click();
+        await prepared(page, name).click(); await expectTargetModes(page); await hex(page, room.id).click();
         const options = card.target === 'MAGE' ? ['p2'] : card.target === 'EVOCATION' ? ['legal'] : ['p2', 'legal'];
         await expectOptions(page, options); await expect(hex(page, room.id)).toHaveClass(/reachable/);
         await targetSelect(page).selectOption(options[0]);
@@ -359,7 +371,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       game.board.rooms = game.board.rooms.filter(r => r.id !== 'room-0,-1'); start.tiles = [{ q: 0, r: -1 }];
       roomAt(game, 'room-2,0').tiles = [{ q: 3, r: 0 }];
       const wire = await mount(page, game);
-      await prepared(page, 'Restorative Tide').click(); await noDummy(page);
+      await prepared(page, 'Restorative Tide').click(); await expectTargetModes(page);
       for (const id of ['room-1,1', 'room-2,0', start.id]) {
         await hex(page, id).click();
         await expect(hex(page, id)).not.toHaveClass(/reachable/);
@@ -385,7 +397,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       game.evocations.push(evocation('outside', 'p2', { q: 0, r: 1 }, 2)); wound(game, 'outside', { p4: 1 }); syncCubes(game);
       const wire = await mount(page, game); await expectModels(page, game);
       await selectSpells(page);
-      await prepared(page, 'Sanctuary').click(); await noDummy(page); await hex(page).click();
+      await prepared(page, 'Sanctuary').click(); await expectTargetModes(page); await hex(page).click();
       await expect(targetSelect(page)).toHaveCount(0);
       await expect(prepared(page, 'Sanctuary').locator('.heal-effect')).toHaveText('♥ 2 heal');
       const after = await cast(page, wire, { type: 'CAST_SPELL', playerId: 'p1', slot: 'slot1', roomId: room.id });
@@ -407,7 +419,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
         wound(game, 'p2', { p4: 2 }); wound(game, 'own-one', { p3: 1 }); syncCubes(game);
         const wire = await mount(page, game); await expectModels(page, game);
         await selectSpells(page);
-        await prepared(page, 'Rewrite the Lodge').click(); await noDummy(page); await hex(page).click();
+        await prepared(page, 'Rewrite the Lodge').click(); await expectTargetModes(page); await hex(page).click();
         await expect(targetSelect(page)).toHaveCount(0);
         await expect(prepared(page, 'Rewrite the Lodge').locator('.convert-effect')).toHaveText('↻ 3 convert · room cubes');
         const after = await cast(page, wire, { type: 'CAST_SPELL', playerId: 'p1', slot: 'slot1', roomId: room.id });
@@ -431,22 +443,22 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       });
     }
 
-    test('switching support/Combat clears typed selections and dummy state, but the legacy Cantrip dummy still places instability without damage', async ({ page }) => {
+    test('switching support/Combat resets both eligible cards to real targets; Cantrip dummy still places only instability', async ({ page }) => {
       const game = fixture(); prepare(game, 'Splinter Hex'); prepare(game, 'Vital Thread', 'rapid');
       wound(game, 'p1', { p3: 2 }); wound(game, 'own-one', { p3: 1 }); syncCubes(game);
       const wire = await mount(page, game), support = prepared(page, 'Vital Thread', 'rapid'), offense = prepared(page, 'Splinter Hex');
-      await support.click(); await noDummy(page); await hex(page).click();
+      await support.click(); await expectTargetModes(page); await hex(page).click();
       await expectOptions(page, ['p1', 'p2', 'own-one', 'enemy-one']); await targetSelect(page).selectOption('own-one');
-      await offense.click(); await expect(page.locator('.room-detail,.hex.selected')).toHaveCount(0);
+      await selectSpells(page); await offense.click(); await expect(page.locator('.room-detail,.hex.selected')).toHaveCount(0);
       await hex(page).click(); await expectOptions(page, ['p2', 'enemy-one']); await expect(targetSelect(page)).toHaveValue('');
       await page.getByRole('button', { name: 'Target dummy · no damage', exact: true }).click();
       await hex(page).click(); await expect(castButton(page)).toHaveText('Cast Splinter Hex here on dummy');
       await expect(targetSelect(page)).toHaveCount(0);
-      await support.click(); await noDummy(page); await expect(page.locator('.room-detail,.hex.selected')).toHaveCount(0);
+      await selectSpells(page); await support.click(); await expectTargetModes(page); await expect(page.locator('.room-detail,.hex.selected')).toHaveCount(0);
       await hex(page).click(); await expectOptions(page, ['p1', 'p2', 'own-one', 'enemy-one']); await expect(targetSelect(page)).toHaveValue('');
       const healed = await cast(page, wire, { type: 'CAST_SPELL', playerId: 'p1', slot: 'rapid', targetPlayerId: 'p1' });
       expect(healed.players[0].wizard.damageCubes).toBe(0); expect(healed.evocations[0].damageCubes).toBe(1);
-      await offense.click(); await page.getByRole('button', { name: 'Target dummy · no damage', exact: true }).click(); await hex(page).click();
+      await selectSpells(page); await offense.click(); await page.getByRole('button', { name: 'Target dummy · no damage', exact: true }).click(); await hex(page).click();
       const after = await cast(page, wire, { type: 'CAST_SPELL', playerId: 'p1', slot: 'slot1', roomId: 'room-0,0', dummy: true });
       expect(after.players.map(p => p.wizard)).toEqual(healed.players.map(p => p.wizard)); expect(after.evocations).toEqual(healed.evocations);
       expect(roomAt(after)).toMatchObject({ instability: 1, cubesByPlayer: { p1: 1 } });

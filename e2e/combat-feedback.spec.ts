@@ -3,7 +3,7 @@ import { applyAction, BLACK_ROSE_ID, createDemoBoard, createGame, FEEDBACK_EVENT
 import type { ActiveSpell, Card, Evocation, GameAction, GameFeedbackEvent, GameState } from '../packages/game-engine/src/index';
 import { ActionHistory } from '../apps/server/src/action-history';
 import { publicState } from '../apps/server/src/public-state';
-import { openMageDetails, selectControlTab, selectSpells, viewRetinue } from './layout-ui';
+import { closeControls, openMageDetails, pressHistory, selectControlTab, selectSpells, viewRetinue } from './layout-ui';
 
 type Cast = Extract<GameAction, { type: 'CAST_SPELL' }>;
 type Selection = Omit<Cast, 'type' | 'playerId' | 'slot'>;
@@ -407,9 +407,10 @@ for (const viewport of [{ width: 1440, height: 1100 }, { width: 390, height: 844
       await wire.repeat(); await expect(region).toHaveAttribute('data-queue-count', '3');
       await roomBalloons(page, triggers);
       await noOverflow(page);
-      const evocationsTab = page.getByRole('tab', { name: 'Evocations', exact: true });
-      await unobscured(evocationsTab); await evocationsTab.click();
-      await expect(evocationsTab).toHaveAttribute('aria-selected', 'true');
+      const evocationsLauncher = page.getByRole('button', { name: 'Open evocations', exact: true });
+      await unobscured(evocationsLauncher); await evocationsLauncher.click();
+      await expect(page.getByRole('tab', { name: 'Evocations', exact: true })).toHaveAttribute('aria-selected', 'true');
+      await page.getByRole('button', { name: 'Back to map', exact: true }).click();
       await unobscured(hex(page)); await hex(page).click();
       await expect(page.locator('.room-detail')).toContainText('Rose Sanctum');
       await unobscured(hex(page, east)); await hex(page, east).click();
@@ -480,6 +481,7 @@ for (const viewport of [{ width: 1440, height: 1100 }, { width: 390, height: 844
         }
         for (const player of game.players) await openMageDetails(page, player.id);
         const tabs = ['Physical actions', 'Spells', 'Evocations', 'Quests'] as const;
+        await page.getByRole('button', { name: 'Open physical actions', exact: true }).click();
         await expect(page.getByRole('tablist', { name: 'Lodge controls', exact: true }).getByRole('tab')).toHaveText([...tabs]);
         for (const tab of tabs) {
           if (tab === 'Spells') await selectSpells(page); else await selectControlTab(page, tab);
@@ -620,9 +622,9 @@ for (const viewport of [{ width: 1440, height: 1100 }, { width: 390, height: 844
           await expect(damage.locator(`.damage-segment[data-owner-id="${owner}"]`)).toHaveAttribute('data-cubes', owner === BLACK_ROSE_ID && !model ? '2' : '1');
         }
         await silent(page); await wire.repeat(); await silent(page);
-        await command(page, wire, () => page.getByRole('button', { name: 'Undo action', exact: true }).click(), { type: 'UNDO_ACTION', playerId: 'p1' });
+        await command(page, wire, () => pressHistory(page, 'Undo action'), { type: 'UNDO_ACTION', playerId: 'p1' });
         expect(wire.state).toEqual(before); await silent(page);
-        await command(page, wire, () => page.getByRole('button', { name: 'Redo action', exact: true }).click(), { type: 'REDO_ACTION', playerId: 'p1' });
+        await command(page, wire, () => pressHistory(page, 'Redo action'), { type: 'REDO_ACTION', playerId: 'p1' });
         expect(wire.state).toEqual(after); await silent(page);
       });
     }
@@ -700,9 +702,9 @@ for (const viewport of [{ width: 1440, height: 1100 }, { width: 390, height: 844
       await pulseText(page, ofKind(wire.state, 'CONVERT')[0]);
       const resolved = structuredClone(events(wire.state));
       await page.clock.runFor(3000); await silent(page);
-      await command(page, wire, () => page.getByRole('button', { name: 'Undo action', exact: true }).click(), { type: 'UNDO_ACTION', playerId: 'p1' });
+      await command(page, wire, () => pressHistory(page, 'Undo action'), { type: 'UNDO_ACTION', playerId: 'p1' });
       expect(events(wire.state)).toEqual([]); await silent(page);
-      await command(page, wire, () => page.getByRole('button', { name: 'Redo action', exact: true }).click(), { type: 'REDO_ACTION', playerId: 'p1' });
+      await command(page, wire, () => pressHistory(page, 'Redo action'), { type: 'REDO_ACTION', playerId: 'p1' });
       expect(events(wire.state)).toEqual(resolved); await silent(page);
       await wire.dispatch({ type: 'END_EXPLORE', playerId: 'p1' });
       // Spend the three remaining physical tokens without moving, drawing or
@@ -743,13 +745,13 @@ for (const viewport of [{ width: 1440, height: 1100 }, { width: 390, height: 844
       await expect(notifications(page)).toHaveAttribute('data-queue-count', '1');
       await dismiss(page, 'Mage defeated'); await page.clock.runFor(3000); await silent(page);
       for (let replay = 0; replay < 2; replay++) {
-        await command(page, wire, () => page.getByRole('button', { name: 'Undo action', exact: true }).click(), { type: 'UNDO_ACTION', playerId: 'p1' });
+        await command(page, wire, () => pressHistory(page, 'Undo action'), { type: 'UNDO_ACTION', playerId: 'p1' });
         expect(wire.state).toEqual(game); await silent(page);
-        await command(page, wire, () => page.getByRole('button', { name: 'Redo action', exact: true }).click(), { type: 'REDO_ACTION', playerId: 'p1' });
+        await command(page, wire, () => pressHistory(page, 'Redo action'), { type: 'REDO_ACTION', playerId: 'p1' });
         expect(wire.state).toEqual(resolved); expect(events(wire.state).slice(-2)).toEqual(newEvents);
         await wire.repeat(); await silent(page);
       }
-      await command(page, wire, () => page.getByRole('button', { name: 'Undo action', exact: true }).click(), { type: 'UNDO_ACTION', playerId: 'p1' });
+      await command(page, wire, () => pressHistory(page, 'Undo action'), { type: 'UNDO_ACTION', playerId: 'p1' });
       await silent(page); await wire.dispatch(action);
       const branch = events(wire.state).slice(-2);
       expect(branch.map(({ id: _id, ...fact }) => fact)).toEqual(newEvents.map(({ id: _id, ...fact }) => fact));
@@ -855,10 +857,11 @@ for (const viewport of [{ width: 1440, height: 1100 }, { width: 390, height: 844
       expect(await hexBounds(hex(page))).toEqual(bounds);
       for (const layer of [board, card, balloon]) expect(await layer.evaluateAll(nodes => nodes.every(node =>
         [node, ...node.querySelectorAll('*')].every(element => getComputedStyle(element).pointerEvents === 'none')))).toBe(true);
+      await page.getByRole('button', { name: 'Back to map', exact: true }).click();
       await unobscured(hex(page)); await hex(page).click();
       await expect(page.locator('.room-detail')).toContainText('Rose Sanctum');
       await svgOverlay(page);
-      await unobscured(page.getByRole('tab', { name: 'Physical actions', exact: true }));
+      await unobscured(page.getByRole('button', { name: 'Open physical actions', exact: true }));
       await dismiss(page, 'Protection triggered');
       await page.clock.runFor(5000); await silent(page);
       await expect(page.locator('.evocation-feedback-layer')).toHaveCount(0);
@@ -905,6 +908,7 @@ for (const viewport of [{ width: 1440, height: 1100 }, { width: 390, height: 844
       await svgOverlay(page);
       expect((await animationSample(pulse(page, healed), 1200)).delay).toBe(delay);
       await unobscured(tab); await noOverflow(page);
+      await closeControls(page);
       await dismiss(page, 'Protection triggered'); await page.clock.runFor(5000); await silent(page);
     });
 
@@ -953,6 +957,7 @@ for (const viewport of [{ width: 1440, height: 1100 }, { width: 390, height: 844
       await selectControlTab(page, 'Physical actions');
       await unobscured(page.getByRole('tab', { name: 'Physical actions', exact: true }));
       await unobscured(page.locator('.actions-panel').getByRole('button', { name: /^Explore/ }));
+      await page.getByRole('button', { name: 'Back to map', exact: true }).click();
       await unobscured(hex(page)); await noOverflow(page);
       await dismiss(page, 'Protection triggered');
       await page.clock.runFor(5000); await silent(page);

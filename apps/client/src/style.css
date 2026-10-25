@@ -27,9 +27,6 @@
 .damage-contributions{gap:5px;margin-bottom:12px;font-size:10px}
 .cube-warning{color:#edc998}
 .powerful-panel .spell:disabled{opacity:.85;cursor:default}
-.history-panel{order:-4;border-color:#65543e}
-.history-panel .button-row{margin-top:12px;flex-wrap:wrap}
-.history-panel .button-row button{font-size:12px;min-width:90px}
 .actions-panel,.evocation-controls{order:-3}
 .evocations-panel{order:0}
 .black-rose-score{border-top:1px solid #5b4b60;padding:18px 0;color:#d4cedd}
@@ -52,7 +49,7 @@
 .rebuilt-badge rect{fill:#24473a;stroke:#8cd5ac;stroke-width:.6}
 .rebuilt-badge.used rect{fill:#302b35;stroke:#9b8ca7}
 .hex .rebuilt-badge text{font:800 7px 'DM Sans',sans-serif;fill:#e4f5e9;letter-spacing:.2px}
-@media(max-width:720px){.actions-panel,.evocation-controls{order:-3}.history-panel{order:-4}.evocations-panel{order:0}.damage-contributions{font-size:9px}}
+@media(max-width:720px){.actions-panel,.evocation-controls{order:-3}.evocations-panel{order:0}.damage-contributions{font-size:9px}}
 .schools{grid-template-columns:repeat(2,minmax(0,1fr));max-width:none}
 .schools button[data-school-id="transmutation"] .school-rune,.spell .heal-effect{color:#86d9c0}
 .spell .convert-effect{color:#c4b5fd}
@@ -119,10 +116,6 @@
 .control-banner .evocations-panel .evocation-card{margin:0;min-width:0}
 .control-banner .evocations-panel .section-heading h2{margin-bottom:0}
 .opponent-retinue-toggles{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}
-.control-banner .history-panel{padding:12px 0 0;margin-top:14px;border:0;border-top:1px solid #65543e;border-radius:0;background:none;display:grid;grid-template-columns:1fr auto;align-items:center;gap:8px}
-.control-banner .history-panel .button-row{margin:0;gap:8px}
-.control-banner .history-panel .button-row button{padding:8px 12px}
-.control-banner .history-panel>p{grid-column:1/-1;margin:0;font-size:10px}
 .control-waiting h2{margin-top:0}
 .control-waiting p{margin-bottom:0}
 #controls-panel-spells>.phase-panel,#controls-panel-spells>.active-spells-panel,#controls-panel-spells>.powerful-panel,#controls-panel-quests>.quest-panel{padding:0;border:0;background:none}
@@ -197,9 +190,7 @@ aside .log-panel{position:sticky;top:20px}aside .log{max-height:70vh}
  .control-tabs>[role="tab"]{padding:10px 6px;font-size:12px}
  .control-banner .physical-effects{grid-template-columns:minmax(0,1fr)}
  .control-banner .physical-effects>.physical-room-effect{grid-column:auto;grid-row:auto;border-left:0;border-top:1px solid #51422f;padding:10px 0 0}
- .control-banner .history-panel{grid-template-columns:minmax(0,1fr)}
- .control-banner .history-panel .button-row{width:100%}
- .control-banner .evocations-panel{grid-template-columns:minmax(0,1fr)}
+   .control-banner .evocations-panel{grid-template-columns:minmax(0,1fr)}
  .control-banner .evocations-panel .evocation-card{padding:11px}
  .control-banner .evocation-controls button{display:block;width:100%;margin-right:0}
  .control-tabs>[role="tab"]{font-size:11px;padding:10px 4px}

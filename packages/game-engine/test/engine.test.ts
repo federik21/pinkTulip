@@ -539,7 +539,20 @@ describe('token-free spells, starting rooms and colored chamber effects',()=>{
   g=applyAction(g,{type:'DISCARD_EXIT',playerId:'p1',cardId:card.id,destination:{q:2,r:-2}});
   expect(g.library[0].discard.map(c=>c.id)).toContain(card.id);expect(g.players[0].discard.map(c=>c.id)).not.toContain(card.id);
   expect(g.activation?.actionsUsed).toBe(1);expect(g.players[0].actionTokens).toBe(0);
-  expect(()=>applyAction(g,{type:'DISCARD_EXIT',playerId:'p1',cardId:card.id,destination:{q:1,r:-2}})).toThrow(/only available/);
+  expect(()=>applyAction(g,{type:'DISCARD_EXIT',playerId:'p1',cardId:card.id,destination:{q:1,r:-2}})).toThrow(/Already used a discard-to-move/);
+ });
+ it('lets a mage discard a card to move one step from any room, once per turn, for one action and no token',()=>{
+  let g=actionGame();const first=g.library[0].cards.pop()!,second=g.library[0].cards.pop()!;
+  g.players[0].hand.push(first,second);g.players[0].actionTokens=0;
+  const inner=g.board.rooms.find(r=>!r.startingFor&&r.tiles.some(t=>g.board.rooms.some(o=>!o.startingFor&&o!==r&&o.tiles.some(n=>hexDistance(t,n)===1))))!;
+  const from=inner.tiles.find(t=>g.board.rooms.some(o=>!o.startingFor&&o!==inner&&o.tiles.some(n=>hexDistance(t,n)===1)))!;
+  const to=g.board.rooms.filter(o=>!o.startingFor&&o!==inner).flatMap(o=>o.tiles).find(n=>hexDistance(from,n)===1)!;
+  g.players[0].wizard.position={...from};
+  g=applyAction(g,{type:'DISCARD_EXIT',playerId:'p1',cardId:first.id,destination:to});
+  expect(g.players[0].wizard.position).toEqual(to);expect(g.players[0].actionTokens).toBe(0);expect(g.activation?.actionsUsed).toBe(1);
+  expect(g.library[0].discard.map(c=>c.id)).toContain(first.id);
+  expect(g.log.some(line=>/discards .* to move by 1 space/.test(line))).toBe(true);
+  expect(()=>applyAction(g,{type:'DISCARD_EXIT',playerId:'p1',cardId:second.id,destination:from})).toThrow(/Already used a discard-to-move/);
  });
  it('maps all six colors to three rooms each, with a separate powerful center and protected starts',()=>{
   const g=createGame();const effects={crimson:'ROOM_DAMAGE',azure:'DRAW_DISCARD',emerald:'INSTABILITY',amber:'DRAW_QUEST',violet:'DRAW_GRIMOIRE',grey:'SUMMON_CADAVER'};
@@ -638,6 +651,7 @@ describe('token-free spells, starting rooms and colored chamber effects',()=>{
   g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'slot1',dummy:true,roomId:room.id});
   expect(g.players.map(p=>p.wizard.damageCubes)).toEqual(before);expect(g.players.every(p=>p.cubes.onWizard===0)).toBe(true);
   expect(g.board.rooms.find(r=>r.id===room.id)!.instability).toBe(room.instability+2);expect(g.activation?.actionsUsed).toBe(1);expect(g.players[0].actionTokens).toBe(2);
+  expect(g.log.join('\n')).toContain('on a dummy (no model effects)');expect(g.log.join('\n')).not.toContain('(no damage)');
  });
  it('routes Study, cast, and uncast shared-library cards to the Cantrip discard',()=>{
   let g=studyGame();const personalDiscard=[...g.players[0].discard];g=applyAction(g,{type:'DRAW_STUDY',playerId:'p1',deckId:'cantrip'});
@@ -912,7 +926,7 @@ describe('finite powerful spells',()=>{
     expect(()=>applyAction(g,{...cast,targetPlayerId:'p1'})).toThrow(/category or ownership/);
     expect(()=>applyAction(g,{...cast,dummy:true,roomId:'room-0,0',targetPlayerId:'p2'})).toThrow(/either/);
    } else {
-    expect(()=>applyAction(g,{...cast,dummy:true,roomId:'room-0,0'})).toThrow(/Dummy targeting.*MODEL/);
+    expect(()=>applyAction(g,{...cast,dummy:true,roomId:'room-0,0'})).toThrow(/Dummy targeting requires a MAGE, EVOCATION or MODEL spell/);
     g.players[0].wizard.position={q:-2,r:0};
     expect(()=>applyAction(g,{...cast,roomId:'room-2,0'})).toThrow(/range/);g.players[0].wizard.position={q:0,r:0};
    }
