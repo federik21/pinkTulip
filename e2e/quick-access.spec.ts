@@ -2,7 +2,7 @@ import { test, expect, type Locator, type Page, type WebSocketRoute } from '@pla
 import { createGame, type Card, type Evocation, type GameAction, type GameState } from '../packages/game-engine/src/index';
 import { ActionHistory } from '../apps/server/src/action-history';
 import { publicState } from '../apps/server/src/public-state';
-import { closeChronicle, openChronicle, selectControlTab } from './layout-ui';
+import { closeChronicle, closeControls, expectPanelSelected, openChronicle, selectControlTab } from './layout-ui';
 
 type QuickPanel = 'Physical actions' | 'Spells' | 'Evocations' | 'Quests';
 type Request = { action: GameAction; requestId: string };
@@ -204,13 +204,13 @@ async function openQuick(page: Page, name: QuickPanel) {
   const label = `Open ${name === 'Physical actions' ? 'physical actions' : name.toLowerCase()}`;
   await clickCenter(page, launcher(page, label));
   await expect(banner(page)).toHaveClass(/is-floating/);
-  await expect(page.getByRole('tab', { name, exact: true })).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByRole('tabpanel', { name, exact: true })).toBeVisible();
-  await expect(banner(page).locator('.control-banner-heading').getByRole('button', { name: 'Back to map', exact: true })).toBeVisible();
+  await expectPanelSelected(page, name);
+  await expect(page.getByRole('region', { name, exact: true })).toBeVisible();
+  await expect(banner(page).locator('.control-banner-heading').getByRole('button', { name: 'Close controls', exact: true })).toBeVisible();
   await expect(banner(page)).toHaveCSS('position', 'fixed');
 }
 async function backToMap(page: Page, name: QuickPanel) {
-  await banner(page).getByRole('button', { name: 'Back to map', exact: true }).click();
+  await banner(page).getByRole('button', { name: 'Close controls', exact: true }).click();
   await expect(banner(page)).not.toHaveClass(/is-floating/);
   await expect(launcher(page, `Open ${name === 'Physical actions' ? 'physical actions' : name.toLowerCase()}`)).toBeFocused();
 }
@@ -297,7 +297,7 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
       await closeChronicle(page);
       await expectChronicleClosed(page); expect(await scroll(page)).toEqual(before);
       expect(await page.locator('body').evaluate(body => ({ overflow: body.style.overflow, position: body.style.position }))).toEqual(bodyStyle);
-      await expect(page.getByRole('tab', { name: 'Quests', exact: true })).toHaveAttribute('aria-selected', 'true');
+      await expectPanelSelected(page, 'Quests');
       const closedLogLength = wire.state.log.length;
       wire.dispatch({ type: 'SKIP_PHYSICAL_EFFECTS', playerId: 'p2' });
       wire.dispatch({ type: 'BEGIN_PHYSICAL_ACTION', playerId: 'p2', kind: 'ATTACK' });
@@ -343,7 +343,7 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
       const wire = await mount(page);
       await expect(banner(page)).not.toHaveClass(/is-floating/);
       await expect(banner(page)).toBeHidden(); await expect(page.locator('.control-banner-slot')).toBeHidden();
-      await expect(page.getByRole('tablist')).toBeHidden();
+      await expect(page.getByRole('tablist')).toHaveCount(0);
       const original = await banner(page).elementHandle(), originalSpell = await spell(page).elementHandle();
       const snapshot = structuredClone(wire.state);
       for (const name of panels) {
@@ -363,10 +363,9 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
         await expect(page.locator('#retinue-p1')).toHaveCount(1);
         await expect(page.locator('.prepared')).toHaveCount(1);
         for (const id of ['actions', 'spells', 'evocations', 'quests']) {
-          await expect(page.locator(`#controls-tab-${id}`)).toHaveCount(1);
+          await expect(page.locator(`#controls-tab-${id}`)).toHaveCount(0);
           await expect(page.locator(`#controls-panel-${id}`)).toHaveCount(1);
-          await expect(page.locator(`#controls-tab-${id}`)).toHaveAttribute('aria-controls', `controls-panel-${id}`);
-          await expect(page.locator(`#controls-panel-${id}`)).toHaveAttribute('aria-labelledby', `controls-tab-${id}`);
+          await expect(page.locator(`#controls-panel-${id}`)).toHaveAttribute('role', 'region');
         }
         expect(await original!.evaluate(element => element === document.querySelector('.control-banner'))).toBe(true);
         expect(await originalSpell!.evaluate(element => element === document.querySelector('#controls-panel-spells .prepared .spell'))).toBe(true);
@@ -375,7 +374,7 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
         expect(await flow()).toEqual(anchors);
         await expectDock(page);
         await openQuick(page, name);
-        await page.getByRole('tab', { name, exact: true }).focus();
+        await banner(page).getByRole('button', { name: 'Close controls', exact: true }).focus();
         await page.keyboard.press('Escape');
         await expect(banner(page)).toBeHidden();
         await expect(launcher(page, `Open ${name === 'Physical actions' ? 'physical actions' : name.toLowerCase()}`)).toBeFocused();
@@ -467,7 +466,7 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
       await expect(activate(page)).toBeDisabled();
       await command(page, wire, () => banner(page).getByRole('button', { name: 'Finish evocation', exact: true }).click(),
         { type: 'END_EVOCATION', playerId: 'p1' });
-      await expect(page.getByRole('tab', { name: 'Physical actions', exact: true })).toHaveAttribute('aria-selected', 'true');
+      await expectPanelSelected(page, 'Physical actions');
       expect(wire.state.evocationActivation).toBeNull();
       expect(wire.state.players[0].actionTokens).toBe(1); expect(wire.state.activation!.actionsUsed).toBe(1);
     });
@@ -648,7 +647,7 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
         await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
         await expectDock(page); await openQuick(page, 'Quests'); await backToMap(page, 'Quests');
         await openChronicle(page); await expectLog(page, wire.state); await closeChronicle(page);
-        await expect(page.getByRole('tab', { name: 'Quests', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true');
+        await expectPanelSelected(page, 'Quests');
         await expect(banner(page)).not.toHaveClass(/is-floating/);
       }
       expect(wire.requests).toEqual([]);
@@ -658,10 +657,10 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
 
 test.describe('short mobile quick access', () => {
   test.use({ viewport: { width: 390, height: 568 }, reducedMotion: 'reduce' });
-  test('the dock, Back to map, spell confirmation and Chronicle close button remain reachable', async ({ page }) => {
+  test('the dock, Close, spell confirmation and Chronicle close button remain reachable', async ({ page }) => {
     const wire = await mount(page); await positionMap(page);
     const before = await mapPosition(page); await expectDock(page);
-    await openQuick(page, 'Spells'); await hitCenter(banner(page).getByRole('button', { name: 'Back to map', exact: true }), true);
+    await openQuick(page, 'Spells'); await hitCenter(banner(page).getByRole('button', { name: 'Close controls', exact: true }), true);
     await spell(page).click(); await expect(banner(page)).not.toHaveClass(/is-floating/);
     await expectMapPosition(page, before);
     await clickCenter(page, hex(page, 'room-1,0'));
@@ -672,5 +671,142 @@ test.describe('short mobile quick access', () => {
     await hitCenter(drawer(page).getByRole('button', { name: 'Close Chronicle', exact: true }), true);
     await closeChronicle(page); await expectMapPosition(page, before);
     await expectDock(page); expect(wire.requests).toEqual([]);
+  });
+});
+
+for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+  test.describe(`top-banner physical shortcuts at ${viewport.width}x${viewport.height}`, () => {
+    test.use({ viewport, reducedMotion: 'reduce' });
+    const shortcuts = (page: Page) => page.locator('.turn-banner .physical-shortcuts');
+    const bannerButton = (page: Page, name: string | RegExp) => shortcuts(page).getByRole('button', { name });
+
+    test('Explore: Move, Finish moving early, Activate room and Finish action run from the banner and Undo clears them', async ({ page }) => {
+      const wire = await mount(page);
+      await expect(shortcuts(page)).toHaveCount(0);
+      await selectControlTab(page, 'Physical actions');
+      const begin = { type: 'BEGIN_PHYSICAL_ACTION', playerId: 'p1', kind: 'EXPLORE' } as const;
+      await command(page, wire, () => page.locator('.actions-panel').getByRole('button', { name: /^Explore/ }).click(), begin);
+      await expect(shortcuts(page)).toBeVisible();
+      await expect(shortcuts(page).getByRole('button')).toHaveText([/^Move \d+$/, 'Activate room', 'Finish action']);
+      for (const button of await shortcuts(page).getByRole('button').all()) await hitCenter(button, viewport.width <= 390);
+      await page.screenshot({ path: test.info().outputPath('banner-shortcuts.png'), animations: 'disabled' });
+      await command(page, wire, () => page.getByRole('button', { name: 'Undo action', exact: true }).click(), { type: 'UNDO_ACTION', playerId: 'p1' });
+      await expect(shortcuts(page)).toHaveCount(0);
+      await closeControls(page);
+      await selectControlTab(page, 'Physical actions');
+      await command(page, wire, () => page.locator('.actions-panel').getByRole('button', { name: /^Explore/ }).click(), begin);
+      await command(page, wire, () => bannerButton(page, /^Move \d+$/).click(), { type: 'PERFORM_MOVEMENT', playerId: 'p1' });
+      await expect(page.locator('.control-banner-slot')).toBeHidden();
+      await expect(shortcuts(page).getByRole('button')).toHaveText(['Finish moving early', 'Finish action']);
+      await command(page, wire, () => bannerButton(page, 'Finish moving early').click(), { type: 'END_EXPLORE', playerId: 'p1' });
+      await expect(shortcuts(page).getByRole('button')).toHaveText(['Activate room', 'Finish action']);
+      await command(page, wire, () => bannerButton(page, 'Activate room').click(), { type: 'ACTIVATE_ROOM', playerId: 'p1' });
+      // Movement and the room effect are both spent, so the engine completes the action and the shortcuts leave.
+      await expect(shortcuts(page)).toHaveCount(0);
+      await expect(page.getByRole('button', { name: /^End turn/ })).toBeEnabled();
+    });
+
+    test('Attack: one banner button per enemy in the room, then Finish action', async ({ page }) => {
+      const game = fixture(); game.players[1].wizard.position = { ...game.players[0].wizard.position };
+      const wire = await mount(page, game);
+      await selectControlTab(page, 'Physical actions');
+      await command(page, wire, () => page.locator('.actions-panel').getByRole('button', { name: /^Attack/ }).click(),
+        { type: 'BEGIN_PHYSICAL_ACTION', playerId: 'p1', kind: 'ATTACK' });
+      await expect(shortcuts(page).getByRole('button')).toHaveText(['Attack Blue Seer', 'Activate room', 'Finish action']);
+      await command(page, wire, () => bannerButton(page, 'Attack Blue Seer').click(), { type: 'INFLICT_ATTACK', playerId: 'p1', targetId: 'p2' });
+      await expect(shortcuts(page).getByRole('button')).toHaveText(['Activate room', 'Finish action']);
+      await command(page, wire, () => bannerButton(page, 'Finish action').click(), { type: 'SKIP_PHYSICAL_EFFECTS', playerId: 'p1' });
+      await expect(shortcuts(page)).toHaveCount(0);
+    });
+  });
+}
+
+for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+  test.describe(`map zoom at ${viewport.width}x${viewport.height}`, () => {
+    test.use({ viewport, reducedMotion: 'reduce' });
+    const svg = (page: Page) => page.locator('svg.board');
+    const view = (page: Page) => page.locator('.board-viewport');
+    const level = (page: Page) => page.getByRole('button', { name: /^Reset zoom/ });
+    const zoomIn = (page: Page) => page.getByRole('button', { name: 'Zoom in', exact: true });
+    const zoomOut = (page: Page) => page.getByRole('button', { name: 'Zoom out', exact: true });
+    const percent = async (page: Page) => Number.parseInt((await level(page).textContent())!, 10);
+    const width = async (page: Page) => (await svg(page).boundingBox())!.width;
+    const noPageOverflow = async (page: Page) => expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+
+    test('buttons clamp between 50% and 300%, reset restores the untouched layout and the viewport keeps its focal point', async ({ page }) => {
+      const wire = await mount(page);
+      await expect(page.getByRole('group', { name: 'Map zoom', exact: true })).toBeVisible();
+      await expect(level(page)).toHaveText('100%'); await expect(svg(page)).not.toHaveAttribute('style', /./);
+      const base = await width(page), baseBox = (await svg(page).boundingBox())!;
+      await zoomIn(page).click(); await expect(level(page)).toHaveText('125%');
+      expect(Math.abs(await width(page) / base - 1.25)).toBeLessThan(0.03);
+      for (let i = 0; i < 12 && await zoomIn(page).isEnabled(); i++) await zoomIn(page).click();
+      await expect(level(page)).toHaveText('300%'); await expect(zoomIn(page)).toBeDisabled();
+      expect(await view(page).evaluate(element => element.scrollWidth > element.clientWidth && element.scrollHeight > element.clientHeight)).toBe(true);
+      await noPageOverflow(page);
+      await level(page).click(); await expect(level(page)).toHaveText('100%');
+      await expect(svg(page)).not.toHaveAttribute('style', /./); await expect(view(page)).not.toHaveAttribute('style', /./);
+      const reset = (await svg(page).boundingBox())!;
+      expect(Math.abs(reset.width - baseBox.width)).toBeLessThan(1); expect(Math.abs(reset.height - baseBox.height)).toBeLessThan(1);
+      for (let i = 0; i < 12 && await zoomOut(page).isEnabled(); i++) await zoomOut(page).click();
+      await expect(level(page)).toHaveText('50%'); await expect(zoomOut(page)).toBeDisabled();
+      expect(await width(page)).toBeLessThan(base - 1); await noPageOverflow(page);
+      await level(page).click();
+      for (let i = 0; i < 3; i++) await zoomIn(page).click();
+      const center = () => view(page).evaluate(element => (element.scrollLeft + element.clientWidth / 2) / element.scrollWidth);
+      await view(page).evaluate(element => { element.scrollLeft = (element.scrollWidth - element.clientWidth) / 3; });
+      const before = await center(); await zoomIn(page).click();
+      expect(Math.abs(await center() - before)).toBeLessThan(0.02);
+      expect(wire.requests).toEqual([]);
+    });
+
+    test('keyboard and Ctrl-wheel zoom the focused map; the map stays operable', async ({ page }) => {
+      const wire = await mount(page);
+      await view(page).focus();
+      await page.keyboard.press('+'); await expect(level(page)).toHaveText('125%');
+      await page.keyboard.press('-'); await expect(level(page)).toHaveText('100%');
+      await page.keyboard.press('+'); await page.keyboard.press('0'); await expect(level(page)).toHaveText('100%');
+      const box = (await view(page).boundingBox())!;
+      await page.mouse.move(box.x + box.width / 2, Math.min(box.y + box.height / 2, viewport.height - 100));
+      await page.keyboard.down('Control'); await page.mouse.wheel(0, -100); await page.keyboard.up('Control');
+      await expect.poll(() => percent(page)).toBeGreaterThan(100);
+      await page.keyboard.down('Control'); await page.mouse.wheel(0, 100); await page.keyboard.up('Control');
+      await expect.poll(() => percent(page)).toBeLessThanOrEqual(100);
+      await level(page).click();
+      await hex(page, 'room-1,0').click();
+      await expect(page.locator('.room-detail')).toBeVisible();
+      expect(wire.requests).toEqual([]);
+    });
+  });
+}
+
+test.describe('map pinch zoom', () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
+  test('two fingers pinch the map without hijacking one-finger scrolling', async ({ page }) => {
+    const wire = await mount(page);
+    const level = page.getByRole('button', { name: /^Reset zoom/ });
+    const gesture = (steps: Array<{ type: string; xs: number[] }>) => page.locator('.board-viewport').evaluate((element, steps) => {
+      const rect = element.getBoundingClientRect(), cy = rect.y + Math.min(rect.height / 2, 200), cx = rect.x + rect.width / 2;
+      const touches = (xs: number[]) => xs.map((x, id) => new Touch({ identifier: id + 1, target: element, clientX: cx + x, clientY: cy }));
+      return steps.map(({ type, xs }) => {
+        const list = touches(xs);
+        return element.dispatchEvent(new TouchEvent(type, { touches: list, targetTouches: list, changedTouches: list, bubbles: true, cancelable: true }));
+      });
+    }, steps);
+    // A pinch outwards doubles the finger distance: 100% to 200%, and the browser's own gesture is cancelled.
+    expect(await gesture([{ type: 'touchstart', xs: [-40, 40] }, { type: 'touchmove', xs: [-80, 80] }, { type: 'touchend', xs: [] }]))
+      .toEqual([true, false, true]);
+    await expect(level).toHaveText('200%');
+    expect(await gesture([{ type: 'touchstart', xs: [-80, 80] }, { type: 'touchmove', xs: [-40, 40] }, { type: 'touchend', xs: [] }]))
+      .toEqual([true, false, true]);
+    await expect(level).toHaveText('100%');
+    // One finger is left to native scrolling.
+    expect(await gesture([{ type: 'touchstart', xs: [0] }, { type: 'touchmove', xs: [30] }, { type: 'touchend', xs: [] }]))
+      .toEqual([true, true, true]);
+    await expect(level).toHaveText('100%');
+    // Pinching in past the limit clamps at 50%.
+    await gesture([{ type: 'touchstart', xs: [-100, 100] }, { type: 'touchmove', xs: [-1, 1] }, { type: 'touchend', xs: [] }]);
+    await expect(level).toHaveText('50%');
+    expect(wire.requests).toEqual([]);
   });
 });

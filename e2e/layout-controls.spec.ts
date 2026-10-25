@@ -1,6 +1,6 @@
 import { test, expect, type Page, type WebSocketRoute } from '@playwright/test';
 import { createGame, type Card, type Evocation, type GameAction, type GameState } from '../packages/game-engine/src/index';
-import { closeChronicle, closeControls, openChronicle, selectControlTab, selectSpells, viewRetinue } from './layout-ui';
+import { closeChronicle, closeControls, expectPanelSelected, openChronicle, selectControlTab, selectSpells, viewRetinue } from './layout-ui';
 import { expectSpellIcon, expectSpellType } from './spell-ui';
 
 const faults = new WeakMap<Page, string[]>();
@@ -82,42 +82,34 @@ async function mount(page: Page, game: GameState) {
     close() { socket.close({ code: 1000, reason: 'Layout fixture offline' }); },
   };
 }
-// The tabs live in the dock-opened dashboard; the selection persists while it is closed.
-const tab = (page: Page, name: string) => page.getByRole('tab', { name, exact: true, includeHidden: true });
 const ownActivation = (page: Page) => page.locator('#retinue-p1').getByRole('button', { name: /^Activate Cadaver #1/ });
 
 for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844 }]) {
   test.describe(`layout controls at ${viewport.width}px`, () => {
     test.use({ viewport, reducedMotion: 'reduce' });
 
-    test('four accessible keyboard tabs wrap; Spells owns magic while the map, roster, history and Chronicle remain independent', async ({ page }, info) => {
+    test('the dock selects labelled panels with one Close button; Spells owns magic while the map, roster, history and Chronicle remain independent', async ({ page }, info) => {
       const game = fixture(), wire = await mount(page, game);
-      await expect(page.getByRole('tablist', { name: 'Lodge controls', exact: true })).toBeHidden();
+      await expect(page.locator('.control-banner-slot')).toBeHidden();
+      await expect(page.getByRole('tablist')).toHaveCount(0);
+      await expect(page.getByRole('tab')).toHaveCount(0);
       await selectControlTab(page, 'Physical actions');
-      const tabs = page.getByRole('tablist', { name: 'Lodge controls', exact: true });
-      await expect(tabs).toHaveAttribute('aria-orientation', 'horizontal');
-      await expect(tabs.getByRole('tab')).toHaveText(['Physical actions', 'Spells', 'Evocations', 'Quests']);
-      await expect(tab(page, 'Physical actions')).toHaveAttribute('aria-selected', 'true');
-      for (const [name, id] of [['Physical actions', 'actions'], ['Spells', 'spells'], ['Evocations', 'evocations'], ['Quests', 'quests']]) {
-        await expect(tab(page, name)).toHaveAttribute('id', `controls-tab-${id}`);
-        await expect(tab(page, name)).toHaveAttribute('aria-controls', `controls-panel-${id}`);
-      }
-      await tab(page, 'Physical actions').focus();
-      for (const [key, name] of [['ArrowRight', 'Spells'], ['ArrowRight', 'Evocations'], ['ArrowRight', 'Quests'],
-        ['ArrowRight', 'Physical actions'], ['ArrowLeft', 'Quests'], ['Home', 'Physical actions'], ['End', 'Quests'], ['ArrowLeft', 'Evocations']] as const) {
-        await page.keyboard.press(key);
-        await expect(tab(page, name)).toBeFocused();
-        await expect(tab(page, name)).toHaveAttribute('aria-selected', 'true');
-        await expect(tab(page, name)).toHaveAttribute('tabindex', '0');
-        await expect(tabs.locator('[aria-selected="false"][tabindex="-1"]')).toHaveCount(3);
-        await expect(page.getByRole('tabpanel')).toHaveCount(1);
-        await expect(page.getByRole('tabpanel', { name, exact: true })).toBeVisible();
-        const controls = await tab(page, name).getAttribute('aria-controls');
-        await expect(page.getByRole('tabpanel', { name, exact: true })).toHaveAttribute('id', controls!);
-        await expect(page.getByRole('tabpanel', { name, exact: true })).toHaveAttribute('aria-labelledby', await tab(page, name).getAttribute('id') as string);
+      const close = page.getByRole('button', { name: 'Close controls', exact: true });
+      await expect(close).toBeVisible(); await expect(close).toBeFocused();
+      await expect(page.getByRole('button', { name: 'Back to map' })).toHaveCount(0);
+      await expect(page.locator('#lodge-controls .control-panel')).toHaveCount(4);
+      expect(await page.locator('#lodge-controls .control-panel').evaluateAll(nodes => nodes.map(node => [node.id, node.getAttribute('role'), node.getAttribute('aria-label')])))
+        .toEqual([['controls-panel-actions', 'region', 'Physical actions'], ['controls-panel-spells', 'region', 'Spells'],
+          ['controls-panel-evocations', 'region', 'Evocations'], ['controls-panel-quests', 'region', 'Quests']]);
+      for (const name of ['Spells', 'Evocations', 'Quests', 'Physical actions', 'Quests', 'Evocations'] as const) {
+        await selectControlTab(page, name);
+        await expectPanelSelected(page, name);
+        await expect(page.locator('#lodge-controls .control-panel:visible')).toHaveCount(1);
+        await expect(page.getByRole('region', { name, exact: true })).toBeVisible();
+        await expect(close).toBeFocused();
       }
       await page.keyboard.press('Tab');
-      await expect(page.getByRole('tabpanel', { name: 'Evocations', exact: true })).toBeFocused();
+      await expect(page.getByRole('region', { name: 'Evocations', exact: true })).toBeFocused();
       await selectSpells(page);
       await page.locator('.prepared .spell').click();
       await expect(page.locator('.control-banner')).toBeHidden();
@@ -132,7 +124,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
         const chronicle = await openChronicle(page);
         await expect(chronicle.getByRole('log')).toContainText(game.log[0]);
         await closeChronicle(page);
-        await expect(tab(page, name)).toHaveAttribute('aria-selected', 'true');
+        await expectPanelSelected(page, name);
         await expect(page.locator('#controls-panel-spells .prepared .spell.chosen')).toHaveCount(1);
         await expect(page.locator('aside .log-panel')).toHaveCount(0);
         await expect(page.locator('#chronicle-drawer .log-panel')).toHaveCount(1);
@@ -163,10 +155,10 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       const center = page.locator('.hex[data-room-id="room-0,0"]');
       await center.focus(); await page.keyboard.press('Enter');
       await expect(page.locator('.room-detail')).toBeVisible();
-      await expect(tab(page, 'Quests')).toHaveAttribute('aria-selected', 'true');
+      await expectPanelSelected(page, 'Quests');
       await expect(page.locator('#controls-panel-spells .prepared .spell.chosen')).toHaveCount(1);
       wire.update(structuredClone(game));
-      await expect(tab(page, 'Quests')).toHaveAttribute('aria-selected', 'true');
+      await expectPanelSelected(page, 'Quests');
       expect(wire.commands).toEqual([]);
       await selectControlTab(page, 'Quests');
       await info.attach(`layout-quests-${viewport.width}`, { body: await page.locator('.control-banner').screenshot(), contentType: 'image/png' });
@@ -178,7 +170,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       await selectControlTab(page, 'Quests');
       const peer = structuredClone(game); peer.phase = 'EVOCATION'; peer.activation = null; peer.currentPlayerId = 'p2';
       wire.update(peer); await expect(page.locator('.phase-track .current span')).toHaveText('Evocation'); await dismissOverlay(page);
-      await expect(tab(page, 'Evocations')).toHaveAttribute('aria-selected', 'true');
+      await expectPanelSelected(page, 'Evocations');
       await selectControlTab(page, 'Evocations');
       await expect(page.locator('.evocation-phase')).toContainText('Blue Seer is controlling their evocations.');
       await expect(page.locator('#retinue-p1')).toBeVisible(); await expect(ownActivation(page)).toBeDisabled();
@@ -190,10 +182,10 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       const own = structuredClone(peer); own.currentPlayerId = 'p1';
       own.evocationActivation = { playerId: 'p1', evocationId: 'own-model', movesRemaining: 2, returnToAction: false };
       await selectSpells(page); wire.update(own);
-      await expect(tab(page, 'Evocations')).toHaveAttribute('aria-selected', 'true');
+      await expectPanelSelected(page, 'Evocations');
       await expect(page.locator('.evocation-controls')).toContainText('2 movement remaining.');
       await expect(page.locator('.evocation-controls').getByRole('button', { name: /^Cadaver attack Blue Seer/ })).toBeEnabled();
-      await viewRetinue(page, 'p1'); await expect(tab(page, 'Evocations')).toBeFocused();
+      await viewRetinue(page, 'p1'); await expect(page.getByRole('button', { name: 'Close controls', exact: true })).toBeFocused();
       const summary = page.locator('.player[data-player-id="p1"] summary');
       await summary.focus(); await page.keyboard.press('Space');
       await expect(page.locator('.player[data-player-id="p1"]')).not.toHaveAttribute('open');
@@ -204,13 +196,13 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       await expect(page.locator('#retinue-p2 button')).toHaveCount(0);
       await page.getByRole('button', { name: 'Hide evocations for Blue Seer (1)', exact: true }).click();
       await expect(page.locator('#retinue-p2')).toBeHidden();
-      await viewRetinue(page, 'p2'); await expect(tab(page, 'Evocations')).toBeFocused();
+      await viewRetinue(page, 'p2'); await expect(page.getByRole('button', { name: 'Close controls', exact: true })).toBeFocused();
       await expect(page.locator('#retinue-p2')).toBeVisible();
       await page.getByRole('button', { name: 'Hide evocations for Blue Seer (1)', exact: true }).click();
       await expect(page.locator('.evocation-controls')).toBeVisible();
       await expect(page.getByRole('button', { name: 'Finish evocation', exact: true })).toBeEnabled();
       wire.update(game); await expect(page.locator('.phase-track .current span')).toHaveText('Action'); await dismissOverlay(page);
-      await expect(tab(page, 'Physical actions')).toHaveAttribute('aria-selected', 'true');
+      await expectPanelSelected(page, 'Physical actions');
       await selectControlTab(page, 'Evocations'); await ownActivation(page).click();
       await expect.poll(() => wire.commands.length).toBe(1);
       expect(wire.commands[0].action).toEqual({ type: 'ACTIVATE_EVOCATION', playerId: 'p1', evocationId: 'own-model' });
@@ -218,13 +210,13 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       paid.evocationActivation = { playerId: 'p1', evocationId: 'own-model', movesRemaining: 2, returnToAction: true };
       paid.activation!.actionsUsed = 1; paid.players[0].actionTokens = 1;
       wire.update(paid); wire.ack();
-      await expect(tab(page, 'Evocations')).toHaveAttribute('aria-selected', 'true');
+      await expectPanelSelected(page, 'Evocations');
       await selectControlTab(page, 'Evocations');
       await page.getByRole('button', { name: 'Finish evocation', exact: true }).click();
       await expect.poll(() => wire.commands.length).toBe(2);
       expect(wire.commands[1].action).toEqual({ type: 'END_EVOCATION', playerId: 'p1' });
       paid.evocationActivation = null; wire.update(paid); wire.ack();
-      await expect(tab(page, 'Physical actions')).toHaveAttribute('aria-selected', 'true');
+      await expectPanelSelected(page, 'Physical actions');
       await selectControlTab(page, 'Physical actions');
       await expect(page.getByRole('button', { name: /^Explore/ })).toBeEnabled();
       await closeControls(page);

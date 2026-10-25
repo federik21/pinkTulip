@@ -3,22 +3,30 @@ import { expect, type Locator, type Page } from '@playwright/test';
 export type ControlTab = 'Physical actions' | 'Spells' | 'Evocations' | 'Quests' | 'Actions' | 'More';
 
 // Navigate through the actual accessible controls, never mutate hidden/open state.
+export type PanelLabel = 'Physical actions' | 'Spells' | 'Evocations' | 'Quests';
+export const PANEL_IDS: Record<PanelLabel, string> = { 'Physical actions': 'actions', Spells: 'spells', Evocations: 'evocations', Quests: 'quests' };
+
+// The dashboard has no tab bar: exactly one labelled panel is selected, the rest keep the hidden attribute.
+export async function expectPanelSelected(page: Page, label: PanelLabel) {
+  for (const [name, id] of Object.entries(PANEL_IDS)) {
+    await expect(page.locator(`#controls-panel-${id}`)).toHaveJSProperty('hidden', name !== label);
+  }
+}
+
 export async function selectControlTab(page: Page, name: ControlTab) {
   // Keep older rules scenarios readable without asserting obsolete tab labels.
-  const label = name === 'Actions' ? 'Physical actions' : name === 'More' ? 'Spells' : name;
-  const tab = page.getByRole('tab', { name: label, exact: true });
-  // The controls panel only exists as the dashboard opened from the bottom bar.
-  if (await tab.isVisible()) await tab.click();
-  else await page.getByRole('button', { name: `Open ${label.toLowerCase()}`, exact: true }).click();
-  await expect(tab).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByRole('tabpanel', { name: label, exact: true })).toBeVisible();
+  const label: PanelLabel = name === 'Actions' ? 'Physical actions' : name === 'More' ? 'Spells' : name;
+  // The dashboard only exists when opened from the dock; the dock chooses which panel it shows.
+  await page.getByRole('button', { name: `Open ${label.toLowerCase()}`, exact: true }).click();
+  await expectPanelSelected(page, label);
+  await expect(page.getByRole('region', { name: label, exact: true })).toBeVisible();
 }
 
 export const selectSpells = (page: Page) => selectControlTab(page, 'Spells');
 
 // The controls only exist as the dock-opened dashboard; dismiss it to reach the map and roster.
 export async function closeControls(page: Page) {
-  const back = page.getByRole('button', { name: 'Back to map', exact: true });
+  const back = page.getByRole('button', { name: 'Close controls', exact: true });
   if (await back.isVisible()) await back.click();
   await expect(page.locator('.control-banner-slot')).toBeHidden();
 }
@@ -118,7 +126,7 @@ export async function openMageDetails(page: Page, playerId: string) {
 export async function viewRetinue(page: Page, playerId: string) {
   const mage = await openMageDetails(page, playerId);
   await mage.getByRole('button', { name: /^View evocations for / }).click();
-  await expect(page.getByRole('tab', { name: 'Evocations', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expectPanelSelected(page, 'Evocations');
   const panel = page.locator(`#retinue-${playerId}`);
   await expect(panel).toBeVisible();
   return panel;

@@ -3,7 +3,7 @@ import { applyAction, BLACK_ROSE_ID, createDemoBoard, createGame, FEEDBACK_EVENT
 import type { ActiveSpell, Card, Evocation, GameAction, GameFeedbackEvent, GameState } from '../packages/game-engine/src/index';
 import { ActionHistory } from '../apps/server/src/action-history';
 import { publicState } from '../apps/server/src/public-state';
-import { closeControls, openMageDetails, pressHistory, selectControlTab, selectSpells, viewRetinue } from './layout-ui';
+import { closeControls, expectPanelSelected, openMageDetails, pressHistory, selectControlTab, selectSpells, viewRetinue } from './layout-ui';
 
 type Cast = Extract<GameAction, { type: 'CAST_SPELL' }>;
 type Selection = Omit<Cast, 'type' | 'playerId' | 'slot'>;
@@ -409,8 +409,8 @@ for (const viewport of [{ width: 1440, height: 1100 }, { width: 390, height: 844
       await noOverflow(page);
       const evocationsLauncher = page.getByRole('button', { name: 'Open evocations', exact: true });
       await unobscured(evocationsLauncher); await evocationsLauncher.click();
-      await expect(page.getByRole('tab', { name: 'Evocations', exact: true })).toHaveAttribute('aria-selected', 'true');
-      await page.getByRole('button', { name: 'Back to map', exact: true }).click();
+      await expectPanelSelected(page, 'Evocations');
+      await page.getByRole('button', { name: 'Close controls', exact: true }).click();
       await unobscured(hex(page)); await hex(page).click();
       await expect(page.locator('.room-detail')).toContainText('Rose Sanctum');
       await unobscured(hex(page, east)); await hex(page, east).click();
@@ -482,11 +482,11 @@ for (const viewport of [{ width: 1440, height: 1100 }, { width: 390, height: 844
         for (const player of game.players) await openMageDetails(page, player.id);
         const tabs = ['Physical actions', 'Spells', 'Evocations', 'Quests'] as const;
         await page.getByRole('button', { name: 'Open physical actions', exact: true }).click();
-        await expect(page.getByRole('tablist', { name: 'Lodge controls', exact: true }).getByRole('tab')).toHaveText([...tabs]);
+        expect(await page.locator('#lodge-controls .control-panel').evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-label')))).toEqual([...tabs]);
         for (const tab of tabs) {
           if (tab === 'Spells') await selectSpells(page); else await selectControlTab(page, tab);
           await expect(reminders(page)).toBeVisible();
-          expect(await reminders(page).evaluate(node => !!node.closest('[role="tabpanel"]'))).toBe(false);
+          expect(await reminders(page).evaluate(node => !!node.closest('.control-panel'))).toBe(false);
           await expectActiveCounts(page, 'p1', 1, 2);
           await expectActiveCounts(page, 'p2', 1, 0);
           await expectActiveCounts(page, 'p3', 0, 1);
@@ -857,7 +857,7 @@ for (const viewport of [{ width: 1440, height: 1100 }, { width: 390, height: 844
       expect(await hexBounds(hex(page))).toEqual(bounds);
       for (const layer of [board, card, balloon]) expect(await layer.evaluateAll(nodes => nodes.every(node =>
         [node, ...node.querySelectorAll('*')].every(element => getComputedStyle(element).pointerEvents === 'none')))).toBe(true);
-      await page.getByRole('button', { name: 'Back to map', exact: true }).click();
+      await page.getByRole('button', { name: 'Close controls', exact: true }).click();
       await unobscured(hex(page)); await hex(page).click();
       await expect(page.locator('.room-detail')).toContainText('Rose Sanctum');
       await svgOverlay(page);
@@ -871,7 +871,7 @@ for (const viewport of [{ width: 1440, height: 1100 }, { width: 390, height: 844
       let game = fixture(2); game = arm(game, 'Thorn Retort', 'p2', {}); turn(game);
       const wire = await mount(page, game);
       await selectControlTab(page, 'Physical actions');
-      const tab = page.getByRole('tab', { name: 'Physical actions', exact: true });
+      const tab = page.getByRole('button', { name: 'Close controls', exact: true });
       await tab.focus(); await expect(tab).toBeFocused();
       await wire.dispatch({ type: 'PUNCH', playerId: 'p1', targetId: 'p2' });
       const trigger = ofKind(wire.state, 'SPELL_TRIGGERED')[0];
@@ -919,7 +919,7 @@ for (const viewport of [{ width: 1440, height: 1100 }, { width: 390, height: 844
       await wire.dispatch({ type: 'BEGIN_PHYSICAL_ACTION', playerId: 'p1', kind: 'EXPLORE' });
       await wire.dispatch({ type: 'ACTIVATE_ROOM', playerId: 'p1', roomTargetId: east });
       const trigger = ofKind(wire.state, 'SPELL_TRIGGERED')[0];
-      expect(trigger.effects).toEqual(['Place up to 2 instability in the bound room.']);
+      expect(trigger.effects).toEqual(['Place up to 2 instability in the triggering room.']);
       expect(events(wire.state).filter(event => event.interruptId === trigger.id)).toEqual([]);
       const lines = popup(page, 'Trap triggered').locator('.interrupt-effect-line');
       await expect(lines).toHaveCount(0);
@@ -955,9 +955,9 @@ for (const viewport of [{ width: 1440, height: 1100 }, { width: 390, height: 844
       await svgOverlay(page);
       expect(await hexBounds(hex(page))).toEqual(bounds);
       await selectControlTab(page, 'Physical actions');
-      await unobscured(page.getByRole('tab', { name: 'Physical actions', exact: true }));
+      await unobscured(page.getByRole('button', { name: 'Close controls', exact: true }));
       await unobscured(page.locator('.actions-panel').getByRole('button', { name: /^Explore/ }));
-      await page.getByRole('button', { name: 'Back to map', exact: true }).click();
+      await page.getByRole('button', { name: 'Close controls', exact: true }).click();
       await unobscured(hex(page)); await noOverflow(page);
       await dismiss(page, 'Protection triggered');
       await page.clock.runFor(5000); await silent(page);

@@ -11,7 +11,6 @@
 .control-banner.is-floating{position:fixed;z-index:65;left:50%;transform:translateX(-50%);bottom:calc(88px + env(safe-area-inset-bottom,0px));width:min(960px,calc(100% - 24px));max-height:calc(100dvh - 110px - env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;margin:0;padding:14px 18px;box-shadow:0 -8px 55px #0009;border-color:#b09263;background:#211a25fa;backdrop-filter:blur(16px)}
 .is-floating .control-banner-heading{margin-bottom:8px;flex-shrink:0}
 .back-to-map{font-size:12px;min-height:44px;padding:8px 12px}
-.is-floating .control-tabs{flex-shrink:0}
 .is-floating .control-panel{min-height:0;max-height:50dvh;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#b09263 #18131d;padding:12px 2px 2px}
 .is-floating .actions-panel>p.hint,.is-floating .physical-effects>p{display:none}
 .is-floating .actions-panel h2{font-size:23px;margin:3px 0 10px}
@@ -54,6 +53,8 @@
 .turn-history{display:flex;gap:6px}
 .turn-banner button{min-height:40px;margin:0;padding:6px 12px;font-size:12px;white-space:nowrap}
 .turn-banner .end-turn{min-width:132px;font-size:13px}
+.physical-shortcuts{display:flex;align-items:center;flex-wrap:wrap;justify-content:flex-end;gap:6px;padding-right:10px;margin-right:2px;border-right:1px solid #6d5a4a}
+.physical-shortcuts button{max-width:220px;overflow:hidden;text-overflow:ellipsis}
 .turn-banner .end-turn:disabled{opacity:.55}
 .turn-action-count{font-weight:400;letter-spacing:.3px}
 @media(max-width:1380px){.turn-banner{margin-left:26px;margin-right:26px}}
@@ -62,7 +63,9 @@
  .turn-banner>.acting-mage-icon{font-size:24px}
  .turn-banner strong{font-size:15px}
  .turn-banner-text{flex:1 1 120px}
- .turn-banner-controls{flex:1 1 100%;margin-left:0;justify-content:space-between}
+ .turn-banner-controls{flex:1 1 100%;margin-left:0;justify-content:space-between;flex-wrap:wrap}
+ .physical-shortcuts{flex:1 1 100%;justify-content:stretch;padding:0 0 8px;margin:0;border-right:0;border-bottom:1px solid #6d5a4a}
+ .physical-shortcuts button{flex:1 1 0;min-width:0}
  .turn-banner button{min-height:44px;padding:6px 10px}
  .turn-banner .end-turn{flex:1;min-width:0}
  .quick-access{width:calc(100% - 16px);bottom:calc(6px + env(safe-area-inset-bottom,0px));border-radius:13px}
@@ -75,3 +78,11 @@
  .chronicle-drawer .log-panel{padding:18px 16px calc(16px + env(safe-area-inset-bottom,0px))}
 }
 @media(prefers-reduced-motion:reduce){.chronicle-drawer[open]{animation:none}}
+/* Board zoom controls sit beside the Info button; the viewport keeps native one-finger panning while pinch is handled in script. */
+.board-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.zoom-controls{display:inline-flex;align-items:stretch;border:1px solid #574650;border-radius:9px;background:#100d14;overflow:hidden}
+.zoom-controls button{min-height:44px;min-width:44px;margin:0;padding:6px 10px;border:0;border-radius:0;background:transparent;font-size:16px;font-weight:700;line-height:1}
+.zoom-controls button+button{border-left:1px solid #574650}
+.zoom-controls .zoom-level{min-width:60px;font-size:12px;font-weight:600;letter-spacing:.3px}
+.zoom-controls button:disabled{opacity:.4}
+.board-viewport{touch-action:pan-x pan-y}

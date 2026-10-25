@@ -80,7 +80,8 @@ async function expectRemovedControls(page: Page) {
   await expect(page.getByRole('button', { name: /Pass for this round/ })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /^Summon\b/ })).toHaveCount(0);
   await expect(page.getByLabel('Free room effect timing', { exact: true })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: /^(Begin movement|Activate room|Punch)\b/ })).toHaveCount(0);
+  // The sticky banner (outside <main>) deliberately carries Activate room and Finish action shortcuts.
+  await expect(page.locator('main').getByRole('button', { name: /^(Begin movement|Activate room|Punch)\b/ })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /^(Move here|Choose another destination|Activate room & finish)/ })).toHaveCount(0);
 }
 

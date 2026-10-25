@@ -373,7 +373,7 @@ describe('trigger feedback follows reveal and instruction chronology', () => {
  it('reveals a readable public instability rule without inventing a numeric damage/heal/conversion event',()=>{
   let s=arm(fixture(),'Cinder Seal','p1',{roomId:center});room(s).effect='DRAW_DISCARD';turn(s,'p2');
   s=applyAction(s,{type:'EXPLORE',playerId:'p2',activateRoomAtStart:true});
-  expect(ofKind(s,'SPELL_TRIGGERED')[0]).toMatchObject({cardName:'Cinder Seal',effects:['Place up to 2 instability in the bound room.']});
+  expect(ofKind(s,'SPELL_TRIGGERED')[0]).toMatchObject({cardName:'Cinder Seal',effects:['Place up to 2 instability in the triggering room.']});
   expect(events(s)).toHaveLength(1);expect(room(s).cubesByPlayer).toEqual({p1:2});conserved(s);
  });
  it('correlates every actual triggered room-healing target with the reveal, omitting healthy occupants',()=>{

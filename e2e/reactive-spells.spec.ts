@@ -333,6 +333,9 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
         'own-one': { PROTECTION: 1, ONGOING: 1 }, 'enemy-one': { TRAP: 1, ONGOING: 1 },
       };
       await expect(page.locator('.board .model-effect-markers')).toHaveCount(4);
+      // Room-bound Trap/Protection get private room tokens; model bindings (even with a stray roomId) do not.
+      await expect(page.locator('.board .room-trap-token')).toHaveCount(2);
+      await expect(page.locator(`.board [data-room-id="${center}"] .room-trap-token`)).toHaveCount(2);
       for (const [id, counts] of Object.entries(expected)) await expectEffects(boardEffects(page, id), counts);
       for (const id of ['p1', 'p2']) await expectEffects(htmlEffects(player(page, id), id), expected[id], true);
       for (const [owner, id] of [['p1', 'own-one'], ['p2', 'enemy-one']]) {
@@ -548,6 +551,10 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
         expect(after.players.map(p => p.wizard)).toEqual(before.players.map(p => p.wizard));
         expect(after.library).toEqual(before.library); expect(mage(after).discard).toEqual([]);
         await expect(button).toHaveClass(/used/); await expect(button).toBeDisabled();
+        if (scenario.target === 'ROOM') {
+          await expect(page.locator('.board .room-trap-token')).toHaveCount(1);
+          await expect(page.locator(`.board [data-room-id="${east}"] .room-trap-token[data-token-kind="${scenario.label.toUpperCase()}"]`)).toHaveCount(1);
+        } else await expect(page.locator('.board .room-trap-token')).toHaveCount(0);
         await expect(prepared(page, 'Runic Remedy', 'slot2')).toBeDisabled();
         await expect(prepared(page, "Pilgrim's Mark", 'rapid')).toBeEnabled();
         await expect(page.locator('.phase-panel .badge')).toHaveText('1 turn actions left');

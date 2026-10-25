@@ -10,7 +10,6 @@ const tabs: {id: ControlTab; label: string}[] = [
 
 type Props = {
  selected: ControlTab;
- onSelect: (tab: ControlTab) => void;
  actions: React.ReactNode;
  spells: React.ReactNode;
  evocations: React.ReactNode;
@@ -19,30 +18,13 @@ type Props = {
  onClose?: () => void;
 };
 
-export function ControlBanner({selected,onSelect,actions,spells,evocations,quests,floating=false,onClose}: Props) {
- const onKeyDown=(event:React.KeyboardEvent<HTMLButtonElement>,index:number)=>{
-  let next:number;
-  switch(event.key) {
-   case 'ArrowRight':next=(index+1)%tabs.length;break;
-   case 'ArrowLeft':next=(index+tabs.length-1)%tabs.length;break;
-   case 'Home':next=0;break;
-   case 'End':next=tabs.length-1;break;
-   default:return;
-  }
-  event.preventDefault();
-  onSelect(tabs[next].id);
-  document.getElementById(`controls-tab-${tabs[next].id}`)?.focus();
- };
+// Navigation lives in the bottom dock, so the dashboard only shows the selected panel plus a Close button.
+export function ControlBanner({selected,actions,spells,evocations,quests,floating=false,onClose}: Props) {
+ const panels:Record<ControlTab,React.ReactNode>={actions,spells,evocations,quests};
  // The tree stays mounted so panel state survives; it is only visible when opened from the bottom bar.
  return <div className="control-banner-slot" hidden={!floating}><section id="lodge-controls" className={`control-banner${floating?' is-floating':''}`} aria-label="Lodge controls" onKeyDown={event=>{if(floating&&event.key==='Escape'){event.preventDefault();onClose?.();}}}>
-  <div className="control-banner-heading"><span className="eyebrow">Your control banner</span><button type="button" className="back-to-map" aria-label="Back to map" onClick={onClose}>↓ Back to map</button></div>
-  <div className="control-tabs" role="tablist" aria-label="Lodge controls" aria-orientation="horizontal">
-   {tabs.map((tab,index)=><button key={tab.id} type="button" role="tab" id={`controls-tab-${tab.id}`} aria-controls={`controls-panel-${tab.id}`} aria-selected={selected===tab.id} tabIndex={selected===tab.id?0:-1} onClick={()=>onSelect(tab.id)} onKeyDown={event=>onKeyDown(event,index)}>{tab.label}</button>)}
-  </div>
-  <div className="control-panel" role="tabpanel" id="controls-panel-actions" aria-labelledby="controls-tab-actions" tabIndex={0} hidden={selected!=='actions'}>{actions}</div>
-    <div className="control-panel" role="tabpanel" id="controls-panel-spells" aria-labelledby="controls-tab-spells" tabIndex={0} hidden={selected!=='spells'}>{spells}</div>
-  <div className="control-panel" role="tabpanel" id="controls-panel-evocations" aria-labelledby="controls-tab-evocations" tabIndex={0} hidden={selected!=='evocations'}>{evocations}</div>
-    <div className="control-panel" role="tabpanel" id="controls-panel-quests" aria-labelledby="controls-tab-quests" tabIndex={0} hidden={selected!=='quests'}>{quests}</div>
+  <div className="control-banner-heading"><span className="eyebrow">Your control banner</span><button type="button" className="back-to-map" aria-label="Close controls" onClick={onClose}><span aria-hidden="true">✕ </span>Close</button></div>
+  {tabs.map(tab=><div className="control-panel" role="region" aria-label={tab.label} id={`controls-panel-${tab.id}`} tabIndex={0} hidden={selected!==tab.id} key={tab.id}>{panels[tab.id]}</div>)}
  </section></div>;
 }
 

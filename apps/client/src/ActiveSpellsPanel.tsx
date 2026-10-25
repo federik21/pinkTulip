@@ -7,17 +7,27 @@ function binding(game:GameState,active:ActiveSpell) {
  if(active.targetPlayerId)return game.players.find(p=>p.id===active.targetPlayerId||p.wizard.id===active.targetPlayerId)?.name??'Unknown mage';
  const evocation=game.evocations.find(e=>e.id===active.targetEvocationId);
  if(evocation)return `${ownerName(game,evocation.playerId)} · ${evocation.name} #${evocationNumber(game,evocation)}`;
- return active.roomId?game.board.rooms.find(room=>room.id===active.roomId)?.name??'Unknown room':'Unknown model';
+ const room=active.roomId?game.board.rooms.find(room=>room.id===active.roomId):undefined;
+ if(!room)return active.roomId?'Unknown room':'Unknown model';
+ return active.card.trigger?.scope==='BOUND_COLOR'&&room.color?`${room.name} · all ${room.color} rooms`:room.name;
+}
+
+function coversRoom(game:GameState,active:ActiveSpell,roomId:string) {
+ if(active.roomId===roomId)return true;
+ if(active.card.trigger?.scope!=='BOUND_COLOR')return false;
+ const color=game.board.rooms.find(room=>room.id===active.roomId)?.color;
+ return !!color&&game.board.rooms.find(room=>room.id===roomId)?.color===color;
 }
 
 function condition(active:ActiveSpell) {
  const enemy=active.card.trigger?.relation==='ENEMY'?'An enemy':'The bound model';
+ const color=active.card.trigger?.scope==='BOUND_COLOR';
  switch(active.card.trigger?.event) {
   case 'ENTER_ROOM':return `${enemy} enters the room`;
   case 'DAMAGE_TAKEN':return 'The bound model takes damage';
   case 'SPELL_CAST':return `${enemy} casts a spell`;
-  case 'ROOM_ACTIVATED':return `${enemy} activates the room`;
-  case 'EVOCATION_ACTIVATED':return `${enemy} evocation activates`;
+  case 'ROOM_ACTIVATED':return `${enemy} activates ${color?'a room of that color':'the room'}`;
+  case 'EVOCATION_ACTIVATED':return `${enemy} evocation activates${color?' in a room of that color':''}`;
   case 'MAGE_ATTACK':return `${enemy} mage attacks`;
   case 'EVOCATION_ATTACK':return `${enemy} evocation attacks`;
   default:return 'Awaiting its condition';
@@ -28,7 +38,7 @@ export function TrapReminders({game,viewerId,roomId,targetPlayerId,compact=false
  // Select the owner before inspecting any binding or type. Foreign hidden
  // cards remain secret even if a malformed/test projection includes details.
  const own=(game.readiedSpells??[]).filter(active=>active.playerId===viewerId).filter(active=>{
-  if(roomId && (active.targetPlayerId || active.targetEvocationId || active.roomId!==roomId))return false;
+  if(roomId && (active.targetPlayerId || active.targetEvocationId || !coversRoom(game,active,roomId)))return false;
   if(targetPlayerId && ![targetPlayerId,game.players.find(p=>p.id===targetPlayerId)?.wizard.id].includes(active.targetPlayerId))return false;
   if(roomId || targetPlayerId)return true;
   if(active.targetPlayerId)return ![viewerId,game.players.find(p=>p.id===viewerId)?.wizard.id].includes(active.targetPlayerId);

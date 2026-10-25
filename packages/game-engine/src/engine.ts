@@ -292,6 +292,12 @@ function matchesTrigger(s:GameState,active:ActiveSpell,condition:TriggerConditio
  if(condition.event!==event.event)return false;
  if(condition.relation!=='ANY' && (!event.actor || (condition.relation==='SELF')!==(event.actor.playerId===active.playerId)))return false;
  if(condition.scope==='BOUND_ROOM')return !!active.roomId && active.roomId===event.roomId;
+ if(condition.scope==='BOUND_COLOR') {
+  if(!active.roomId || !event.roomId)return false;
+  if(active.roomId===event.roomId)return true;
+  const color=s.board.rooms.find(r=>r.id===active.roomId)?.color;
+  return !!color && s.board.rooms.find(r=>r.id===event.roomId)?.color===color;
+ }
  if(condition.scope==='BOUND_MODEL') {
   const bound=context(s).bindings.get(active.id);
   return !!bound && !!liveModel(s,bound) && bound.id===event.model?.id && bound.generation===event.model.generation;

@@ -51,6 +51,30 @@ export function ModelEffects({game,viewerId,modelId}:Props) {
  </span>;
 }
 
+// Private room tokens: only the caster's own Trap/Protection cast on this exact
+// room. Foreign bindings stay hidden, and owner is checked before the type.
+export function RoomTrapTokens({game,viewerId,roomId}:{game:GameState;viewerId:string;roomId:string}) {
+ const counts={TRAP:0,PROTECTION:0};
+ for(const active of game.readiedSpells??[]) {
+  if(active.playerId!==viewerId||active.roomId!==roomId||active.targetPlayerId||active.targetEvocationId)continue;
+  const type=getSpellType(active.card);
+  if(type==='TRAP'||type==='PROTECTION')counts[type]++;
+ }
+ const kinds=(['TRAP','PROTECTION'] as const).filter(kind=>counts[kind]>0);
+ if(!kinds.length)return null;
+ return <g className="room-trap-tokens" data-room-id={roomId} role="group" aria-label="Your bindings in this room">
+  {kinds.map(kind=>{
+   const label=`${counts[kind]} ${kind==='TRAP'?'trap':'protection'}${counts[kind]===1?'':'s'} set here`;
+   return <g className="room-trap-token" data-token-kind={kind} data-token-count={counts[kind]} role="img" aria-label={label} key={kind}
+    transform={`translate(${kind==='TRAP'?23:-23},-15)`}>
+    <title>{label}</title><circle r={5.6}/>
+    <svg x={-3.8} y={-3.8} width={7.6} height={7.6} viewBox="0 0 32 32" aria-hidden="true"><EffectGlyph kind={kind}/></svg>
+    {counts[kind]>1&&<text className="room-trap-count" x={4.6} y={6.6}>{counts[kind]}</text>}
+   </g>;
+  })}
+ </g>;
+}
+
 export function ModelEffectMarkers({game,viewerId,modelId,radius}:Props&{radius:number}) {
  const effects=getModelEffects(game,viewerId,modelId);
  if(!effects.length)return null;

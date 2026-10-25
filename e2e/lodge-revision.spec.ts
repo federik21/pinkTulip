@@ -2,7 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { applyAction, createGame, type Card, type GameAction, type GameState } from '../packages/game-engine/src/index';
 import { ActionHistory } from '../apps/server/src/action-history';
 import { publicState } from '../apps/server/src/public-state';
-import { assignPreparationCard, closeChronicle, closeControls, closeQuickReference, openChronicle, openQuickReference, selectControlTab, selectSpells } from './layout-ui';
+import { assignPreparationCard, closeChronicle, closeControls, closeQuickReference, expectPanelSelected, openChronicle, openQuickReference, selectControlTab, selectSpells } from './layout-ui';
 import { expectSchoolIcon } from './spell-ui';
 
 const faults = new WeakMap<Page, string[]>();
@@ -136,14 +136,15 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       game.players[0].prepared.slot1 = { card: take(game, 'Arcane Bolt'), used: false };
       game.players[0].hand.push(game.powerfulDeck.pop()!);
       const wire = await mount(page, game);
-      await expect(page.getByRole('tablist', { name: 'Lodge controls', exact: true })).toBeHidden();
+      await expect(page.locator('.control-banner-slot')).toBeHidden();
       await selectControlTab(page, 'Physical actions');
-      await expect(page.getByRole('tablist', { name: 'Lodge controls', exact: true }).getByRole('tab'))
-        .toHaveText(['Physical actions', 'Spells', 'Evocations', 'Quests']);
+      await expect(page.getByRole('tablist')).toHaveCount(0);
+      expect(await page.locator('#lodge-controls .control-panel').evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-label'))))
+        .toEqual(['Physical actions', 'Spells', 'Evocations', 'Quests']);
       await expect(page.locator('header').getByRole('button', { name: 'Quick reference', exact: true })).toBeVisible();
       await expect(page.locator('.board-panel').getByRole('button', { name: 'Lodge information', exact: true })).toBeVisible();
       await expect(page.locator('.board-panel .room-legend, .board-panel .mage-legend')).toHaveCount(0);
-      await expect(page.getByRole('tab', { name: /More|Quick reference/ })).toHaveCount(0);
+      await expect(page.getByRole('region', { name: /More|Quick reference/ })).toHaveCount(0);
       await selectSpells(page); await page.locator('.prepared .spell').click();
       await selectSpells(page);
       await expect(page.locator('#controls-panel-spells .powerful-panel')).toBeVisible();
@@ -295,7 +296,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
         await confirm.click(); await expect.poll(() => wire.commands.length).toBe(1);
         expect(wire.commands[0]).toEqual({ type: 'PREPARE_CARDS', playerId: 'p1', preparedCardIds: hand.slice(0, count).map(card => card.id) });
         await expect(page.locator('.phase-track .current span')).toHaveText('Action'); await dismissOverlay(page);
-        await expect(page.getByRole('tab', { name: 'Physical actions', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true');
+        await expectPanelSelected(page, 'Physical actions');
         const own = wire.state.players[0]; expect(own.prepared.rapid).toBeNull();
         expect(own.hand).toEqual(hand.slice(count));
         for (const [index, slot] of (['slot1', 'slot2', 'slot3'] as const).entries()) {

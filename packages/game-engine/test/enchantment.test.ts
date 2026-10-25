@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
  applyAction, canPlayerAct, canUseSpellDummy, createEnchantmentDeck, createGame,
- createLibrary, getSpellType, spellCanTargetModel,
+ createLibrary, getSpellType, hexDistance, spellCanTargetModel,
 } from '../src';
 import type { ActiveSpell, Card, Evocation, GameAction, GameState, Hex, Player, SpellType, TriggerCondition, TriggeredInstruction } from '../src';
 
@@ -585,5 +585,40 @@ describe('continuous bindings, expiry, immunities and physical ledgers',()=>{
   const first=exploreInto(structuredClone(s),'p2',{q:1,r:0}),second=exploreInto(JSON.parse(JSON.stringify(s)) as GameState,'p2',{q:1,r:0});
   expectSameFreshResolution(first,second);expect(s).toEqual(before);expect(first.readiedSpells).toEqual([]);
   const active:ActiveSpell=s.readiedSpells![0];expect(active.id).not.toContain('enchantment');
+ });
+});
+describe('traps that cover every room of the bound color',()=>{
+ function colored() {
+  const s=fixture();
+  const near=s.board.rooms.filter(r=>r.id!==center&&!r.startingFor&&r.tiles.some(h=>hexDistance(h,{q:0,r:0})<=2));
+  const [a,b,c]=near;a.color='crimson';b.color='crimson';c.color='azure';
+  for(const r of [a,b,c])r.effect='INSTABILITY';
+  return {s,a,b,c};
+ }
+ it('Cinder Seal reacts in a sibling room of the bound color and seals the activated room',()=>{
+  const {s:base,a,b}=colored();
+  let s=arm(base,'Cinder Seal','p1',{roomId:a.id});turn(s,'p2');player(s,'p2').wizard.position={...b.tiles[0]};
+  s=applyAction(s,{type:'EXPLORE',playerId:'p2',activateRoomAtStart:true});
+  expect(s.readiedSpells).toEqual([]);expect(room(s,a.id).cubesByPlayer.p1??0).toBe(0);
+  expect(room(s,b.id).cubesByPlayer.p1).toBe(2);conserved(s);
+ });
+ it('does not react in a room of another color or in a neutral room',()=>{
+  const {s:base,a,c}=colored();
+  let s=arm(base,'Cinder Seal','p1',{roomId:a.id});turn(s,'p2');player(s,'p2').wizard.position={...c.tiles[0]};
+  s=applyAction(s,{type:'EXPLORE',playerId:'p2',activateRoomAtStart:true});
+  expect(s.readiedSpells).toHaveLength(1);conserved(s);
+ });
+ it('a trap bound to the colorless center covers only the center',()=>{
+  const {s:base,a}=colored();
+  let s=arm(base,'Cinder Seal','p1',{roomId:center});turn(s,'p2');player(s,'p2').wizard.position={...a.tiles[0]};
+  s=applyAction(s,{type:'EXPLORE',playerId:'p2',activateRoomAtStart:true});
+  expect(s.readiedSpells).toHaveLength(1);conserved(s);
+ });
+ it('Tripwire reacts to an enemy evocation activating in a sibling room, but not for its owner',()=>{
+  const {s:base,a,b}=colored();
+  evoc(base,'e1','p2',4,b.tiles[0]);
+  let s=arm(base,'Tripwire','p1',{roomId:a.id});turn(s,'p2');
+  s=applyAction(s,{type:'ACTIVATE_EVOCATION',playerId:'p2',evocationId:'e1'});
+  expect(s.evocations[0].damageCubes).toBe(1);expect(s.readiedSpells).toEqual([]);conserved(s);
  });
 });
