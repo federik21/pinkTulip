@@ -3,6 +3,8 @@ import { BLACK_ROSE_ID, createGame } from '@brw/game-engine';
 import type { Card, Evocation, GameAction, GameState } from '@brw/game-engine';
 import { ActionHistory } from '../src/action-history';
 import { publicState } from '../src/public-state';
+import { setPrinted, withMoments } from '../../../packages/game-engine/test/flat-effects';
+import { momentTotal } from '../../../packages/game-engine/src/cards';
 
 type Cast = Extract<GameAction, { type:'CAST_SPELL' }>;
 type Selection = Omit<Cast, 'type' | 'playerId' | 'slot'>;
@@ -70,7 +72,7 @@ function fixture(name: string) {
  return { game, card };
 }
 const hidden = (index: number): Card => ({ id:`hidden-${index}`, name:'Hidden spell', kind:'SPELL',
- damage:0, instability:0, range:0, target:'MODEL' });
+ moments:[], range:0, target:'MODEL' });
 function privacy(game: GameState, history: ActionHistory, ownHistory: NonNullable<GameState['history']>) {
  const authoritative = structuredClone(game);
  const futureIds = [...game.library.flatMap(d => d.cards), ...game.powerfulDeck, ...game.eventDeck,
@@ -110,7 +112,7 @@ type Case = { name:string; selection:Selection; check:(game:GameState) => void }
 const ownConversionLedgers: { owners:string; ledger:Record<string, number> }[] = [
  { owners:'caster', ledger:{ p1:1 } }, { owners:'p2', ledger:{ p2:1 } },
  { owners:'p3', ledger:{ p3:1 } }, { owners:'p4', ledger:{ p4:1 } },
- { owners:'Black Rose', ledger:{ [BLACK_ROSE_ID]:1 } },
+ { owners:'Pink Tulip', ledger:{ [BLACK_ROSE_ID]:1 } },
  { owners:'mixed', ledger:{ p1:1, p2:1, p3:1, [BLACK_ROSE_ID]:1 } },
 ];
 const ownConversionCases = (['MAGE', 'EVOCATION'] as const).flatMap(kind =>
@@ -179,10 +181,10 @@ describe('actual Transmutation spell snapshots and projection', () => {
   expect(game.library[1].discard).toEqual([card]); expect(game.library[0]).toEqual(initial.library[0]);
   expect(physicalCards(game)).toEqual(cards);
   const ownTarget = card.target === 'SELF' || selection.targetPlayerId === 'p1' || selection.targetPlayerId === 'p1-wizard' || selection.targetEvocationId === 'support-model-0';
-  if (card.convert && ownTarget) {
+  if (momentTotal(card, 'CONVERT') && ownTarget) {
    expect((game.feedbackEvents ?? []).some(event => event.kind === 'CONVERT')).toBe(false);
    expect(game.board).toEqual(initial.board);
-   if (card.heal) {
+   if (momentTotal(card, 'HEAL')) {
     expect((game.feedbackEvents ?? []).map(event => event.kind)).toEqual(['HEAL']);
    } else {
     expect(game.players.map(p => p.wizard)).toEqual(initial.players.map(p => p.wizard));
@@ -254,7 +256,7 @@ describe('actual Transmutation spell snapshots and projection', () => {
   const history = new ActionHistory(), { game:initial, card } = fixture('Transmuting Surge');
   // Reuse one real physical card to isolate a mixed instruction combination;
   // no extra spell or cube supply is introduced by the fixture.
-  card.instability = 2;
+  setPrinted(card, { instability:2 });
   const cards = physicalCards(initial), before = structuredClone(initial);
   let game = history.apply(initial, { type:'CAST_SPELL', playerId:'p1', slot:'slot1',
    ...(kind === 'MAGE' ? { targetPlayerId:'p1' } : { targetEvocationId:'support-model-0' }) }, 'p1');
@@ -288,7 +290,7 @@ describe('actual Transmutation spell snapshots and projection', () => {
   game = history.apply(game, { type:'REDO_ACTION', playerId:'p1' }, 'p1'); expect(game).toEqual(after); conserved(game);
  });
 
- it.each(['Mending Light', "Alchemist's Refuge", "Mage's Due"])('restores actual (not) Black Rose and unattributed mage wounds after %s', name => {
+ it.each(['Mending Light', "Alchemist's Refuge", "Mage's Due"])('restores actual Pink Tulip and unattributed mage wounds after %s', name => {
   const history = new ActionHistory(), { game:initial } = fixture(name);
   const index = name === "Mage's Due" ? 1 : 0;
   Object.assign(initial.players[index].wizard, { damageCubes:5, blackDamage:2, damageByPlayer:{ [BLACK_ROSE_ID]:1 } });
@@ -331,7 +333,7 @@ const dummyCases = dummyNames.flatMap(name => [0, 2].flatMap(instability => [0, 
 describe('dummy support/reactive casts retain exact server history and foreign projection', () => {
  it.each(dummyCases)('$name with $instability printed instability at turn action $actionsUsed is exactly reversible', ({ name, instability, actionsUsed }) => {
   const history = new ActionHistory(), { game:initial, card } = dummyFixture(name);
-  card.instability = instability; initial.activation!.actionsUsed = actionsUsed; initial.players[0].actionTokens = 0;
+  setPrinted(card, { instability }); initial.activation!.actionsUsed = actionsUsed; initial.players[0].actionTokens = 0;
   const before = structuredClone(initial), cards = physicalCards(initial);
   privacy(initial, history, disabled);
   let game = history.apply(initial, { type:'CAST_SPELL', playerId:'p1', slot:'slot1', dummy:true, roomId:'room-0,0' }, 'p1');
@@ -370,7 +372,7 @@ describe('dummy support/reactive casts retain exact server history and foreign p
  it.each(['MAGE', 'EVOCATION', 'MODEL'] as const)('removes a powerful %s dummy without hidden/ongoing bindings and restores the exact zones', target => {
   const history = new ActionHistory(), { game:initial, card } = dummyFixture('Sovereign Wrath');
   const trigger = { event:'SPELL_CAST', relation:'ANY', scope:'BOUND_MODEL' } as const;
-  Object.assign(card, { target, spellType:'PROTECTION', trigger, heal:3, convert:3,
+  Object.assign(card, { target, spellType:'PROTECTION', trigger, ...withMoments({ damage:momentTotal(card, 'DAMAGE'), instability:momentTotal(card, 'INSTABILITY'), heal:3, convert:3 }),
    ongoing:{ trigger, effects:[{ effect:'DAMAGE', amount:9, target:'BOUND_MODEL' }] } });
   initial.activation!.actionsUsed = 1;
   const before = structuredClone(initial), cards = physicalCards(initial);
@@ -388,7 +390,7 @@ describe('dummy support/reactive casts retain exact server history and foreign p
 
  it.each(['MAGE', 'EVOCATION', 'MODEL'] as const)('%s dummy full-room completion changes no models and restores exact pre/post ledgers across handoff', target => {
   const history = new ActionHistory(), { game:initial, card } = dummyFixture('Transmuting Surge');
-  Object.assign(card, { target, instability:3, heal:4, convert:4, damage:5 });
+  Object.assign(card, { target, ...withMoments({ instability:3, heal:4, convert:4, damage:5 }) });
   Object.assign(room(initial), { instability:9, cubesByPlayer:{ p2:9 } }); syncCubes(initial);
   initial.activation!.actionsUsed = 1;
   const before = structuredClone(initial), cards = physicalCards(initial);
@@ -407,7 +409,7 @@ describe('dummy support/reactive casts retain exact server history and foreign p
   ['zero supply', 'full room', 'rebuilt room'].map(condition => ({ target, condition }))))(
   '$target dummy remains an exactly reversible card/action cost with $condition', ({ target, condition }) => {
    const history = new ActionHistory(), { game:initial, card } = dummyFixture('Transmuting Surge');
-   Object.assign(card, { target, instability:2, damage:5, heal:4, convert:3 });
+   Object.assign(card, { target, ...withMoments({ instability:2, damage:5, heal:4, convert:3 }) });
    initial.players[0].actionTokens = 0; initial.activation!.actionsUsed = 1;
    if (condition !== 'zero supply') Object.assign(room(initial), { instability:10, cubesByPlayer:{ p2:10 },
     reconstructed:condition === 'rebuilt room', scored:condition === 'rebuilt room' });

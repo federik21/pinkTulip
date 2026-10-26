@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
 import { areInSameRoom, canUseSpellDummy, isWithinSpellRange, spellCanTargetModel } from '../packages/game-engine/src/engine';
+import { momentTotal } from '../packages/game-engine/src/cards';
 import type { ActiveSpell, Card, GameAction, GameState, Hex, Player } from '../packages/game-engine/src/types';
 import { checkHealingFacts, checkPublicFeedback } from './public-feedback';
 
@@ -17,8 +18,7 @@ type WireAction = GameAction | { type: 'SUMMON_EVOCATION'; playerId: string };
 const ids = ['p1', 'p2'] as const;
 const slots = ['slot1', 'slot2', 'slot3', 'rapid'] as const;
 const hiddenCard = (index: number): Card => ({
- id: `hidden-${index}`, name: 'Hidden spell', kind: 'SPELL', damage: 0,
- instability: 0, range: 0, target: 'MODEL',
+ id: `hidden-${index}`, name: 'Hidden spell', kind: 'SPELL', moments:[], range: 0, target: 'MODEL',
 });
 const player = (s: GameState, id: string) => {
  const p = s.players.find(p => p.id === id); assert.ok(p); return p;
@@ -178,7 +178,7 @@ function checkSettlement(before: GameState, after: GameState) {
  const cleanupIndex = appended.findIndex(line => line.startsWith('CLEANUP —'));
  assert.ok(cleanupIndex >= 0);
  for (const line of appended.slice(0, cleanupIndex)) {
-  for (const competitor of [...before.players, { id: 'black-rose', name: '(not) Black Rose' }]) {
+  for (const competitor of [...before.players, { id: 'black-rose', name: 'Pink Tulip' }]) {
    if (!line.startsWith(`${competitor.name}: +`) && !line.startsWith(`${competitor.name} completes `)) continue;
    const reward = line.match(/\+(\d+) VP/);
    if (reward) scores[competitor.id] += Number(reward[1]);
@@ -201,7 +201,7 @@ function checkSettlement(before: GameState, after: GameState) {
   ]) for (const { id, points } of awards(counts, [4, 2, 1])) scores[id] += points;
   assert.ok(before.firstPlayerId); scores[before.firstPlayerId]++;
   const winner = [...before.players.map(p => p.id), 'black-rose'].sort((a, b) => scores[b] - scores[a])[0];
-  assert.equal(after.winner, winner, 'Final standings include (not) Black Rose and stable seating-order ties');
+  assert.equal(after.winner, winner, 'Final standings include Pink Tulip and stable seating-order ties');
  } else assert.equal(after.endgameScored, false);
  assert.deepEqual(Object.fromEntries([...after.players.map(p => [p.id, p.victoryPoints]), ['black-rose', after.blackRose.victoryPoints]]), scores);
 }
@@ -466,7 +466,7 @@ async function main() {
   async function studyAndPrepare() {
    assert.equal(epoch.phase, 'BLACK_ROSE'); assert.equal(epoch.blackRoseResolved, false);
    assert.ok(epoch.players.every(p => p.actionTokens === 2));
-  await act({ type: 'DISCARD_QUESTS', playerId: 'p1', questIds: [] }, /Resolve \(not\) Black Rose/);
+  await act({ type: 'DISCARD_QUESTS', playerId: 'p1', questIds: [] }, /Resolve Pink Tulip/);
    const before = epoch;
    await advance(); assert.equal(epoch.blackRoseResolved, true);
    if (epoch.phase === 'BLACK_ROSE') {
@@ -571,10 +571,10 @@ async function main() {
    }
    if (card.target !== 'ROOM' && !canUseSpellDummy(card)) {
     const mage = [...epoch.players].sort((a, b) => b.wizard.damageCubes - a.wizard.damageCubes)
-     .find(t => legal(t.id, 'MAGE', t.wizard.position) && (!card.damage || t.id === id));
+     .find(t => legal(t.id, 'MAGE', t.wizard.position) && (!momentTotal(card, 'DAMAGE') || t.id === id));
     if (mage) return { targetPlayerId:mage.id };
     const model = [...epoch.evocations].sort((a, b) => b.damageCubes - a.damageCubes)
-     .find(e => legal(e.playerId, 'EVOCATION', e.position) && (!card.damage || e.playerId === id));
+     .find(e => legal(e.playerId, 'EVOCATION', e.position) && (!momentTotal(card, 'DAMAGE') || e.playerId === id));
     assert.ok(model, `This planned cast requires a real safe ${card.target} target`);
     return { targetEvocationId:model.id };
    }
@@ -604,9 +604,9 @@ async function main() {
    }
   }
   await act({ type: 'CAST_SPELL', playerId: id, slot, ...spellTarget(id, card) });
-    if (card.heal) checkHealingFacts(before, epoch, id);
+    if (momentTotal(card, 'HEAL')) checkHealingFacts(before, epoch, id);
    assert.equal(player(epoch, id).actionTokens, p.actionTokens);
-    if (!card.heal && !card.convert) {
+    if (!momentTotal(card, 'HEAL') && !momentTotal(card, 'CONVERT')) {
      assert.deepEqual(epoch.players.map(p => p.wizard), before.players.map(p => p.wizard));
      assert.deepEqual(epoch.evocations.map(({ activated, ...e }) => e), before.evocations.map(({ activated, ...e }) => e));
     }

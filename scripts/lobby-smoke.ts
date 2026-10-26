@@ -4,6 +4,7 @@ import { once } from 'node:events';
 import { resolve } from 'node:path';
 import { WebSocket } from 'ws';
 import { isWithinSpellRange, spellCanTargetModel } from '../packages/game-engine/src/engine';
+import { momentTotal } from '../packages/game-engine/src/cards';
 import type { ActiveSpell, Card, GameAction, GameState, Hex, Player } from '../packages/game-engine/src/types';
 import { checkHealingFacts, checkPublicFeedback } from './public-feedback';
 
@@ -16,8 +17,7 @@ type Message = {
 };
 const slots = ['slot1', 'slot2', 'slot3', 'rapid'] as const;
 const hiddenCard = (index: number): Card => ({
- id: `hidden-${index}`, name: 'Hidden spell', kind: 'SPELL', damage: 0,
- instability: 0, range: 0, target: 'MODEL',
+ id: `hidden-${index}`, name: 'Hidden spell', kind: 'SPELL', moments:[], range: 0, target: 'MODEL',
 });
 const player = (state: GameState, id: string): Player => {
  const found = state.players.find(p => p.id === id); assert.ok(found, `Missing ${id}`); return found;
@@ -36,20 +36,20 @@ function spellTarget(state: GameState, id: string, card: Card): SpellSelection |
  // dummy casts have separate engine/server/browser coverage.
  if (card.target === 'ROOM') {
   const rooms = state.board.rooms.filter(r => !r.startingFor && r.tiles.some(h => isWithinSpellRange(p.wizard.position, h, card.range)) &&
-   (!card.damage || !state.players.some(t => t.id !== id && r.tiles.some(h => sameHex(h, t.wizard.position))) &&
+   (!momentTotal(card, 'DAMAGE') || !state.players.some(t => t.id !== id && r.tiles.some(h => sameHex(h, t.wizard.position))) &&
     !state.evocations.some(e => e.playerId !== id && r.tiles.some(h => sameHex(h, e.position)))));
   // Conversion needs live cubes from another owner; a legal zero-effect cast
   // remains useful when the ordinary game has not produced those cubes yet.
-  rooms.sort((a, b) => Number(!!card.convert && !b.scored && !b.reconstructed && Object.entries(b.cubesByPlayer).some(([owner, n]) => owner !== id && n > 0)) -
-   Number(!!card.convert && !a.scored && !a.reconstructed && Object.entries(a.cubesByPlayer).some(([owner, n]) => owner !== id && n > 0)));
+  rooms.sort((a, b) => Number(!!momentTotal(card, 'CONVERT') && !b.scored && !b.reconstructed && Object.entries(b.cubesByPlayer).some(([owner, n]) => owner !== id && n > 0)) -
+   Number(!!momentTotal(card, 'CONVERT') && !a.scored && !a.reconstructed && Object.entries(a.cubesByPlayer).some(([owner, n]) => owner !== id && n > 0)));
   const room = rooms[0];
   return room ? { roomId:room.id } : undefined;
  }
  const mage = [...state.players].sort((a, b) => b.wizard.damageCubes - a.wizard.damageCubes)
-  .find(t => legal(t.id, 'MAGE', t.wizard.position) && (!card.damage || t.id === id));
+  .find(t => legal(t.id, 'MAGE', t.wizard.position) && (!momentTotal(card, 'DAMAGE') || t.id === id));
  if (mage) return { targetPlayerId:mage.id };
  const evocation = [...state.evocations].sort((a, b) => b.damageCubes - a.damageCubes)
-  .find(e => legal(e.playerId, 'EVOCATION', e.position) && (!card.damage || e.playerId === id));
+  .find(e => legal(e.playerId, 'EVOCATION', e.position) && (!momentTotal(card, 'DAMAGE') || e.playerId === id));
  return evocation ? { targetEvocationId:evocation.id } : undefined;
 }
 
@@ -350,7 +350,7 @@ async function main() {
    assert.equal(epoch.phase, 'BLACK_ROSE'); assert.equal(epoch.round, 1); autoStarts++;
    assert.ok(mages[0].messages.slice(from).filter(m => m.type === 'STATE').every(m => m.state!.phase === 'BLACK_ROSE'),
     'Final SET_READY must never expose an all-ready lobby before auto-start');
-  assert.equal(epoch.log.filter(line => line.startsWith('Round 1 · (not) Black Rose —')).length, 1);
+  assert.equal(epoch.log.filter(line => line.startsWith('Round 1 · Pink Tulip —')).length, 1);
    await roster(name, epoch, mages);
    await visitor.join(name, false, count === 4 ? /^Room full \(4 mages\)$/ : /battle already in progress/);
    await visitor.command({ type: 'ADVANCE_PHASE', playerId: 'p1', expectedPhase: epoch.phase, expectedRound: epoch.round }, /Join a room first/);
@@ -527,7 +527,7 @@ async function main() {
    assert.equal(epoch.phase, 'PREPARATION'); await roster(name, epoch, mages);
    for (const mage of mages) {
     let own = player(await mage.sync(epoch), mage.id!);
-     const hand = [...own.hand].sort((a, b) => Number(!!(b.heal || b.convert) && b.target !== 'EVOCATION') - Number(!!(a.heal || a.convert) && a.target !== 'EVOCATION'));
+     const hand = [...own.hand].sort((a, b) => Number(!!(momentTotal(b, 'HEAL') || momentTotal(b, 'CONVERT')) && b.target !== 'EVOCATION') - Number(!!(momentTotal(a, 'HEAL') || momentTotal(a, 'CONVERT')) && a.target !== 'EVOCATION'));
     assert.equal(own.hand.length, 4, 'Two personal + four Study - two Study discards leave four, with no initial overflow');
     assert.equal(own.discard.length, 1);
     epoch = await act(mage, { type:'DISCARD_HAND_LIMIT', playerId:mage.id!, cardIds:[] }, /No cards over/);
@@ -570,10 +570,10 @@ async function main() {
     if (mage !== mages[3]) {
      const own = player(await mage.sync(epoch), mage.id!), card = own.prepared.slot1!.card;
      const selection = spellTarget(epoch, mage.id!, card);
-     if ((card.heal || card.convert) && selection) {
+     if ((momentTotal(card, 'HEAL') || momentTotal(card, 'CONVERT')) && selection) {
       const before = await mage.sync(epoch), tokens = own.actionTokens;
       epoch = await act(mage, { type:'CAST_SPELL', playerId:mage.id!, slot:'slot1', ...selection });
-      if (card.heal) checkHealingFacts(before, epoch, mage.id!);
+      if (momentTotal(card, 'HEAL')) checkHealingFacts(before, epoch, mage.id!);
       const after = structuredClone(epoch);
       assert.equal(epoch.currentPlayerId, mages[mages.indexOf(mage) + 1].id, 'Support is the second shared turn action');
       assert.equal(player(epoch, mage.id!).actionTokens, tokens, 'Support never spends a physical token');

@@ -1,3 +1,4 @@
+import { moment } from '../src/cards';
 import { describe, expect, it } from 'vitest';
 import { applyAction, BLACK_ROSE_ID, createGame, FEEDBACK_EVENT_LIMIT } from '../src';
 import type { Card, Evocation, FeedbackTarget, GameAction, GameFeedbackEvent, GameState, Player, TriggerCondition, TriggeredInstruction } from '../src';
@@ -81,7 +82,7 @@ function conserved(s:GameState) {
 }
 function custom(s:GameState, changes:Partial<Card>):Card {
  const physical = s.library[0].cards.shift()!;
- return { id:physical.id, schoolId:physical.schoolId, name:'Public custom spell', kind:'SPELL', target:'ROOM', range:3, damage:0, instability:0, ...changes };
+ return { id:physical.id, schoolId:physical.schoolId, name:'Public custom spell', kind:'SPELL', target:'ROOM', range:3, moments:[], ...changes };
 }
 const on = (event:TriggerCondition['event'], scope:TriggerCondition['scope'] = 'BOUND_ROOM', relation:TriggerCondition['relation'] = 'ANY'):TriggerCondition => ({ event, scope, relation });
 const instruction = (effect:TriggeredInstruction['effect'], amount:number, target:TriggeredInstruction['target']):TriggeredInstruction => ({ effect, amount, target });
@@ -198,7 +199,7 @@ describe('actual healing feedback',()=>{
   expect(result.evocations[0]).toMatchObject({damageCubes:1,damageByPlayer:{}});conserved(result);
  });
  it('counts physical, neutral and unattributed wounds equally, returning only actual colored cubes',()=>{
-  const s=fixture();wound(s,'p1',{p2:1,[BLACK_ROSE_ID]:1},1,1);prepare(s,custom(s,{target:'SELF',heal:20}));
+  const s=fixture();wound(s,'p1',{p2:1,[BLACK_ROSE_ID]:1},1,1);prepare(s,custom(s,{target:'SELF',moments:[moment.heal(20)]}));
   const result=cast(s);
   expect(facts(result)).toEqual([{kind:'HEAL',target:mageTarget(s,'p1'),sourceId:'p1',amount:4}]);
   expect(player(result).wizard).toMatchObject({damageCubes:0,damageByPlayer:{},blackDamage:0});

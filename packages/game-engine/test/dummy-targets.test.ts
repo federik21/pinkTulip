@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { applyAction, BLACK_ROSE_ID, canPlayerAct, canUseSpellDummy, createGame } from '../src';
+import { momentTotal } from '../src/cards';
+import { setPrinted, withMoments } from './flat-effects';
 import type { Card, Evocation, GameAction, GameState, SpellTarget, SpellType } from '../src';
 
 type Cast = Extract<GameAction, { type:'CAST_SPELL' }>;
@@ -95,8 +97,8 @@ describe('dummy target category is independent of printed effects, type and ongo
  it.each<SpellTarget>(['SELF', 'ROOM', ...eligible])('%s helper is exact and immutable', target => {
   for (const spellType of types) for (const effects of [{}, { heal:2 }, { convert:2 }, { damage:3, heal:2, convert:2 }]) {
    for (const ongoing of [undefined, { trigger, effects:[] }]) {
-    const card:Card = { id:'helper', name:'Helper', kind:'SPELL', range:2, damage:0, instability:1,
-     target, spellType, trigger, ongoing, ...effects };
+    const card:Card = { id:'helper', name:'Helper', kind:'SPELL', range:2,
+     target, spellType, trigger, ongoing, ...withMoments({ instability:1, ...effects }) };
     const before = structuredClone(card);
     expect(canUseSpellDummy(card)).toBe(target === 'MAGE' || target === 'EVOCATION' || target === 'MODEL');
     expect(card).toEqual(before);
@@ -111,17 +113,17 @@ const canonical = ['Renewing Word', "Mage's Due", "Summoner's Balm", 'Reclaimed 
 describe.each(canonical)('%s canonical dummy cast', name => {
  it.each([false, true].flatMap(occupied => [false, true].map(printedInstability => ({ occupied, printedInstability }))))(
   'uses only printed instability (occupied=$occupied, synthetic printed instability=$printedInstability)', ({ occupied, printedInstability }) => {
-   const { s, card } = fixture(name); if (printedInstability) card.instability = 2;
+   const { s, card } = fixture(name); if (printedInstability) setPrinted(card, { instability:2 });
    const id = occupied ? center : east, before = structuredClone(s);
    const after = cast(s, { dummy:true, roomId:id });
    expect(s).toEqual(before); noModelEffects(before, after); consumed(before, after, card);
    expect(after.activation).toMatchObject({ actionsUsed:1, spellsCast:1, sequencedSpellUsed:false });
    const expected = structuredClone(before.board), selected = expected.rooms.find(r => r.id === id)!;
-   selected.instability += card.instability;
-   if (card.instability) selected.cubesByPlayer.p1 = card.instability;
+   selected.instability += momentTotal(card, 'INSTABILITY');
+   if (momentTotal(card, 'INSTABILITY')) selected.cubesByPlayer.p1 = momentTotal(card, 'INSTABILITY');
    expect(after.board).toEqual(expected);
    expect(after.players[0].cubes).toEqual({ ...before.players[0].cubes,
-    available:before.players[0].cubes.available - card.instability, onBoard:card.instability });
+    available:before.players[0].cubes.available - momentTotal(card, 'INSTABILITY'), onBoard:momentTotal(card, 'INSTABILITY') });
    expect(after.players.slice(1).map(p => p.cubes)).toEqual(before.players.slice(1).map(p => p.cubes));
   });
 });
@@ -130,7 +132,7 @@ describe('mixed dummy effects, hidden cards and binding suppression', () => {
  it.each(eligible.flatMap(target => types.map(spellType => ({ target, spellType }))))(
   '$target $spellType with mixed immediate/triggered/ongoing effects creates no model or room binding', ({ target, spellType }) => {
    const { s, card } = fixture();
-   Object.assign(card, { target, spellType, damage:6, heal:5, convert:4, instability:2, trigger,
+   Object.assign(card, { target, spellType, ...withMoments({ damage:6, heal:5, convert:4, instability:2 }), trigger,
     triggerEffects:[{ effect:'DAMAGE', amount:9, target:'EVENT_ACTOR' }],
     ongoing:{ trigger, effects:[{ effect:'CONVERT', amount:9, target:'EVENT_ROOM' }] } });
    const before = structuredClone(s), after = cast(s);
@@ -152,7 +154,7 @@ describe('mixed dummy effects, hidden cards and binding suppression', () => {
  });
  it.each(eligible)('%s powerful dummy goes to removedCards rather than any discard or active zone', target => {
   const { s, card } = fixture('Sovereign Wrath');
-  Object.assign(card, { target, spellType:'PROTECTION', trigger, heal:4, convert:3,
+  Object.assign(card, { target, spellType:'PROTECTION', trigger, ...withMoments({ damage:8, instability:1, heal:4, convert:3 }),
    ongoing:{ trigger, effects:[{ effect:'DAMAGE', amount:9, target:'BOUND_MODEL' }] } });
   const before = structuredClone(s), after = cast(s);
   noModelEffects(before, after); consumed(before, after, card);
@@ -212,7 +214,7 @@ describe('dummy selection retains authoritative targeting and action guards', ()
   noModelEffects(s, two); expect(cards(two)).toEqual(cards(s)); conserved(two);
  });
  it.each(eligible)('%s finds an in-range secondary tile of a multihex dummy room', target => {
-  const { s, card } = fixture(); card.target = target; card.range = 1; card.instability = 1;
+  const { s, card } = fixture(); card.target = target; card.range = 1; setPrinted(card, { instability:1 });
   s.players[0].wizard.position = { q:2, r:0 };
   s.board.rooms = s.board.rooms.filter(r => r.id !== east); room(s).tiles.push({ q:1, r:0 });
   const before = structuredClone(s), after = cast(s);
@@ -225,9 +227,9 @@ describe('dummy exhaustion, supply and room capacity', () => {
   '$target $mode remains actionable at zero tokens without any evocations or reachable enemy mages', ({ target, mode }) => {
    const { s, card } = fixture(); s.evocations = []; s.players[0].actionTokens = 0;
    for (const p of s.players.slice(1)) p.wizard.position = { q:1, r:1 };
-   delete card.heal; Object.assign(card, { target, range:0, damage:mode === 'offense' ? 1 : 0 });
-   if (mode === 'heal') card.heal = 2;
-   if (mode === 'convert') card.convert = 2;
+   Object.assign(card, { target, range:0 }); setPrinted(card, { heal:0, damage:mode === 'offense' ? 1 : 0 });
+   if (mode === 'heal') setPrinted(card, { heal:2 });
+   if (mode === 'convert') setPrinted(card, { convert:2 });
    if (mode === 'protection') Object.assign(card, { spellType:'PROTECTION', trigger });
    if (mode === 'ongoing') card.ongoing = { trigger, effects:[] };
    syncCubes(s); expect(canPlayerAct(s, s.players[0])).toBe(true);
@@ -245,7 +247,7 @@ describe('dummy exhaustion, supply and room capacity', () => {
  ];
  it.each(eligible.flatMap(target => roomCases.map(c => ({ target, ...c }))))(
   '$target with $label uses actual instability only and never converts room or model cubes', ({ target, supply, instability, reconstructed, scored, placed }) => {
-   const { s, card } = fixture(); Object.assign(card, { target, damage:7, heal:6, convert:5, instability:3 });
+   const { s, card } = fixture(); Object.assign(card, { target, ...withMoments({ damage:7, heal:6, convert:5, instability:3 }) });
    Object.assign(room(s), { instability, reconstructed, scored, cubesByPlayer:{ p2:instability } });
    syncCubes(s);
    let remaining = s.players[0].cubes.available - supply;

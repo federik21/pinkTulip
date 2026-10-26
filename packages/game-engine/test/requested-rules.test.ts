@@ -1,3 +1,4 @@
+import { moment, momentTotal } from '../src/cards';
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import { applyAction, canPassActionPhase, createGame, evocationAttack, hexDistance, hexLineDistance, PHYSICAL_TOKENS_PER_ROUND } from '../src';
 import type { Card, Evocation, GameAction, GameState, Player, RoomEffect } from '../src';
@@ -26,7 +27,7 @@ function greyFixture(reconstructed=false) {
  return {g,source};
 }
 function prepare(g:GameState,slot:keyof Player['prepared']='rapid',changes:Partial<Card>={},playerId='p1') {
- const card={...g.library[0].cards.shift()!,damage:0,instability:0,range:4,target:'ROOM' as const,...changes};
+ const card={...g.library[0].cards.shift()!,moments:[],range:4,target:'ROOM' as const,...changes};
  player(g,playerId).prepared[slot]={card,used:false};return card;
 }
 function holdPower(g:GameState,target:Card['target']='MODEL',playerId='p1') {
@@ -273,16 +274,16 @@ describe('Cadavers and token activations',()=>{
   g=applyAction(g,{type:'END_EVOCATION',playerId:'p1'});expect(g.evocations[0].position).toEqual({q:1,r:-1});
  });
 
- it('uses Wounded Fury: one damage on a two-health Cadaver raises its attack from two to three',()=>{
+ it('keeps the Cadaver effect blank: wounds do not raise its base attack',()=>{
   let g=actionFixture();g.evocations=[cadaver('wounded','p2')];expect(evocationAttack(g.evocations[0])).toBe(2);
-  prepare(g,'rapid',{target:'MODEL',damage:1});
+  prepare(g,'rapid',{target:'MODEL',moments:[moment.damage(1)]});
   g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',targetEvocationId:'wounded'});
-  expect(g.evocations[0].health).toBe(2);expect(g.evocations[0].damageCubes).toBe(1);expect(evocationAttack(g.evocations[0])).toBe(3);
+  expect(g.evocations[0].health).toBe(2);expect(g.evocations[0].damageCubes).toBe(1);expect(evocationAttack(g.evocations[0])).toBe(2);
   expect(g.evocations[0].damageByPlayer).toEqual({p1:1});expectCubesConserved(g);
   g=applyAction(g,{type:'END_ACTIVATION',playerId:'p1'});
   g=applyAction(g,{type:'ACTIVATE_EVOCATION',playerId:'p2',evocationId:'wounded'});
   g=applyAction(g,{type:'EVOCATION_ATTACK',playerId:'p2',targetId:'p1'});
-  expect(player(g).wizard.damageCubes).toBe(3);expect(player(g).wizard.damageByPlayer).toEqual({p2:3});
+  expect(player(g).wizard.damageCubes).toBe(2);expect(player(g).wizard.damageByPlayer).toEqual({p2:2});
   expect(g.evocationActivation).toBeNull();expect(g.currentPlayerId).toBe('p2');expectCubesConserved(g);
  });
 });
@@ -506,7 +507,7 @@ describe('all-model targeting and physical damage cubes',()=>{
 
  it('MODEL spells select an enemy evocation, enforce exclusive targets/range and preserve dummy behavior',()=>{
   let g=actionFixture();g.evocations=[cadaver('enemy','p2',{q:1,r:0}),cadaver('friendly')];
-  prepare(g,'slot1',{target:'MODEL',damage:1,instability:1,range:1});
+  prepare(g,'slot1',{target:'MODEL',moments:[moment.instability(1),moment.damage(1)],range:1});
   const cast={type:'CAST_SPELL' as const,playerId:'p1',slot:'slot1' as const,targetEvocationId:'enemy'};
   expectRejected(g,{...cast,targetPlayerId:'p2'},/Select one mage or evocation/);
   expectRejected(g,{...cast,targetEvocationId:'friendly'},/category or ownership/);
@@ -525,7 +526,7 @@ describe('all-model targeting and physical damage cubes',()=>{
   expectRejected(g,{...cast,targetEvocationId:'friendly'},/category or ownership/);
   expectRejected(g,{...cast,dummy:true,roomId:'room-0,0'},/either/);
   g=applyAction(g,cast);expect(g.evocations.map(e=>e.id)).toEqual(['friendly']);expect(g.removedCards).toEqual([power]);
-  expect(room(g,'room-1,0').cubesByPlayer).toEqual({p1:power.instability});expect(room(g).instability).toBe(0);
+  expect(room(g,'room-1,0').cubesByPlayer).toEqual({p1:momentTotal(power,'INSTABILITY')});expect(room(g).instability).toBe(0);
   expect(player(g).kills).toBe(0);expect(player(g).victoryPoints).toBe(0);expect(player(g).cubes.onEvocations).toBe(0);
   expectRejected(g,cast,/unavailable/);expectCubesConserved(g);expectCardsConserved(g);
  });
@@ -536,11 +537,11 @@ describe('all-model targeting and physical damage cubes',()=>{
    g.evocations=[cadaver('own'),cadaver('enemy2','p2'),cadaver('enemy3','p3'),cadaver('outside','p2',{q:2,r:0})];
    let damage:number;
    if(powerful) {
-    const power=holdPower(g,'ROOM');damage=power.damage;
+    const power=holdPower(g,'ROOM');damage=momentTotal(power,'DAMAGE');
     player(g).hand.splice(player(g).hand.indexOf(power),1);player(g).prepared.rapid={card:power,used:false};
     g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:'room-0,0'});expect(g.removedCards).toEqual([power]);
    } else {
-    damage=1;prepare(g,'rapid',{damage,instability:0});g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:'room-0,0'});
+    damage=1;prepare(g,'rapid',{moments:[moment.damage(damage)]});g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:'room-0,0'});
    }
    expect(g.players.map(p=>p.wizard.damageCubes)).toEqual([0,damage,damage]);
    expect(g.evocations.find(e=>e.id==='own')).toEqual(cadaver('own'));expect(g.evocations.find(e=>e.id==='outside')!.damageCubes).toBe(0);
@@ -568,7 +569,7 @@ describe('all-model targeting and physical damage cubes',()=>{
 
  it('caps summon cubes at health/supply, deals full damage without cubes, and returns every contributing owner cube on destruction',()=>{
   for(const available of [0,1,25]) {
-   let g=actionFixture();g.evocations=[cadaver('victim','p2')];prepare(g,'rapid',{target:'MODEL',damage:9});
+   let g=actionFixture();g.evocations=[cadaver('victim','p2')];prepare(g,'rapid',{target:'MODEL',moments:[moment.damage(9)]});
    // Account for unavailable supply on a real unrebuilt room; no phantom cubes.
    player(g).cubes.available=available;player(g).cubes.onBoard=25-available;
    room(g).instability=25-available;room(g).instabilityLimit=30;room(g).cubesByPlayer={p1:25-available};
@@ -640,7 +641,7 @@ describe('free Evocation phase scheduling',()=>{
   // isolating the next Evocation-phase reset from another full mage-action round.
   for(const p of g.players)for(const slot of ['rapid','slot1','slot2','slot3'] as const){p.hand.push(p.prepared[slot]!.card);p.prepared[slot]=null;}
   g=evocationPhaseFixture(g);expect(g.phase).toBe('EVOCATION');expect(g.evocations[0]).toEqual({...survivor,activated:false});
-  g=applyAction(g,{type:'ACTIVATE_EVOCATION',playerId:'p1',evocationId:'survivor'});expect(evocationAttack(g.evocations[0])).toBe(3);expectCardsConserved(g);
+  g=applyAction(g,{type:'ACTIVATE_EVOCATION',playerId:'p1',evocationId:'survivor'});expect(evocationAttack(g.evocations[0])).toBe(2);expectCardsConserved(g);
  });
 });
 
@@ -698,7 +699,7 @@ describe('reconstructed room specials',()=>{
   // Filling later in this phase must not unlock the upgraded effect yet.
   g=applyAction(g,{type:'EXPLORE',playerId:'p1',activateRoomAtStart:true});g=applyAction(g,{type:'END_EXPLORE',playerId:'p1'});
   expect(room(g,emerald.id).reconstructed).toBe(false);expect(room(g,emerald.id).specialUsed).toBe(false);
-  prepare(g,'rapid',{instability:1});g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:emerald.id});
+  prepare(g,'rapid',{moments:[moment.instability(1)]});g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:emerald.id});
   expect(room(g,emerald.id).instability).toBe(emerald.instabilityLimit);expect(room(g,emerald.id).reconstructed).toBe(false);expect(room(g,emerald.id).specialUsed).toBe(false);
   expect(g.currentPlayerId).toBe('p2');g=explore(g,'p2');g=applyAction(g,{type:'END_ACTIVATION',playerId:'p2'});
   g=applyAction(g,{type:'EXPLORE',playerId:'p1',activateRoomAtStart:true,roomTargetId:adjacent.id});g=applyAction(g,{type:'END_EXPLORE',playerId:'p1'});

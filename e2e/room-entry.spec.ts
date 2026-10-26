@@ -18,6 +18,9 @@ test('creating and joining a room renders the lobby without React hook errors', 
   try {
     for (const { page, name, button } of mages) {
       await page.goto('/');
+      await expect(page).toHaveTitle('Pink Tulip Battles');
+      await expect(page.getByRole('heading', { level: 1, name: /^PINK\s*TULIP\s+BATTLES$/i })).toBeVisible();
+      await expect(page.locator('.entry-card')).not.toContainText(/black\s*rose|\(not\)/i);
       await page.getByLabel('Mage name').fill(name);
       await page.getByLabel('Room name').fill(roomId);
       await expect(page.getByRole('button', { name: button, exact: true })).toBeEnabled();
@@ -30,7 +33,9 @@ test('creating and joining a room renders the lobby without React hook errors', 
       await expect(page.getByRole('button', { name: 'Mark ready', exact: true })).toBeDisabled();
       const school = page.getByRole('combobox', { name: 'Starting magic school', exact: true });
       await expect(school).toHaveValue('');
-      await school.selectOption('cantrip');
+      const schoolId = await school.locator('option:not([value=""])').first().getAttribute('value');
+      expect(schoolId).toBeTruthy();
+      await school.selectOption(schoolId!);
       await expect(page.getByRole('button', { name: 'Mark ready', exact: true })).toBeEnabled();
 
       // The state that caused the hook-order crash must remain usable after entry.
@@ -59,7 +64,7 @@ test('creating and joining a room renders the lobby without React hook errors', 
     await guest.getByRole('button', { name: 'Mark ready', exact: true }).click();
 
     for (const { page } of mages) {
-      await expect(page.locator('.phase-track .current span')).toHaveText('(not) Black Rose');
+      await expect(page.locator('.phase-track .current span')).toHaveText('Pink Tulip');
       await expect(page.locator('.app')).toBeVisible();
       await expect(page.locator('.lobby-panel')).toHaveCount(0);
       await expect(page.getByRole('alert')).toHaveCount(0);
@@ -70,3 +75,29 @@ test('creating and joining a room renders the lobby without React hook errors', 
     await guestContext.close();
   }
 });
+
+for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+  test(`Pink Tulip Battles branding on entry and in the lodge at ${viewport.width}px`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.goto('/');
+    await expect(page).toHaveTitle('Pink Tulip Battles');
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText(/PINK\s*TULIP\s+BATTLES/);
+    await expect(page.locator('.entry-card')).toContainText('Claim the Tulip.');
+    await expect(page.locator('body')).not.toContainText(/black\s*rose|\(not\)/i);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+
+    await page.getByLabel('Mage name').fill('Tulip Warden');
+    await page.getByLabel('Room name').fill(`tulip-${viewport.width}-${Date.now()}`);
+    await page.getByRole('button', { name: 'Create room', exact: true }).click();
+    await expect(page.locator('.lobby-panel')).toBeVisible();
+    await expect(page.locator('.brand')).toContainText('PINK TULIP BATTLES');
+    await expect(page.locator('footer')).toContainText('PINK TULIP BATTLES');
+    await expect(page.locator('.board-panel h2')).toHaveText('Chambers of the Pink Tulip');
+    await expect(page.getByLabel('Pink Tulip score', { exact: true })).toContainText('Pink Tulip');
+    await expect(page.locator('[data-room-id="room-0,0"] .room-name')).toHaveText('Pink Tulip Chamber');
+    await page.getByRole('button', { name: 'Lodge information', exact: true }).click();
+    const information = page.getByRole('dialog', { name: 'Lodge information', exact: true });
+    await expect(information).toContainText('Pink Tulip · neutral');
+    await expect(page.locator('body')).not.toContainText(/black\s*rose|\(not\)/i);
+  });
+}

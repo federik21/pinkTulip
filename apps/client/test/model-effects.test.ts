@@ -123,8 +123,7 @@ describe('getModelEffects: explicit model bindings, visibility and current-state
     }
     // Also accept the actual wire shape: foreign readied entries have no binding.
     game.readiedSpells = game.readiedSpells!.map(({ id, playerId, card }, index) => ({ id, playerId,
-      card: { id: `hidden-${index}`, name: 'Hidden spell', kind: 'SPELL', damage: 0,
-        instability: 0, range: 0, target: 'MODEL', spellType: card.spellType } }));
+      card: { id: `hidden-${index}`, name: 'Hidden spell', kind: 'SPELL', moments:[], range: 0, target: 'MODEL', spellType: card.spellType } }));
     expect(counts(game, 'p1', 'p1')).toEqual({ ONGOING: 1 });
   });
 

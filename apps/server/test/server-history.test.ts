@@ -178,7 +178,7 @@ it.each([2, 3, 4].flatMap(count => ['cantrip', 'transmutation', 'enchantment'].m
   expect(peer.state).toBe(before); // A rejection sends no changed STATE or successful ACK.
  };
  const hidden = (index: number): Card => ({ id:`hidden-${index}`, name:'Hidden spell', kind:'SPELL',
-  damage:0, instability:0, range:0, target:'MODEL' });
+  moments:[], range:0, target:'MODEL' });
  const roomId = `schools-${count}`;
  try {
   expect(STARTING_SCHOOL_CARDS).toBe(7);
@@ -420,7 +420,7 @@ it('allocates mixed Study privately, rejects ineligible discards atomically, pre
   expect(await peer.action(action)).toMatchObject({ type:'ERROR', message:expect.stringMatching(error) });
   expect(peer.state).toBe(before);
  };
- const hidden = (index:number):Card => ({ id:`hidden-${index}`, name:'Hidden spell', kind:'SPELL', damage:0, instability:0, range:0, target:'MODEL' });
+ const hidden = (index:number):Card => ({ id:`hidden-${index}`, name:'Hidden spell', kind:'SPELL', moments:[], range:0, target:'MODEL' });
  const remaining = (s:GameState, id:string) => Object.values(s.players.find(p => p.id === id)!.prepared).filter(slot => slot && !slot.used).length;
  try {
   const host = await connect(), other = await connect();

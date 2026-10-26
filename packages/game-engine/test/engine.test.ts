@@ -1,3 +1,4 @@
+import { moment, momentTotal } from '../src/cards';
 import { describe, expect, it, vi } from 'vitest';
 import { applyAction, createGame, createSpellDeck, GameState, Card, Quest, RoomEffect, ROOM_COLORS, hexDistance } from '../src';
 
@@ -32,7 +33,7 @@ function actionGame(g=studyGame(),p1Cards?:string[]) {
  }
  return g;
 }
-const spell=(changes:Partial<Card>={}):Card=>({id:'test-spell',name:'Test spell',kind:'SPELL',damage:0,instability:2,range:4,target:'ROOM',...changes});
+const spell=(changes:Partial<Card>={}):Card=>({id:'test-spell',name:'Test spell',kind:'SPELL',moments:[moment.instability(2)],range:4,target:'ROOM',...changes});
 function giveSpell(g:GameState,card:Card) {g.players[0].prepared.slot1={card,used:false};return g;}
 const quest=(id:string,kind:Quest['kind'],reward=3,amount=1):Quest=>({id,name:id,description:id,kind,amount,reward});
 function roomGame(effect:RoomEffect) {
@@ -82,7 +83,7 @@ function passExhaustedFixture(g:GameState,playerId:string) {
  return applyAction(g,{type:'PASS_ROUND',playerId});
 }
 // TEST FIXTURE ONLY: intentionally jump to a phase boundary to test *uncast* card persistence
-// and next-Black-Rose routing, not legal passing or scoring. No cards are spent, moved or copied.
+// and next-Pink-Tulip routing, not legal passing or scoring. No cards are spent, moved or copied.
 function cleanupBoundaryFixture(g:GameState) {
  g=structuredClone(g);g.phase='CLEANUP';g.currentPlayerId=null;g.activation=null;g.evocationActivation=null;
  return g;
@@ -123,7 +124,7 @@ describe('lobby and decks',()=>{
   }
   const cantrip=g.library[0].cards;
   expect([...cantrip].sort((a,b)=>a.id.localeCompare(b.id))).toEqual(createSpellDeck('cantrip','cantrip').sort((a,b)=>a.id.localeCompare(b.id)));
-  for(const c of cantrip){expect(c.damage).toBeLessThanOrEqual(4);expect(c.instability).toBeLessThanOrEqual(2);}
+  for(const c of cantrip){expect(momentTotal(c,'DAMAGE')).toBeLessThanOrEqual(4);expect(momentTotal(c,'INSTABILITY')).toBeLessThanOrEqual(2);}
   expect(createSpellDeck('a').map(({id,...c})=>c)).toEqual(createSpellDeck('b').map(({id,...c})=>c));
   expectConserved(g,physicalCards(g).map(c=>c.id));
  });
@@ -146,7 +147,7 @@ describe('lobby and decks',()=>{
  });
 });
 
-describe('Black Rose, study and preparation',()=>{
+describe('Pink Tulip, study and preparation',()=>{
  it('resolves black damage events without awarding kill points and respawns defeated mages',()=>{
   const g=readyGame();g.eventDeck=[{id:'black',name:'Black thorns',description:'damage',kind:'BLACK_DAMAGE',amount:2,rooms:0}];g.players[0].wizard.damageCubes=9;g.players[0].wizard.blackDamage=9;
   const n=applyAction(g,{type:'START_GAME',playerId:'p1'});expect(n.players[0].wizard.damageCubes).toBe(0);expect(n.players[1].wizard.blackDamage).toBe(2);expect(n.players.every(p=>p.victoryPoints===0)).toBe(true);
@@ -320,7 +321,7 @@ describe('actions and spells',()=>{
   expect(g.currentPlayerId).toBe('p2');expect(g.players[0].actionTokens).toBe(0);
  });
  it('damages every opposing model in a room, but never the caster',()=>{
-  let g=giveSpell(actionGame(),spell({damage:4,instability:0,range:0}));
+  let g=giveSpell(actionGame(),spell({moments:[moment.damage(4)],range:0}));
   for(const p of g.players)p.wizard.position={q:0,r:0};
   const before=g.players.map(p=>p.wizard.damageCubes);
   g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'slot1',roomId:'room-0,0'});
@@ -335,7 +336,7 @@ describe('actions and spells',()=>{
   expect(()=>applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'slot1',targetPlayerId:'p2'})).toThrow(/starting/);
  });
  it('awards kill points and a personal kill quest, using the original target room for instability',()=>{
-  let g=giveSpell(actionGame(),spell({target:'MODEL',damage:4,range:4}));g.players[0].wizard.position={q:0,r:0};g.players[1].wizard.position={q:1,r:0};g.players[1].wizard.damageCubes=9;g.players[1].wizard.blackDamage=9;
+  let g=giveSpell(actionGame(),spell({target:'MODEL',moments:[moment.instability(2),moment.damage(4)],range:4}));g.players[0].wizard.position={q:0,r:0};g.players[1].wizard.position={q:1,r:0};g.players[1].wizard.damageCubes=9;g.players[1].wizard.blackDamage=9;
   g.players[0].quest={id:'kill',name:'Kill',description:'Kill',kind:'KILL',amount:1,reward:3};
   g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'slot1',targetPlayerId:'p2'});
   expect(g.players[0].victoryPoints).toBe(5);expect(g.blackRose.victoryPoints).toBe(4);expect(g.players[0].quest).toBeNull();expect(g.board.rooms.find(r=>r.id==='room-1,0')!.instability).toBeGreaterThanOrEqual(2);
@@ -358,7 +359,7 @@ describe('damage cubes and defeat contributions',()=>{
  }
  function prepareHit(g:GameState,id:string,amount:number) {
   const p=g.players.find(p=>p.id===id)!;
-  p.prepared={rapid:{card:spell({id:`${id}-hit`,target:'MODEL',damage:amount,instability:0}),used:false},slot1:null,slot2:null,slot3:null};
+  p.prepared={rapid:{card:spell({id:`${id}-hit`,target:'MODEL',moments:[moment.damage(amount)]}),used:false},slot1:null,slot2:null,slot3:null};
  }
  function addAttacker(g:GameState,id:string,amount:number) {
   const p=structuredClone(g.players[0]);p.id=id;p.name=id;p.wizard.id=`${id}-wizard`;p.wizard.playerId=id;
@@ -388,7 +389,7 @@ describe('damage cubes and defeat contributions',()=>{
   let g=combatGame();addAttacker(g,'p3',1);
   for(const p of g.players)p.wizard.position={q:0,r:0};
   g.players[0].cubes.available=5;g.players[0].cubes.onBoard=20;
-  g=giveSpell(g,spell({damage:4,instability:0,range:0}));
+  g=giveSpell(g,spell({moments:[moment.damage(4)],range:0}));
   g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'slot1',roomId:'room-0,0'});
   expect(g.players[0].wizard.damageCubes).toBe(0);expect(g.players[0].wizard.damageByPlayer).toEqual({});
   expect(g.players[1].wizard.damageByPlayer).toEqual({p1:4});expect(g.players[2].wizard.damageByPlayer).toEqual({p1:1});
@@ -424,7 +425,7 @@ describe('damage cubes and defeat contributions',()=>{
  it('ranks black damage and settles existing damage cubes when an event defeats a mage',()=>{
   let g=combatGame();prepareHit(g,'p1',4);g=hit(g,'p1');
   // TEST FIXTURE ONLY: supply a second isolated damage spell, not a turn-counter reset.
-  g.players[0].prepared.rapid={card:spell({id:'second-hit',target:'MODEL',damage:4,instability:0}),used:false};
+  g.players[0].prepared.rapid={card:spell({id:'second-hit',target:'MODEL',moments:[moment.damage(4)]}),used:false};
   g=hit(g,'p1');expect(g.currentPlayerId).toBe('p2');g=passExhaustedFixture(g,'p2');g=passExhaustedFixture(g,'p1');
   g.eventDeck=[{id:'black-finisher',name:'Thorns',description:'Black damage',kind:'BLACK_DAMAGE',amount:2,rooms:0}];
   g=advance(g);
@@ -455,7 +456,7 @@ describe('rebuilt rooms, passing and victory',()=>{
     const n=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:room.id});
   expect(n.board.rooms.find(r=>r.id===room.id)!.instability).toBe(10);
  });
- it('scores central ranks as 6/3/1 including Black Rose, and scores only once',()=>{
+ it('scores central ranks as 6/3/1 including Pink Tulip, and scores only once',()=>{
   let g=actionGame();const r=g.board.rooms.find(r=>r.id==='room-0,0')!;r.instability=10;r.reconstructed=true;r.cubesByPlayer={p1:6,p2:3,'black-rose':1};
   g.players[0].cubes.available-=6;g.players[0].cubes.onBoard=6;g.players[1].cubes.available-=3;g.players[1].cubes.onBoard=3;
   g=passExhaustedFixture(g,'p1');g=passExhaustedFixture(g,'p2');
@@ -514,7 +515,7 @@ describe('rebuilt rooms, passing and victory',()=>{
 describe('token-free spells, starting rooms and colored chamber effects',()=>{
  it('spends two actions on ordered plus flexible spells without tokens, but never casts a second ordered spell in a turn',()=>{
   let g=actionGame();g.players[0].wizard.position={q:0,r:0};
-  for(const [i,key] of (['slot1','slot2','slot3','rapid'] as const).entries())g.players[0].prepared[key]={card:spell({id:`free-${i}`,instability:0}),used:false};
+  for(const [i,key] of (['slot1','slot2','slot3','rapid'] as const).entries())g.players[0].prepared[key]={card:spell({id:`free-${i}`,moments:[]}),used:false};
   g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'slot1',roomId:'room-0,0'});
   expect(g.activation?.actionsUsed).toBe(1);expect(g.activation?.spellsCast).toBe(1);expect(g.players[0].actionTokens).toBe(2);
   expect(()=>applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'slot2',roomId:'room-0,0'})).toThrow(/one sequenced/);
@@ -646,7 +647,7 @@ describe('token-free spells, starting rooms and colored chamber effects',()=>{
   expect(g.players[1].cubes).toEqual({available:24,onWizard:1,onBoard:0,onEvocations:0});expect(g.players.every(p=>p.wizard.blackDamage===0)).toBe(true);
  });
  it('casts a model spell on a dummy, applying instability but no damage or damage cubes',()=>{
-  let g=giveSpell(actionGame(),spell({damage:4,target:'MODEL'}));for(const p of g.players)p.wizard.position={q:0,r:0};
+  let g=giveSpell(actionGame(),spell({moments:[moment.instability(2),moment.damage(4)],target:'MODEL'}));for(const p of g.players)p.wizard.position={q:0,r:0};
   const before=g.players.map(p=>p.wizard.damageCubes);const room=g.board.rooms.find(r=>r.id==='room-0,0')!;
   g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'slot1',dummy:true,roomId:room.id});
   expect(g.players.map(p=>p.wizard.damageCubes)).toEqual(before);expect(g.players.every(p=>p.cubes.onWizard===0)).toBe(true);
@@ -742,7 +743,7 @@ describe('room effect regressions',()=>{
   expect(g.players[0].quest).toEqual(primary);expect(g.players[0].additionalQuests).toEqual([remaining,extra]);expect(g.questDeck).toEqual([]);
   g=applyAction(g,{type:'END_EXPLORE',playerId:'p1'});
   g.players[1].wizard.position={...room.tiles[0]};g.players[1].wizard.health=4;
-  g=giveSpell(g,spell({damage:4,instability:0}));g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'slot1',roomId:room.id});
+  g=giveSpell(g,spell({moments:[moment.damage(4)]}));g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'slot1',roomId:room.id});
   expect(g.players[0].victoryPoints).toBe(12);expect(g.players[0].questsCompleted).toBe(2);expect(g.players[0].kills).toBe(1);
   expect(g.players[0].quest).toEqual(remaining);expect(g.players[0].additionalQuests).toEqual([]);expect(g.questDiscard).toEqual([primary,extra]);
   g=opponentTurn(g);
@@ -801,7 +802,7 @@ describe('finite powerful spells',()=>{
  it('creates twelve globally unique powerful cards, four of each printed pattern, separate from ordinary spells',()=>{
   const g=createGame();expect(g.powerfulDeck).toHaveLength(12);expect(g.removedCards).toEqual([]);
   for(const pattern of [[6,3,3,'ROOM'],[8,1,4,'MODEL'],[4,4,2,'ROOM']]) {
-   expect(g.powerfulDeck.filter(c=>JSON.stringify([c.damage,c.instability,c.range,c.target])===JSON.stringify(pattern))).toHaveLength(4);
+   expect(g.powerfulDeck.filter(c=>JSON.stringify([momentTotal(c,'DAMAGE'),momentTotal(c,'INSTABILITY'),c.range,c.target])===JSON.stringify(pattern))).toHaveLength(4);
   }
   expect(g.powerfulDeck.every(c=>c.kind==='SPELL' && c.powerful===true && !c.schoolId)).toBe(true);
   expect(physicalCards(g).filter(c=>!c.powerful)).toHaveLength(108);expect(g.players.every(p=>p.additionalQuests.length===0)).toBe(true);
@@ -877,7 +878,7 @@ describe('finite powerful spells',()=>{
   expect(g.activation?.sequencedSpellUsed).toBe(true);expect(g.activation?.actionsUsed).toBe(1);
   expect(()=>applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'slot2',dummy:true,roomId:'room-0,0'})).toThrow(/unavailable/);expectConserved(g,ids);
  });
- it('keeps held powers through cleanup, returns unused powerful preparations next Black Rose and conserves cards across rounds',()=>{
+ it('keeps held powers through cleanup, returns unused powerful preparations next Pink Tulip and conserves cards across rounds',()=>{
   let g=studyGame();const ids=physicalCards(g).map(c=>c.id),unused=holdPowerful(g),cast=holdPowerful(g),held=holdPowerful(g,'MODEL');
   const ordinary=g.library[0].cards.slice(0,2);g=actionGame(g,[unused.id,ordinary[0].id,ordinary[1].id,cast.id]);
   g.players[0].wizard.position={q:0,r:0};g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:'room-0,0'});expectConserved(g,ids);
@@ -933,9 +934,9 @@ describe('finite powerful spells',()=>{
   for(const cardId of ['missing-card',ordinary.id])expect(()=>applyAction(g,{type:'CAST_POWERFUL_SPELL',playerId:'p1',cardId,roomId:'room-0,0'})).toThrow(/prepare.*later Preparation/);
    expect(g).toEqual(before);g.players[1].wizard.position={q:1,r:0};g.players[1].wizard.health=20;
    g=applyAction(g,{...cast,...(card.target==='MODEL'?{targetPlayerId:'p2'}:{roomId:'room-1,0'})});
-   expect(g.players[1].wizard.damageCubes).toBe(card.damage);expect(g.players[1].wizard.damageByPlayer).toEqual({p1:card.damage});expect(g.players[0].wizard.damageCubes).toBe(0);
-   expect(g.board.rooms.find(r=>r.id==='room-1,0')!.instability).toBe(card.instability);
-  expect(g.players[0].cubes).toEqual({available:25-card.damage-card.instability,onWizard:card.damage,onBoard:card.instability,onEvocations:0});
+   expect(g.players[1].wizard.damageCubes).toBe(momentTotal(card,'DAMAGE'));expect(g.players[1].wizard.damageByPlayer).toEqual({p1:momentTotal(card,'DAMAGE')});expect(g.players[0].wizard.damageCubes).toBe(0);
+   expect(g.board.rooms.find(r=>r.id==='room-1,0')!.instability).toBe(momentTotal(card,'INSTABILITY'));
+  expect(g.players[0].cubes).toEqual({available:25-momentTotal(card,'DAMAGE')-momentTotal(card,'INSTABILITY'),onWizard:momentTotal(card,'DAMAGE'),onBoard:momentTotal(card,'INSTABILITY'),onEvocations:0});
   expect(g.removedCards).toEqual([card]);expect(g.players[0].actionTokens).toBe(2);expect(g.activation?.actionsUsed).toBe(1);
   }
  });

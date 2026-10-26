@@ -1,3 +1,4 @@
+import { moment } from '../src/cards';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import { applyAction, canPassActionPhase, canPlayerAct, createGame, hexDistance } from '../src';
 import type { Activation, GameAction, GameState, PhysicalAction, Player, RoomEffect, Wizard } from '../src';
@@ -533,7 +534,7 @@ describe('physical attacks cannot opt into spell-only dummy targeting',()=>{
 
  it.each(['MAGE','EVOCATION','MODEL'] as const)('keeps %s spell-card dummy casts legal, token-free and card-conserving',target=>{
   const g=actionFixture('ROOM_DAMAGE'),card=player(g).personalDeck.shift()!;
-  Object.assign(card,{target,spellType:'COMBAT',damage:4,heal:2,convert:1,instability:1,range:0});
+  Object.assign(card,{target,spellType:'COMBAT',moments:[moment.instability(1),moment.convert(1),moment.heal(2),moment.damage(4)],range:0});
   delete card.trigger;delete card.triggerEffects;delete card.ongoing;
   player(g).prepared.rapid={card,used:false};const before=structuredClone(g);
   const source=g.board.rooms.find(r=>r.effect==='ROOM_DAMAGE')!;
@@ -615,7 +616,7 @@ describe('mandatory preparation hand limits and the personal-discard exception',
  });
 });
 
-describe('one-shot Black Rose quest-limit gate',()=>{
+describe('one-shot Pink Tulip quest-limit gate',()=>{
  it('resolves quests once, blocks Study and all grimoire draws until every owner discards their exact overflow',()=>{
   let g=blackRoseFixture();const before=structuredClone(g),p1Quests=heldQuests(player(g)),p2Quests=heldQuests(player(g,'p2'));
   g=advance(g);expect(g.phase).toBe('BLACK_ROSE');expect(g.blackRoseResolved).toBe(true);
@@ -645,9 +646,9 @@ describe('one-shot Black Rose quest-limit gate',()=>{
   expect(g.phase).toBe('STUDY');expect(player(g,'p2').quest).toBeNull();expect(g.questDeck).toEqual(deck);conserved(g);
  });
 
- it('rejects duplicate/wrong-count/unowned quest selections, unresolved Black Rose, and every other phase',()=>{
+ it('rejects duplicate/wrong-count/unowned quest selections, unresolved Pink Tulip, and every other phase',()=>{
   const initial=blackRoseFixture();const quests=heldQuests(player(initial,'p2')),foreign=player(initial).quest!.id;
-  rejected(initial,{type:'DISCARD_QUESTS',playerId:'p2',questIds:quests.slice(0,2).map(q=>q.id)},/Resolve \(not\) Black Rose/);
+  rejected(initial,{type:'DISCARD_QUESTS',playerId:'p2',questIds:quests.slice(0,2).map(q=>q.id)},/Resolve Pink Tulip/);
   const g=advance(initial);
   for(const questIds of [[],[quests[0].id],quests.slice(0,3).map(q=>q.id),[quests[0].id,quests[0].id],[quests[0].id,foreign],[quests[0].id,'missing']])rejected(g,{type:'DISCARD_QUESTS',playerId:'p2',questIds});
   for(const phase of ['STUDY','PREPARATION','ACTION','CLEANUP'] as const) {

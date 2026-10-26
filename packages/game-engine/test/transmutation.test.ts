@@ -3,13 +3,15 @@ import {
  applyAction, BLACK_ROSE_ID, canPlayerAct, canUseSpellDummy, createGame,
  createLibrary, createSpellDeck, createTransmutationDeck, evocationAttack, spellCanTargetModel,
 } from '../src';
+import { momentTotal } from '../src/cards';
+import { flatMoments, withMoments, type FlatEffects } from './flat-effects';
 import type { Card, Evocation, GameAction, GameState, Hex, SpellTarget } from '../src';
 
 const origin:Hex={q:0,r:0};
 const targets:SpellTarget[]=['SELF','ROOM','MAGE','EVOCATION','MODEL'];
 type Cast=Extract<GameAction,{type:'CAST_SPELL'}>;
 type Selection=Omit<Cast,'type'|'playerId'|'slot'>;
-const card=(target:SpellTarget,changes:Partial<Card>={}):Card=>({id:'test-spell',name:'Test spell',kind:'SPELL',damage:0,instability:0,range:2,target,...changes});
+const card=(target:SpellTarget,changes:Partial<Card>&FlatEffects={}):Card=>({id:'test-spell',name:'Test spell',kind:'SPELL',moments:[],range:2,target,...withMoments(changes)});
 function fixture():GameState {
  const s=createGame(4);s.phase='ACTION';s.round=1;s.currentPlayerId='p1';
  s.activation={playerId:'p1',actionsUsed:0,exploring:0,sequencedSpellUsed:false,spellsCast:0,discardedExit:false,roomEffectUsed:false};
@@ -95,8 +97,8 @@ describe('Transmutation physical school contract',()=>{
   for(const [name,target,heal,convert,damage,instability,range] of expected) {
    const copies=deck.filter(c=>c.name===name);expect(copies).toHaveLength(3);
    for(const c of copies) {
-    expect(c).toMatchObject({name,target,damage,instability,range,kind:'SPELL',schoolId:'transmutation'});
-    expect(c.heal??0).toBe(heal);expect(c.convert??0).toBe(convert);
+    expect(c).toMatchObject({name,target,range,kind:'SPELL',schoolId:'transmutation'});
+    expect(c.moments).toEqual(flatMoments({damage,instability,heal,convert}));
    }
   }
   expect(library[0].cards.slice().sort((a,b)=>a.id.localeCompare(b.id))).toEqual(createSpellDeck('cantrip','cantrip').sort((a,b)=>a.id.localeCompare(b.id)));
@@ -179,7 +181,7 @@ describe.each(targets)('%s public target helpers',target=>{
   it.each([{damage:2},{},{heal:1},{convert:1},{damage:2,heal:1},{damage:2,convert:1}])(`validates ${own?'own':'enemy'} ${kind} with %j`,effects=>{
    const spell=card(target,effects),before=structuredClone(spell);
    const category=target==='MODEL'||target===kind;
-   const expected=target==='SELF'?own&&kind==='MAGE':category&&(!own||!!(spell.heal||spell.convert));
+  const expected=target==='SELF'?own&&kind==='MAGE':category&&!(own&&kind==='MAGE')&&(!own||!!(momentTotal(spell,'HEAL')||momentTotal(spell,'CONVERT')));
    expect(spellCanTargetModel(spell,'p1',own?'p1':'p2',kind)).toBe(expected);expect(spell).toEqual(before);
   expect(canUseSpellDummy(spell)).toBe(['MAGE','EVOCATION','MODEL'].includes(target));
   });
@@ -313,7 +315,7 @@ describe('authoritative target selection and legality',()=>{
 
 describe('healing wounds and returning only actual physical cubes',()=>{
  for(const kind of ['MAGE','EVOCATION'] as const)for(const index of [0,1]) {
-  it(`heals ${index===0?'own':'enemy'} ${kind} in seat order, then Black Rose, then unattributed wounds`,()=>{
+  it(`heals ${index===0?'own':'enemy'} ${kind} in seat order, then Pink Tulip, then unattributed wounds`,()=>{
    const s=fixture();prepare(s,card(kind,{heal:3}));
    // Deliberately reverse insertion order; deterministic behavior follows seats.
    wound(s,kind,index,{p4:1,p3:1,p2:1,p1:1,[BLACK_ROSE_ID]:1},1,kind==='MAGE'?1:0);
@@ -352,13 +354,14 @@ describe('healing wounds and returning only actual physical cubes',()=>{
   expect(result.players.map(p=>p.wizard.damageCubes)).toEqual([1,1,1,1]);expect(result.evocations.map(e=>e.damageCubes)).toEqual([1,1,1,3]);
   expect(result.blackRose).toEqual(before.blackRose);expect(result.players.every(p=>p.kills===0&&p.victoryPoints===0&&p.questsCompleted===0)).toBe(true);conserved(result);
  });
- it('healing Wounded Fury reduces the actual subsequent evocation attack',()=>{
-  const s=fixture();prepare(s,"Summoner's Balm");s.evocations[0].health=2;wound(s,'EVOCATION',0,{p2:1});
-  expect(evocationAttack(s.evocations[0])).toBe(3);
-  let result=cast(s,{targetEvocationId:'evoc-1'});expect(evocationAttack(result.evocations[0])).toBe(2);
+ it('healing Succubus Wounded Fury reduces the actual subsequent evocation attack',()=>{
+  const s=fixture();prepare(s,card('EVOCATION',{heal:2}));
+  Object.assign(s.evocations[0],{kind:'SUCCUBUS',name:'Succubus',archetype:'DEMON',attack:1,health:3});wound(s,'EVOCATION',0,{p2:1});
+  expect(evocationAttack(s.evocations[0])).toBe(2);
+  let result=cast(s,{targetEvocationId:'evoc-1'});expect(evocationAttack(result.evocations[0])).toBe(1);
   result=applyAction(result,{type:'ACTIVATE_EVOCATION',playerId:'p1',evocationId:'evoc-1'});
   result=applyAction(result,{type:'EVOCATION_ATTACK',playerId:'p1',targetId:'p2'});
-  expect(result.players[1].wizard.damageCubes).toBe(2);expect(result.players[1].wizard.damageByPlayer).toEqual({p1:2});conserved(result);
+  expect(result.players[1].wizard.damageCubes).toBe(1);expect(result.players[1].wizard.damageByPlayer).toEqual({p1:1});conserved(result);
  });
 });
 
@@ -412,7 +415,7 @@ describe('conversion replaces ownership without creating wounds, instability or 
   expect(result.players[1].wizard.damageCubes).toBe(3);expect(result.players[1].wizard.damageByPlayer.p1??0).toBe(n);
   expect(result.players[1].wizard.damageByPlayer.p3).toBe(3-n);expect(result.players[0].cubes.available).toBe(available-n);conserved(result);
  });
- it('converts actual mage Black Rose ledger/blackDamage, but not unattributed wounds',()=>{
+ it('converts actual mage Pink Tulip ledger/blackDamage, but not unattributed wounds',()=>{
   const s=fixture();prepare(s,card('MAGE',{convert:20}));wound(s,'MAGE',1,{p3:1,[BLACK_ROSE_ID]:1},3,2);
   const result=cast(s,{targetPlayerId:'p2'});
   expect(result.players[1].wizard).toMatchObject({damageCubes:7,blackDamage:0,damageByPlayer:{p1:4}});
@@ -553,7 +556,7 @@ describe('mixed support, damage immunity, resolution order and settlement',()=>{
   s.players[0].quest={id:'kill',name:'Kill',description:'Defeat mage',kind:'KILL',amount:1,reward:3};
   const result=cast(s,{targetPlayerId:'p2'});
   expect(result.players[1].wizard).toMatchObject({damageCubes:0,damageByPlayer:{},blackDamage:0,position:{q:-3,r:2}});
-  // Converted 3 + final 1 ranks first; Black Rose 3 second; p3 1 third.
+  // Converted 3 + final 1 ranks first; Pink Tulip 3 second; p3 1 third.
   expect(result.players[0]).toMatchObject({victoryPoints:7,kills:1,questsCompleted:1});expect(result.blackRose.victoryPoints).toBe(2);expect(result.players[2].victoryPoints).toBe(1);
   expect(result.players[2].cubes).toMatchObject({available:23,onWizard:1,onEvocations:1});
   expect(result.players[0].cubes).toEqual({available:24,onWizard:0,onEvocations:0,onBoard:1});

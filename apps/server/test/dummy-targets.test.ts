@@ -67,7 +67,7 @@ class Peer {
 }
 const withoutHistory = (state:GameState) => { const result = structuredClone(state); delete result.history; return result; };
 const hidden = (index:number):Card => ({ id:`hidden-${index}`, name:'Hidden spell', kind:'SPELL',
- damage:0, instability:0, range:0, target:'MODEL' });
+ moments:[], range:0, target:'MODEL' });
 function projection(state:GameState, viewer:string) {
  expect(Object.keys(state.history!).every(key => ['canUndo', 'canRedo', 'undoLabel', 'redoLabel'].includes(key))).toBe(true);
  const json = JSON.stringify(state);
@@ -125,7 +125,7 @@ it('casts canonical Evocation and Mage dummies on real authenticated sockets wit
   await host.stateWhere(s => s.phase === 'PREPARATION');
   const hand = host.state!.players[0].hand;
   const evocation = hand.find(c => c.name === 'Reclaimed Servant')!, mage = hand.find(c => c.name === "Mage's Due")!;
-  expect(evocation).toMatchObject({ target:'EVOCATION', convert:2 }); expect(mage).toMatchObject({ target:'MAGE', convert:3 });
+  expect(evocation).toMatchObject({ target:'EVOCATION', moments:[{ effect:'CONVERT', amount:2 }] }); expect(mage).toMatchObject({ target:'MAGE', moments:[{ effect:'CONVERT', amount:3 }] });
   await ok(host, { type:'PREPARE_CARDS', playerId:'p1', rapidCardId:evocation.id,
    preparedCardIds:[null, mage.id, hand.find(c => c.name === 'Vital Thread')!.id] });
   await other.stateWhere(s => s.phase === 'PREPARATION');

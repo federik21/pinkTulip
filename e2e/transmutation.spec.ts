@@ -244,7 +244,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       const after = await cast(page, wire, { type: 'CAST_SPELL', playerId: 'p1', slot: 'slot1', targetPlayerId: 'p1' });
       expect(after.players[0].wizard).toMatchObject({ damageCubes: 2, damageByPlayer: {}, blackDamage: 1 });
       expect(after.players[1].cubes).toEqual({ available: 25, onWizard: 0, onEvocations: 0, onBoard: 0 });
-      await expect(player(page, 'p1')).toContainText('(not) Black Rose: 1');
+      await expect(player(page, 'p1')).toContainText('Pink Tulip: 1');
       await expect(player(page, 'p1')).toContainText('Unattributed wounds (no cube available): 1');
     });
 

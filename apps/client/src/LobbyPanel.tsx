@@ -7,7 +7,7 @@ export function LobbyPanel({game,me,connected,pending,send}:{game:GameState;me:P
  const readyCount=game.players.filter(p=>p.connected&&p.ready).length;
  const school=game.library.find(deck=>deck.id===me.startingSchoolId);
  return <section className="phase-panel lobby-panel">
-  <div className="section-heading"><div><span className="eyebrow">Before the first (not) Black Rose</span><h2>Gather the mages</h2></div><span className="badge lobby-count">{joinedCount} / {MAX_MAGES} mages · {readyCount} ready</span></div>
+  <div className="section-heading"><div><span className="eyebrow">Before the first Pink Tulip</span><h2>Gather the mages</h2></div><span className="badge lobby-count">{joinedCount} / {MAX_MAGES} mages · {readyCount} ready</span></div>
   <p>Invite up to {MAX_MAGES} mages. Choose a starting magic school before marking ready. The battle starts automatically when every joined mage is ready, with at least {MIN_MAGES} mages. Invite everyone before the final ready.</p>
   <div className="lobby-seats">{game.players.map(p=><div className="seat" style={mageStyle(p.id)} data-player-id={p.id} key={p.id}>
    <span className="mage-icon" aria-hidden="true">{MAGE_SYMBOLS[p.id]}</span><div><strong>{p.name}</strong><small>{MAGE_COLOR_NAMES[p.id]} · {p.id===game.hostId?'Creator · ':''}{!p.connected?'Disconnected · waiting to rejoin':p.ready?'✓ Ready':'Not ready'}</small><span className="seat-school">{game.library.find(deck=>deck.id===p.startingSchoolId)?.name??'Choose a starting school'}</span></div>

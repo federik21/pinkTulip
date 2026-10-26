@@ -5,7 +5,7 @@ import { ActionHistory } from '../src/action-history';
 import { publicState } from '../src/public-state';
 
 const hidden = (index: number): Card => ({ id:`hidden-${index}`, name:'Hidden spell', kind:'SPELL',
- damage:0, instability:0, range:0, target:'MODEL' });
+ moments:[], range:0, target:'MODEL' });
 const physicalCards = (game: GameState) => [
  ...game.library.flatMap(deck => [...deck.cards, ...deck.discard]), ...game.powerfulDeck, ...game.removedCards,
  ...[...game.readiedSpells ?? [], ...game.ongoingSpells ?? []].map(active => active.card),

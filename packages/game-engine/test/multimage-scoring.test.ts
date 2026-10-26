@@ -1,3 +1,4 @@
+import { moment } from '../src/cards';
 import { describe, expect, it } from 'vitest';
 import { addPlayerToLobby, applyAction, canStartGame, createGame, hexKey } from '../src';
 import type { GameState } from '../src';
@@ -71,7 +72,7 @@ describe('two to four mage setup',()=>{
 
  it('gives all rooms unique non-coordinate names that stay stable through actions',()=>{
   let g=createGame();const names=g.board.rooms.map(r=>r.name);
-  expect(new Set(names).size).toBe(23);expect(names).toContain('(not) Black Rose Chamber');
+  expect(new Set(names).size).toBe(23);expect(names).toContain('Pink Tulip Chamber');
   expect(names.every(n=>!/-?\d+,\s*-?\d+/.test(n))).toBe(true);
   g.players[0].connected=true;
   g=applyAction(g,{type:'SELECT_STARTING_SCHOOL',playerId:'p1',schoolId:'cantrip'});
@@ -80,7 +81,7 @@ describe('two to four mage setup',()=>{
 });
 
 describe('dense contribution ranks and tie reduction',()=>{
- it('gives tied defeat leaders 3 each, then tied one-cube mage and Black Rose second-rank 1 each',()=>{
+ it('gives tied defeat leaders 3 each, then tied one-cube mage and Pink Tulip second-rank 1 each',()=>{
   const g=defeat({p1:4,p2:4,p3:1});
   expect(g.players.map(p=>p.victoryPoints)).toEqual([3,3,1,0]);expect(g.blackRose).toEqual({victoryPoints:1,kills:1});
   expect(g.players.every(p=>p.cubes.onWizard===0&&p.cubes.available===25)).toBe(true);
@@ -94,7 +95,7 @@ describe('dense contribution ranks and tie reduction',()=>{
  it('deducts one for a three-way tie, not one per extra tied contributor',()=>{
   expect(defeat({p1:3,p2:3,p3:3}).players.map(p=>p.victoryPoints)).toEqual([3,3,3,0]);
  });
- it('applies dense ties and the room minimum including Black Rose in ranking',()=>{
+ it('applies dense ties and the room minimum including Pink Tulip in ranking',()=>{
   const {g}=settleRoom({p1:2,p2:2,p3:1});
   expect(g.players.map(p=>p.victoryPoints)).toEqual([3,3,2,0]);
   expect(g.players.every(p=>p.cubes.onBoard===0&&p.cubes.available===25)).toBe(true);
@@ -121,7 +122,7 @@ describe('exclusive color completion bonuses',()=>{
     const placed=r.instabilityLimit-1;
     r.instability=placed;r.cubesByPlayer={p1:placed-neutral,...(neutral?{'black-rose':neutral}:{})};
     g.players[0].cubes.onBoard=placed-neutral;g.players[0].cubes.available-=placed-neutral;
-  const card={...g.library[0].cards.shift()!,target:'ROOM' as const,range:0,damage:0,instability:1};
+  const card={...g.library[0].cards.shift()!,target:'ROOM' as const,range:0,moments:[moment.instability(1)]};
   g.players[0].prepared.slot1={card,used:false};
   return {g:applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'slot1',roomId:r.id}),roomId:r.id};
  }

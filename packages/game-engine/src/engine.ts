@@ -1,5 +1,5 @@
-import { Activation, ActiveSpell, Board, Card, Evocation, FeedbackTarget, GameAction, GameFeedbackEvent, GameState, Hex, Player, PlayerId, Room, RoomColor, RoomEffect, TriggerCondition, TriggerEvent, TriggeredInstruction } from './types';
-import { createEvents, createLibrary, createPowerfulDeck, createQuests, getSpellType, shuffle } from './cards';
+import { Activation, ActiveSpell, Board, Card, DecisionAnswer, DecisionDetails, Evocation, EvocationKind, FeedbackTarget, GameAction, GameFeedbackEvent, GameState, Hex, Moment, Player, PlayerId, Room, RoomId, RoomColor, RoomEffect, TriggerCondition, TriggerEvent, TriggeredInstruction } from './types';
+import { createEvents, createLibrary, createPowerfulDeck, createQuests, getSpellType, hasMoment, shuffle } from './cards';
 
 export class GameRuleError extends Error {}
 export const PHYSICAL_TOKENS_PER_ROUND = 2;
@@ -21,7 +21,36 @@ export function getRoomRewards(capacity:number):Room['rewards'] {
 }
 export const MAGE_COLORS: Record<string,string> = {p1:'#fb7185',p2:'#60a5fa',p3:'#fbbf24',p4:'#34d399'};
 export const MAGE_COLOR_NAMES: Record<string,string> = {p1:'Rose',p2:'Blue',p3:'Amber',p4:'Green'};
-export const evocationAttack = (e:Evocation) => e.attack+(e.passive==='WOUNDED_FURY'?e.damageCubes:0);
+export const EVOCATION_MODEL_LIMITS:Readonly<Record<EvocationKind,number>> = {SUCCUBUS:3,CADAVER:6};
+export const getEvocationKind = (e:Evocation):EvocationKind => e.kind??(e.archetype==='DEMON'?'SUCCUBUS':'CADAVER');
+// Derive the shared remaining counters from live models: destruction, replay and
+// undo automatically return miniatures, without a second mutable inventory.
+export function getEvocationSupply(s:Pick<GameState,'evocations'>):Record<EvocationKind,number> {
+ const supply={...EVOCATION_MODEL_LIMITS};
+ for(const e of s.evocations)supply[getEvocationKind(e)]--;
+ return {SUCCUBUS:Math.max(0,supply.SUCCUBUS),CADAVER:Math.max(0,supply.CADAVER)};
+}
+export const evocationAttack = (e:Evocation) => e.attack+(getEvocationKind(e)==='SUCCUBUS'&&e.passive==='WOUNDED_FURY'?e.damageCubes:0);
+// Cadaver's effect is blank for now; Succubus retains Wounded Fury and Soul Tithe.
+type EvocationTemplate = Pick<Evocation,'name'|'archetype'|'movement'|'attack'|'health'|'ability'|'passive'>;
+export const EVOCATION_TYPES = {
+ CADAVER:{name:'Cadaver',archetype:'UNDEAD',movement:2,attack:2,health:2},
+ SUCCUBUS:{name:'Succubus',archetype:'DEMON',movement:2,attack:1,health:3,ability:'SOUL_TITHE',passive:'WOUNDED_FURY'},
+} as const satisfies Record<EvocationKind,EvocationTemplate>;
+export type EvocationType = keyof typeof EVOCATION_TYPES;
+// Both the owner's three-model cap and the shared miniature supply must allow it.
+export function summonEvocation(s:GameState,p:Player,type:EvocationType,position:Hex):Evocation|undefined {
+ const owned=s.evocations.filter(e=>e.playerId===p.id);
+ if(owned.length>=3){s.log.push(`${p.name} already controls 3 evocations; no ${EVOCATION_TYPES[type].name} summoned.`);return;}
+ if(getEvocationSupply(s)[type]===0){s.log.push(`No ${EVOCATION_TYPES[type].name} models remain in the shared supply; no model summoned.`);return;}
+ const number=[1,2,3].find(n=>!owned.some(e=>e.number===n))!;
+ const template:EvocationTemplate=EVOCATION_TYPES[type];
+ const evocation:Evocation={id:resolutionId(s),playerId:p.id,number,kind:type,name:template.name,archetype:template.archetype,movement:template.movement,attack:template.attack,health:template.health,position:{...position},damageCubes:0,damageByPlayer:{},activated:false};
+ if(template.passive)evocation.passive=template.passive;
+ if(template.ability)evocation.ability=template.ability;
+ s.evocations.push(evocation);
+ return evocation;
+}
 export const hexKey = (h: Hex) => `${h.q},${h.r}`;
 export const hexDistance = (a: Hex, b: Hex) => Math.max(Math.abs(a.q-b.q), Math.abs(a.r-b.r), Math.abs(a.q+a.r-b.q-b.r));
 // Spell sight follows one straight hex axis; movement may still turn between steps.
@@ -32,13 +61,16 @@ export const hexLineDistance = (a: Hex, b: Hex) => {
  return Number.POSITIVE_INFINITY;
 };
 export const isWithinSpellRange = (a: Hex, b: Hex, range: number): boolean => {
+ if (range === Number.POSITIVE_INFINITY) return true;
  const distance=hexLineDistance(a,b);
  return Number.isFinite(distance) && distance<=range;
 };
 export function spellCanTargetModel(card:Card,casterId:string,ownerId:string,kind:'MAGE'|'EVOCATION'):boolean {
  if(card.target==='SELF')return kind==='MAGE' && casterId===ownerId;
+ // Support, Protection and ongoing cards do not bypass the printed Self target.
+ if(kind==='MAGE' && casterId===ownerId)return false;
  if(card.target==='ROOM' || (card.target!=='MODEL' && card.target!==kind))return false;
- return casterId!==ownerId || (card.heal??0)>0 || (card.convert??0)>0 || getSpellType(card)==='PROTECTION' || (card.ongoing && getSpellType(card)==='CONTINGENCY')===true;
+ return casterId!==ownerId || hasMoment(card,'HEAL') || hasMoment(card,'CONVERT') || getSpellType(card)==='PROTECTION' || (card.ongoing && getSpellType(card)==='CONTINGENCY')===true;
 }
 export function canUseSpellDummy(card:Card):boolean {
  return card.target==='MODEL' || card.target==='MAGE' || card.target==='EVOCATION';
@@ -65,7 +97,7 @@ export const ROOM_COLORS: RoomColor[] = ['crimson','azure','emerald','amber','vi
 export const ROOM_EFFECT_LABELS: Record<RoomEffect,string> = {
  ROOM_DAMAGE:'Deal 1 damage to every enemy in this room', DRAW_DISCARD:'Retrieve 1 random spell from your personal discard',
  INSTABILITY:'Place 1 instability in a room within distance 1', DRAW_QUEST:'Draw 1 additional quest',
- DRAW_GRIMOIRE:'Draw 1 grimoire spell', SUMMON_CADAVER:'Summon 1 Cadaver in this room (maximum 3 evocations)',
+ DRAW_GRIMOIRE:'Draw 1 grimoire spell', SUMMON_CADAVER:'Summon 1 Cadaver from the shared supply in this room (6 models total; maximum 3 evocations per mage)',
  DRAW_POWERFUL:'Gain 1 forgotten spell; prepare in a later Preparation phase, then remove from the game when cast',
 };
 const effects: RoomEffect[] = ['ROOM_DAMAGE','DRAW_DISCARD','INSTABILITY','DRAW_QUEST','DRAW_GRIMOIRE','SUMMON_CADAVER'];
@@ -84,14 +116,14 @@ export function getDefaultRoomsPerColor(playerCount:number):1|2|3 {
  return Math.max(1,playerCount-1) as 1|2|3;
 }
 
-export function createDemoBoard(roomsPerColor:1|2|3=3): Board {
+export function createDemoBoard(roomsPerColor:1|2|3=3,random:()=>number=Math.random): Board {
  assert([1,2,3].includes(roomsPerColor),'Choose 1, 2 or 3 rooms per color');
  const names=shuffle([
   'Ember Vault','Moonlit Gallery','Thorn Garden','Whispering Library','Ashen Forge','Silver Observatory',
   'Hollow Chapel','Crimson Atelier','Veiled Archive','Gilded Reliquary','Echoing Crypt','Starlit Hall',
   'Obsidian Study','Dreaming Atrium','Frost Conservatory','Sunken Treasury','Twilight Court','Waning Sanctum',
   'Raven Belfry','Glass Labyrinth','Ivied Vestibule','Candlelit Refuge',
- ]);
+ ],random);
  const startingRooms = [
   {playerId:'p1',position:roomsPerColor===1?{q:2,r:-1}:{q:3,r:-2}},
   {playerId:'p2',position:roomsPerColor===1?{q:-2,r:1}:{q:-3,r:2}},
@@ -112,7 +144,7 @@ export function createDemoBoard(roomsPerColor:1|2|3=3): Board {
   // Each color retains its printed capacity/effect at every board size.
   const capacity=h.q===0 && h.r===0?10:index===4?4:index===5?6:5;
   return {
-  id: `room-${h.q},${h.r}`, name: h.q===0 && h.r===0 ? '(not) Black Rose Chamber' : names.pop()!,
+  id: `room-${h.q},${h.r}`, name: h.q===0 && h.r===0 ? 'Pink Tulip Chamber' : names.pop()!,
   tiles: [h], instability: 0, instabilityLimit: capacity,
   rewards: getRoomRewards(capacity), cubesByPlayer: {}, reconstructed: false, scored: false,
   color:index<0?null:ROOM_COLORS[index], effect:index<0?(h.q===0&&h.r===0?'DRAW_POWERFUL':null):effects[index], specialUsed:false,
@@ -130,10 +162,10 @@ function createMage(board:Board,id:PlayerId):Player {
  const names:Record<string,string>={p1:'Crimson Mage',p2:'Azure Mage',p3:'Amber Mage',p4:'Emerald Mage'};
  return {
   id, name:names[id], connected: false, ready: false, startingSchoolId: null,
-  wizard: { id: `${id}-wizard`, playerId: id, health: 10, attack: 2, movement: 2, damageCubes: 0, blackDamage: 0, damageByPlayer: {}, position: {...start.tiles[0]}, startingRoomId: start.id, alive: true },
+  wizard: { id: `${id}-wizard`, playerId: id, health: 10, attack: 2, movement: 2, damageCubes: 0, blackDamage: 0, damageByPlayer: {}, damageOrder: [], position: {...start.tiles[0]}, startingRoomId: start.id, alive: true },
   personalDeck: [], hand: [], discard: [], prepared: emptyPrepared(),
   cubes: { available:25, onWizard:0, onBoard:0, onEvocations:0 }, actionTokens:PHYSICAL_TOKENS_PER_ROUND, victoryPoints:0,
-  questsCompleted:0, kills:0, quest:null, additionalQuests:[], studyDrawn:false, studyDone:false, studyCardIds:[], preparationDone:false, passed:false, cardLimit:7, questLimit:2,
+  questsCompleted:0, kills:0, trophies:[], quest:null, additionalQuests:[], studyDrawn:false, studyDone:false, studyCardIds:[], preparationDone:false, passed:false, cardLimit:7, questLimit:2,
  };
 }
 
@@ -200,8 +232,15 @@ export function getContributionAwards(cubes:Record<PlayerId,number>,rewards:read
 }
 
 function awardVictoryPoints(s:GameState,id:PlayerId,points:number):string {
- if(id===BLACK_ROSE_ID){s.blackRose.victoryPoints+=points;return '(not) Black Rose';}
- const p=getPlayer(s,id);p.victoryPoints+=points;return p.name;
+ if(id===BLACK_ROSE_ID){s.blackRose.victoryPoints+=points;return 'Pink Tulip';}
+ const p=getPlayer(s,id);
+ const before=p.victoryPoints; p.victoryPoints+=points;
+ if(points!==0) {
+  const ref=snapshot(s,p.id);
+  if(ref) modelEvent(s,'VP_CHANGED',ref,ref,roomAt(s,p.wizard.position)?.id);
+  s.log.push(`${p.name} ${points>=0?`gains`:`loses`} ${Math.abs(points)} VP (${before} → ${p.victoryPoints}).`);
+ }
+ return p.name;
 }
 
 function completeQuest(s: GameState, p: Player, kind: NonNullable<Player['quest']>['kind'], amount=1) {
@@ -209,31 +248,90 @@ function completeQuest(s: GameState, p: Player, kind: NonNullable<Player['quest'
  for(const quest of [p.quest,...p.additionalQuests]) {
   if(!quest)continue;
   if(quest.kind!==kind || amount<quest.amount){remaining.push(quest);continue;}
-  p.victoryPoints+=quest.reward;p.questsCompleted++;
+  awardVictoryPoints(s,p.id,quest.reward);p.questsCompleted++;
   s.log.push(`${p.name} completes “${quest.name}”: +${quest.reward} VP.`);
   s.questDiscard.push(quest);
  }
  p.quest=remaining.shift()??null;p.additionalQuests=remaining;
 }
 
+function progressQuest(s: GameState, p: Player, kind: NonNullable<Player['quest']>['kind'], amount=1) {
+ for(const quest of heldQuests(p)) {
+  if(!quest || quest.kind!==kind || quest.completed || quest.claimed)continue;
+  const before=quest.progress ?? 0;
+  const progress=Math.min(quest.amount, before + amount);
+  if(progress===before)continue;
+  quest.progress=progress;
+  s.log.push(`${p.name} advances “${quest.name}” (${progress}/${quest.amount}).`);
+  if(progress>=quest.amount) {
+   quest.completed=true;
+   s.log.push(`${p.name} completes “${quest.name}” and may spend its reward action.`);
+  }
+ }
+}
+
+function resolveQuestRewardAction(s: GameState, p: Player, card: Card, action: { targetPlayerId?: PlayerId; targetEvocationId?: string; roomId?: RoomId; dummy?: boolean } = {}) {
+ const targets: ReturnType<typeof modelTarget>[]=[]; let room: Room | undefined;
+ if(card.target==='ROOM' || action.dummy) {
+  assert(!action.dummy || canUseSpellDummy(card),'Dummy targeting requires a MAGE, EVOCATION or MODEL spell');
+  assert(!action.targetPlayerId && !action.targetEvocationId,'Choose either a room or a model for a quest reward');
+  assert(action.roomId,'Select a room for the quest reward');
+  room=getRoom(s,action.roomId!);
+  assert(!room.startingFor,'Starting rooms cannot be targeted by a quest reward');
+  assert(room.tiles.some(h=>isWithinSpellRange(p.wizard.position,h,card.range)),'Quest reward room out of range');
+  if(!action.dummy) {
+   targets.push(...s.players.filter(t=>inRoom(t,room!)).map(t=>modelTarget(s,t.id)), ...s.evocations.filter(e=>room!.tiles.some(h=>hexKey(h)===hexKey(e.position))).map(e=>modelTarget(s,e.id)));
+  }
+ } else {
+  assert(!action.roomId,'Room targets are not valid for this quest reward');
+  const inferSelf=card.target==='SELF' && !action.targetPlayerId && !action.targetEvocationId;
+  assert(inferSelf || !!action.targetPlayerId!==!!action.targetEvocationId,'Select one mage or evocation for the quest reward');
+  const id=inferSelf?p.id:action.targetEvocationId ?? action.targetPlayerId!;
+  const target=modelTarget(s,id);
+  assert(inferSelf || (action.targetPlayerId?!!target.mage:!!target.evocation),'Target payload does not match the quest reward model kind');
+  assert(spellCanTargetModel(card,p.id,target.playerId,target.mage?'MAGE':'EVOCATION'),'Quest reward cannot target this model category or ownership');
+  room=s.board.rooms.find(r=>r.tiles.some(h=>hexKey(h)===hexKey(target.position)));
+  if (!inferSelf && room?.startingFor) assert(false,'Cannot target a model in its starting room with a quest reward');
+  assert(isWithinSpellRange(p.wizard.position,target.position,card.range),'Quest reward target out of range');
+  targets.push(target);
+ }
+ const refs=targets.map(t=>snapshot(s,t.mage?.id ?? t.evocation!.id)!);
+ const actor=snapshot(s,p.id)!;
+ resolveEffectMoments(s,p,card,room,refs,actor);
+}
+
 function drawQuest(s:GameState) {
- if(!s.questDeck.length){s.questDeck=shuffle(s.questDiscard);s.questDiscard=[];}
+ if(!s.questDeck.length){s.questDeck=shuffle(s.questDiscard,()=>resolutionRandom(s));s.questDiscard=[];}
  return s.questDeck.shift()??null;
 }
 
 // Runtime-only instruction context. Nothing executable, cyclic or private is
 // stored in GameState; a root action remains a single clone/commit boundary.
 type ModelSnapshot = { id:string; playerId:string; kind:'MAGE'|'EVOCATION'; generation:number };
-type SpellEvent = { event:TriggerEvent; model?:ModelSnapshot; actor?:ModelSnapshot; roomId?:string; target?:FeedbackTarget };
-type InstructionContext = { generations:Map<string,number>; bindings:Map<string,ModelSnapshot>; resolutions:number; interruptId?:string };
+// Local to a single effect, so a nested spell cannot replace its summoned model.
+type EffectResolution = { summoned?:ModelSnapshot; activationIsExplicit:boolean };
+type SpellEvent = { event:TriggerEvent; model?:ModelSnapshot; actor?:ModelSnapshot; roomId?:string; target?:FeedbackTarget; afterResolution?:()=>void };
+type PendingMageDefeat = { ref:ModelSnapshot; roomId?:string; target:FeedbackTarget; source?:Player; beforeDefeat?: (target:Player)=>void };
+type ReplayEntropy={ids:string[];random:number[]};
+type InstructionContext = { generations:Map<string,number>; bindings:Map<string,ModelSnapshot>; defeats:Map<string,PendingMageDefeat>; resolutions:number; interruptId?:string; answers:DecisionAnswer[]; cursor:number; momentDepth:number; events:SpellEvent[]; entropy:ReplayEntropy; idCursor:number; randomCursor:number };
 const instructionContexts=new WeakMap<GameState,InstructionContext>();
 const context=(s:GameState)=>instructionContexts.get(s)!;
+// IDs and random outcomes encountered before a pause must be identical on
+// replay, including a freshly summoned Succubus which then asks for a cube.
+function resolutionId(s:GameState) {
+ const ctx=instructionContexts.get(s);if(!ctx)return crypto.randomUUID();
+ const i=ctx.idCursor++;return ctx.entropy.ids[i]??(ctx.entropy.ids[i]=crypto.randomUUID());
+}
+function resolutionRandom(s:GameState) {
+ const ctx=instructionContexts.get(s);if(!ctx)return Math.random();
+ const i=ctx.randomCursor++;return ctx.entropy.random[i]??(ctx.entropy.random[i]=Math.random());
+}
 const roomAt=(s:GameState,position:Hex)=>s.board.rooms.find(r=>r.tiles.some(h=>hexKey(h)===hexKey(position)));
 type FeedbackPayload = { [K in GameFeedbackEvent['kind']]: Omit<Extract<GameFeedbackEvent,{kind:K}>,'id'|'round'> }[GameFeedbackEvent['kind']];
 function appendFeedback(s:GameState,event:FeedbackPayload) {
  const events=s.feedbackEvents??=[];
  const interruptId=context(s).interruptId;
- const fact={...event,id:crypto.randomUUID(),round:s.round,...(interruptId?{interruptId}:{})} as GameFeedbackEvent;
+ const fact={...event,id:resolutionId(s),round:s.round,...(interruptId?{interruptId}:{})} as GameFeedbackEvent;
  events.push(fact);
  if(events.length>FEEDBACK_EVENT_LIMIT)events.splice(0,events.length-FEEDBACK_EVENT_LIMIT);
  return fact;
@@ -275,12 +373,20 @@ function removeActiveSpell(s:GameState,active:ActiveSpell) {
  s.activeSpellOrder=s.activeSpellOrder!.filter(id=>id!==active.id);
 }
 function retireActiveSpell(s:GameState,active:ActiveSpell) {
+ const revealed=s.readiedSpells!.some(a=>a.id===active.id);
  removeActiveSpell(s,active);
  if(active.card.powerful)s.removedCards.push(active.card);
+ else if(revealed)getPlayer(s,active.playerId).discard.push(active.card);
  else discardCard(s,getPlayer(s,active.playerId),active.card);
 }
 function invalidateModel(s:GameState,ref:ModelSnapshot) {
  context(s).generations.set(ref.id,ref.generation+1);
+ // Defeat cancels remaining physical effects, never the remaining spell moments.
+ if(ref.kind==='MAGE' && s.activation?.playerId===ref.playerId) {
+  s.activation.exploring=0;
+  s.activation.physicalAction=null;
+  s.activation.roomEffectUsed=true;
+ }
  // A model-bound readiness cannot silently rebind to a mage's respawn either.
  for(const active of [...s.readiedSpells!,...s.ongoingSpells!]) {
   if(context(s).bindings.get(active.id)?.id!==ref.id)continue;
@@ -291,6 +397,21 @@ function invalidateModel(s:GameState,ref:ModelSnapshot) {
 function matchesTrigger(s:GameState,active:ActiveSpell,condition:TriggerCondition,event:SpellEvent) {
  if(condition.event!==event.event)return false;
  if(condition.relation!=='ANY' && (!event.actor || (condition.relation==='SELF')!==(event.actor.playerId===active.playerId)))return false;
+ // Hidden spells have no board binding. Evaluate model/room conditions at the
+ // event location instead; ongoing spells retain their explicit binding.
+ if(s.readiedSpells!.some(a=>a.id===active.id)) {
+  const owner=getPlayer(s,active.playerId);
+  if(condition.scope==='BOUND_MODEL') {
+   if(!event.model)return false;
+   if(active.card.target==='SELF' && (event.model.kind!=='MAGE'||event.model.playerId!==owner.id))return false;
+   if(active.card.target!=='SELF' && active.card.target!=='MODEL' && active.card.target!==event.model.kind)return false;
+  }
+  if(condition.scope!=='ANY') {
+   const room=event.roomId?s.board.rooms.find(r=>r.id===event.roomId):undefined;
+   if(!room || room.startingFor || !room.tiles.some(h=>isWithinSpellRange(owner.wizard.position,h,active.card.range)))return false;
+  }
+  return true;
+ }
  if(condition.scope==='BOUND_ROOM')return !!active.roomId && active.roomId===event.roomId;
  if(condition.scope==='BOUND_COLOR') {
   if(!active.roomId || !event.roomId)return false;
@@ -304,20 +425,54 @@ function matchesTrigger(s:GameState,active:ActiveSpell,condition:TriggerConditio
  }
  return true;
 }
-function resolveInstruction(s:GameState,owner:Player,instruction:TriggeredInstruction,ref:ModelSnapshot|undefined,roomId:string|undefined,actor:ModelSnapshot|undefined) {
+function atMomentEnd(s:GameState,resolve:()=>void) {
+ const ctx=context(s);ctx.momentDepth++;
+ try {resolve();} finally {ctx.momentDepth--;}
+ if(ctx.momentDepth===0) {
+  const events=ctx.events.splice(0);
+  for(const event of events)resolveQueuedEvent(s,event);
+ }
+}
+function resolveInstruction(s:GameState,owner:Player,instruction:TriggeredInstruction,ref:ModelSnapshot|undefined,roomId:string|undefined,actor:ModelSnapshot|undefined,effect?:EffectResolution) {
+ atMomentEnd(s,()=>resolveInstructionBody(s,owner,instruction,ref,roomId,actor,effect));
+}
+function resolveInstructionBody(s:GameState,owner:Player,instruction:TriggeredInstruction,ref:ModelSnapshot|undefined,roomId:string|undefined,actor:ModelSnapshot|undefined,effect?:EffectResolution) {
  const target=liveModel(s,ref),room=roomId?s.board.rooms.find(r=>r.id===roomId):undefined;
  if(instruction.effect==='INSTABILITY') {
   if(room)placeInstability(s,room,instruction.amount,owner);
  } else if(instruction.effect==='CONVERT' && room) {
   if(!room.scored&&!room.reconstructed)convertCubes(s,owner,room.cubesByPlayer,'onBoard',instruction.amount,room.instability,roomFeedbackTarget(room));
+ } else if(instruction.effect==='BLACK_ROSE_CONVERT' && target && target.mage) {
+  convertRecentDamageToBlackRose(s,target.mage,instruction.amount,modelFeedbackTarget(s,ref)!);
+ } else if(instruction.effect==='PAIN') {
+  damage(s,owner,instruction.amount);
+ } else if(instruction.effect==='SUMMON') {
+  const position = instruction.position === 'TARGET' ? target?.model.position??room?.tiles[0] : owner.wizard.position;
+  if(!position)return;
+  summonForEffect(s,owner,instruction.kind,position,effect);
+ } else if(instruction.effect==='ACTIVATE_EVOCATION') {
+  activateEffectSummon(s,owner,instruction.kind,effect);
  } else if(room && (instruction.effect==='DAMAGE' || instruction.effect==='HEAL')) {
   const refs=[...s.players.filter(p=>inRoom(p,room)).map(p=>snapshot(s,p.id)!),...s.evocations.filter(e=>room.tiles.some(h=>hexKey(h)===hexKey(e.position))).map(e=>snapshot(s,e.id)!)];
   for(const model of refs)resolveInstruction(s,owner,instruction,model,undefined,actor);
  } else if(target) {
   switch(instruction.effect) {
    case 'DAMAGE':
-    if(ref!.playerId===owner.id)break;
-    if(target.mage)damage(s,target.mage,instruction.amount,owner,actor);
+    if(ref!.playerId===owner.id && instruction.target !== 'EVENT_ACTOR')break;
+    if(target.mage) {
+      const splash = instruction.splash;
+      const position = { ...target.mage.wizard.position };
+      const dealActor = ref && actor && ref.id === actor.id && instruction.target === 'EVENT_ACTOR' ? null : actor;
+      damage(s,target.mage,instruction.amount,owner,dealActor, splash && splash.when === 'AFTER_DEFEAT' ? (defeated) => {
+        const splashAmount = splash.amount ?? instruction.amount;
+        for(const other of s.players) {
+          if(other.id===defeated.id || !other.wizard.alive)continue;
+          if(hexDistance(position,other.wizard.position) <= splash.range) {
+            damage(s,other,splashAmount,owner,dealActor);
+          }
+        }
+      } : undefined);
+    }
     else damageEvocation(s,target.evocation!,instruction.amount,owner,actor);
     break;
   case 'HEAL':healModel(s,target.model,target.location,instruction.amount,owner.id,modelFeedbackTarget(s,ref)!);break;
@@ -330,6 +485,38 @@ function resolveInstruction(s:GameState,owner:Player,instruction:TriggeredInstru
  }
 }
 function emitEvent(s:GameState,event:SpellEvent) {
+ const frozen={...event,target:event.target??modelFeedbackTarget(s,event.model)??modelFeedbackTarget(s,event.actor)};
+ if(context(s).momentDepth>0)context(s).events.push(frozen);
+ else resolveQueuedEvent(s,frozen);
+}
+function resolveQueuedEvent(s:GameState,event:SpellEvent) {
+ // Earlier damage reactions may already have rescued this mage before its
+ // defeat window opens. Do not offer defeat spells for a nonlethal model.
+ if(event.event==='MAGE_DEFEATED'&&event.afterResolution) {
+  const mage=liveModel(s,event.model)?.mage;
+  if(!mage||mage.wizard.damageCubes<mage.wizard.health){event.afterResolution();return;}
+ }
+ resolveEvent(s,event);
+ event.afterResolution?.();
+}
+function reactiveTargets(s:GameState,active:ActiveSpell):FeedbackTarget[] {
+ const owner=getPlayer(s,active.playerId),card=active.card;
+ if(card.target==='ROOM')return s.board.rooms.filter(r=>!r.startingFor && r.tiles.some(h=>isWithinSpellRange(owner.wizard.position,h,card.range))).map(roomFeedbackTarget);
+ const refs=[...s.players.filter(p=>p.wizard.alive).map(p=>snapshot(s,p.id)!),...s.evocations.map(e=>snapshot(s,e.id)!)];
+ return refs.filter(ref=>{
+  const model=liveModel(s,ref)!,room=roomAt(s,model.model.position);
+  return !room?.startingFor && spellCanTargetModel(card,owner.id,ref.playerId,ref.kind) && isWithinSpellRange(owner.wizard.position,model.model.position,card.range);
+ }).map(ref=>modelFeedbackTarget(s,ref)!);
+}
+function chooseReactiveSpell(s:GameState,owner:Player,eligible:ActiveSpell[],event:SpellEvent) {
+ const options=eligible.map(active=>({activeSpellId:active.id,card:active.card,targets:reactiveTargets(s,active)})).filter(option=>option.targets.length);
+ if(!options.length)return;
+ const ctx=context(s),key=`reactive|${event.event}|${owner.id}|${event.model?.id??event.roomId??''}|${ctx.cursor}`;
+ const answer=ctx.answers[ctx.cursor];
+ if(answer?.key===key){ctx.cursor++;return answer.accept?answer:undefined;}
+ throw new DecisionNeeded({kind:'REACTIVE_SPELL',playerId:owner.id,key,event:event.event,options},ctx.answers.slice(0,ctx.cursor));
+}
+function resolveEvent(s:GameState,event:SpellEvent) {
  // Freeze the actual event model before nested effects can destroy or respawn it.
  const eventTarget=event.target??modelFeedbackTarget(s,event.model)??modelFeedbackTarget(s,event.actor);
  const first=Math.max(0,s.players.findIndex(p=>p.id===s.firstPlayerId));
@@ -341,9 +528,25 @@ function emitEvent(s:GameState,event:SpellEvent) {
    const trigger=a.card.ongoing?.trigger??a.card.trigger;
    return trigger && matchesTrigger(s,a,trigger,event);
   }));
- for(const active of eligible) {
+ for(const owner of owners) {
+ const remaining=eligible.filter(active=>active.playerId===owner.id);
+ while(remaining.length) {
+  let active=remaining[0],selection:DecisionAnswer|undefined;
+  if(s.readiedSpells!.some(a=>a.id===active.id)) {
+   const choices=remaining.filter(a=>s.readiedSpells!.some(live=>live.id===a.id));
+   selection=chooseReactiveSpell(s,owner,choices,event);
+   if(!selection) {
+    for(const choice of choices)remaining.splice(remaining.indexOf(choice),1);
+    continue;
+   }
+   active=choices.find(a=>a.id===selection!.activeSpellId)!;
+   assert(active,'Reactive spell no longer eligible');
+  }
+  remaining.splice(remaining.indexOf(active),1);
   if(![...s.readiedSpells!,...s.ongoingSpells!].some(a=>a.id===active.id))continue;
-  const owner=getPlayer(s,active.playerId),bound=context(s).bindings.get(active.id);
+  const selectedRoom=selection?.targetId?s.board.rooms.find(r=>r.id===selection.targetId):undefined;
+  const selectedRef=selection?.targetId&&!selectedRoom?snapshot(s,selection.targetId):undefined;
+  const bound=selectedRef??context(s).bindings.get(active.id);
   if(bound&&!liveModel(s,bound))continue;
   assert(++context(s).resolutions<=128,'Reactive spell resolution limit exceeded (128); root action cancelled');
   const ongoing=s.ongoingSpells!.some(a=>a.id===active.id);
@@ -352,32 +555,40 @@ function emitEvent(s:GameState,event:SpellEvent) {
   s.log.push(`Interrupt ${event.event}: ${owner.name} ${ongoing?'reacts with':'reveals'} ${active.card.name}.`);
   // A model binding wins over the incidental room binding stored on model spells.
   // Event targets/rooms are public only now, after the canonical reveal above.
-  const roomId=event.roomId??eventTarget?.roomId??active.roomId;
+  const roomId=selectedRoom?.id??modelFeedbackTarget(s,selectedRef)?.roomId??event.roomId??eventTarget?.roomId??active.roomId;
   const room=roomId?s.board.rooms.find(r=>r.id===roomId):undefined;
   const target=modelFeedbackTarget(s,bound)??eventTarget??(room?roomFeedbackTarget(room):undefined);
   const instructions=ongoing?active.card.ongoing!.effects:active.card.triggerEffects??[];
   const trigger=appendFeedback(s,{kind:'SPELL_TRIGGERED',activeSpellId:active.id,ownerId:owner.id,
    cardName:active.card.name,spellType:getSpellType(active.card),trigger:event.event,ongoing,
-   effects:instructions.map(describeInstruction),...(target?{target}:{}),...(roomId?{roomId}:{})});
+  effects:!ongoing&&active.card.moments.length?active.card.moments.map(step=>describeInstruction({...step,target:active.card.target==='ROOM'?'BOUND_ROOM':'BOUND_MODEL'})):instructions.map(describeInstruction),...(target?{target}:{}),...(roomId?{roomId}:{})});
   const ownerRef=snapshot(s,owner.id);
   const previousInterruptId=context(s).interruptId;
   context(s).interruptId=trigger.id;
   try {
+    if(!ongoing && active.card.moments.length) {
+     const refs=selectedRef?[selectedRef]:selectedRoom?[...s.players.filter(p=>inRoom(p,selectedRoom)).map(p=>snapshot(s,p.id)!),...s.evocations.filter(e=>selectedRoom.tiles.some(h=>hexKey(h)===hexKey(e.position))).map(e=>snapshot(s,e.id)!)]:[];
+     resolveEffectMoments(s,owner,active.card,selectedRoom??room,refs,ownerRef!);
+    } else {
+   const effect:EffectResolution={activationIsExplicit:instructions.some(step=>step.effect==='ACTIVATE_EVOCATION')};
    for(const instruction of instructions) {
     let ref:ModelSnapshot|undefined,roomId:string|undefined;
     switch(instruction.target) {
      case 'BOUND_MODEL':ref=bound;break;
-     case 'BOUND_ROOM':roomId=active.roomId;break;
+    case 'BOUND_ROOM':roomId=selectedRoom?.id??active.roomId;break;
      case 'EVENT_MODEL':ref=event.model;break;
      case 'EVENT_ACTOR':ref=event.actor;break;
      case 'EVENT_ROOM':roomId=event.roomId;break;
      case 'OWNER':ref=ownerRef;break;
     }
-    resolveInstruction(s,owner,instruction,ref,roomId,ownerRef);
+    if(instruction.effect==='SUMMON'&&instruction.position==='TARGET'&&!liveModel(s,ref))roomId??=room?.id;
+    resolveInstruction(s,owner,instruction,ref,roomId,ownerRef,effect);
    }
+    }
   } finally { context(s).interruptId=previousInterruptId; }
   s.log.push(`Resume ${event.event} after ${active.card.name}.`);
  }
+   }
 }
 function describeInstruction(instruction:TriggeredInstruction):string {
  const targets:Record<TriggeredInstruction['target'],string>={BOUND_MODEL:'the bound model',BOUND_ROOM:'the bound room',EVENT_MODEL:'the triggering model',EVENT_ACTOR:'the acting model',EVENT_ROOM:'the triggering room',OWNER:'the owner’s mage'};
@@ -386,7 +597,11 @@ function describeInstruction(instruction:TriggeredInstruction):string {
   case 'DAMAGE':return `Deal ${instruction.amount} damage to ${target}.`;
   case 'HEAL':return `Heal up to ${instruction.amount} ${instruction.amount===1?'wound':'wounds'} on ${target}.`;
   case 'CONVERT':return `Convert up to ${instruction.amount} ${instruction.amount===1?'cube':'cubes'} on ${target} to the owner’s color.`;
+  case 'BLACK_ROSE_CONVERT':return `Pink Tulip converts up to ${instruction.amount} ${instruction.amount===1?'recent wound':'recent wounds'} on ${target} to Pink Tulip.`;
   case 'INSTABILITY':return `Place up to ${instruction.amount} instability in ${target}.`;
+  case 'PAIN':return `The Pink Tulip inflicts ${instruction.amount} ${instruction.amount===1?'damage cube':'damage cubes'} on the resolving mage.`;
+  case 'SUMMON':return `Summon a ${instruction.kind} ${instruction.position === 'TARGET' ? 'in the target’s room' : 'at the owner’s position'} and activate it.`;
+  case 'ACTIVATE_EVOCATION':return `Activate the summoned ${instruction.kind}: move and attack in either order, or use only one, without spending another action or token.`;
  }
 }
 function modelEvent(s:GameState,event:TriggerEvent,ref:ModelSnapshot,actor=ref,roomId?:string) {
@@ -401,10 +616,47 @@ function moveModel(s:GameState,ref:ModelSnapshot,destination:Hex) {
  if(to && from!==to)modelEvent(s,'ENTER_ROOM',ref,ref,to);
 }
 
-function damage(s: GameState, target: Player, amount: number, source?: Player, actor=source?snapshot(s,source.id):undefined) {
- if(amount<=0 || source?.id===target.id) return;
+// Thrown from deep inside resolution when a mage must answer; applyAction turns it
+// into a pendingDecision and replays the whole root action once answered.
+class DecisionNeeded extends Error {
+ constructor(readonly decision:DecisionDetails,readonly answers:DecisionAnswer[]) {super('Decision needed');}
+}
+
+function askSoulTithe(s:GameState,e:Evocation,target:Player,amount:number,source?:Player) {
+ const key=[e.id,target.id,amount,source?.id??BLACK_ROSE_ID].join('|'),ctx=context(s),given=ctx.answers[ctx.cursor];
+ if(given?.key===key){ctx.cursor++;return given.accept;}
+ throw new DecisionNeeded({kind:'SOUL_TITHE',playerId:target.id,key,evocationId:e.id,evocationName:`${e.name} #${e.number??1}`,
+  evocationWounds:e.damageCubes,evocationHealth:e.health,targetId:target.id,targetName:target.name,
+  sourceName:source?.name??'Pink Tulip',amount},ctx.answers.slice(0,ctx.cursor));
+}
+
+// Each living Soul Tithe model of the damaged mage (in model-number order) may take one
+// of the damage cubes instead, anywhere on the board. Auto models accept without asking.
+function soulTithe(s:GameState,target:Player,inflicted:number,source?:Player) {
+ const taken:Evocation[]=[];
+ const keepers=s.evocations.filter(e=>e.playerId===target.id&&e.ability==='SOUL_TITHE').sort((a,b)=>(a.number??0)-(b.number??0));
+ for(const e of keepers) {
+  const remaining=inflicted-taken.length;
+  if(remaining<=0)break;
+  if(e.autoAbility||askSoulTithe(s,e,target,remaining,source))taken.push(e);
+ }
+ return taken;
+}
+
+function damage(s: GameState, target: Player, amount: number, source?: Player, actor?: ModelSnapshot | null, beforeDefeat?: (target: Player) => void) {
+ // Direct attacks/events get the same complete-moment reaction boundary as spells.
+ if(context(s).momentDepth===0){atMomentEnd(s,()=>damage(s,target,amount,source,actor,beforeDefeat));return;}
+ if(amount<=0) return;
+ const eventActor = actor === null ? undefined : (actor ?? (source ? snapshot(s,source.id):undefined));
  // Overkill cannot claim more contribution than the health actually removed.
- const inflicted=Math.min(amount,Math.max(0,target.wizard.health-target.wizard.damageCubes));
+ let inflicted=Math.min(amount,Math.max(0,target.wizard.health-target.wizard.damageCubes));
+ if(inflicted===0)return;
+ const tithed=soulTithe(s,target,inflicted,source);
+ for(const e of tithed) {
+  s.log.push(`${e.name} #${e.number??1} takes a damage cube meant for ${target.name}.`);
+  damageEvocation(s,e,1,source,eventActor);
+ }
+ inflicted-=tithed.length;
  if(inflicted===0)return;
  const ref=snapshot(s,target.id)!,roomId=roomAt(s,target.wizard.position)?.id;
  const feedbackTarget=modelFeedbackTarget(s,ref)!;
@@ -415,13 +667,40 @@ function damage(s: GameState, target: Player, amount: number, source?: Player, a
    source.cubes.available-=cubes;
    source.cubes.onWizard+=cubes;
    target.wizard.damageByPlayer[source.id]=(target.wizard.damageByPlayer[source.id]??0)+cubes;
+   appendDamageHistory(target.wizard,source.id,cubes);
    s.log.push(`${source.name} places ${cubes} damage cubes on ${target.name}.`);
   }
- } else target.wizard.blackDamage+=inflicted;
+ } else {
+  target.wizard.blackDamage+=inflicted;
+  appendDamageHistory(target.wizard,BLACK_ROSE_ID,inflicted);
+ }
  s.log.push(`${target.name} suffers ${inflicted} ${source ? 'damage' : 'black damage'}.`);
  appendFeedback(s,{kind:'DAMAGE',target:feedbackTarget,sourceId:source?.id??BLACK_ROSE_ID,amount:inflicted});
+ if(source && eventActor) {
+  const actorRef=snapshot(s,source.id)!;
+  const actorTarget=modelFeedbackTarget(s,actorRef)!;
+  emitEvent(s,{event:'DAMAGE_DEALT',model:actorRef,actor:eventActor,roomId:roomId??roomAt(s,source.wizard.position)?.id,target:actorTarget});
+ }
+ emitEvent(s,{event:'DAMAGE_TAKEN',model:ref,actor:eventActor,roomId,target:feedbackTarget});
+ if(target.wizard.damageCubes<target.wizard.health)return;
+ const existing=context(s).defeats.get(ref.id);
+ if(existing){existing.source=source;existing.beforeDefeat=beforeDefeat;return;}
+ const pending:PendingMageDefeat={ref,roomId,target:feedbackTarget,source,beforeDefeat};
+ context(s).defeats.set(ref.id,pending);
+ // Keep the original model, wounds and cubes until all defeat reactions finish.
+ // Healing may cancel this defeat entirely; conversion may change its rankings.
+ emitEvent(s,{event:'MAGE_DEFEATED',model:ref,actor:source?snapshot(s,source.id):undefined,roomId,target:feedbackTarget,
+  afterResolution:()=>settleMageDefeat(s,pending)});
+}
+
+function settleMageDefeat(s:GameState,pending:PendingMageDefeat) {
+ const {ref,source,roomId,target:feedbackTarget}=pending;
+ const target=liveModel(s,ref)?.mage;
+ context(s).defeats.delete(ref.id);
+ if(!target)return;
  if(target.wizard.damageCubes<target.wizard.health) {
-  emitEvent(s,{event:'DAMAGE_TAKEN',model:ref,actor,roomId,target:feedbackTarget});return;
+  s.log.push(`${target.name} is no longer defeated after reactions; no defeat points, trophy or respawn.`);
+  return;
  }
  invalidateModel(s,ref);
  s.log.push(`${target.name} is defeated and returns to their starting room.`);
@@ -433,7 +712,7 @@ function damage(s: GameState, target: Player, amount: number, source?: Player, a
   const name=awardVictoryPoints(s,playerId,points);
   s.log.push(`${name}: +${points} VP for ${cubes} ${playerId===BLACK_ROSE_ID?'black damage':'damage cubes'} on ${target.name} (rank ${rank}${tied&&points>0?', tied −1 VP':''}).`);
  }
- // Only actual player-owned cubes return; (not) Black Rose damage has no physical supply.
+  // Only actual player-owned cubes return; Pink Tulip damage has no physical supply.
  const returnedCubes:Record<string,number>={};
  for(const owner of s.players) {
   const cubes=target.wizard.damageByPlayer[owner.id]??0;
@@ -446,34 +725,43 @@ function damage(s: GameState, target: Player, amount: number, source?: Player, a
  const colored=Object.entries(contributions).filter(([,n])=>n>0);
  let bonusPlayerId:string|undefined;
  if(colored.length===1 && colored[0][0]!==BLACK_ROSE_ID && colored[0][1]===target.wizard.damageCubes) {
-  const owner=getPlayer(s,colored[0][0]);owner.victoryPoints++;
+  const owner=getPlayer(s,colored[0][0]);awardVictoryPoints(s,owner.id,1);
   bonusPlayerId=owner.id;
   s.log.push(`${owner.name}: +1 VP exclusive-color bonus on defeated ${target.name}.`);
  }
- // The final hitter still receives quest/kill credit, but no separate flat VP bonus.
- if(source) { source.kills++; completeQuest(s,source,'KILL'); }
- else {s.blackRose.kills++;s.log.push(`(not) Black Rose receives kill credit for defeating ${target.name}.`);}
+ // The final hitter receives quest/kill trophy credit, but no separate flat VP bonus.
+ if(source) {
+  source.trophies=[...source.trophies,target.id];
+  source.kills=source.trophies.length;
+  completeQuest(s,source,'KILL');
+ } else {
+  s.blackRose.kills++; awardVictoryPoints(s,target.id,2);
+  s.log.push(`${target.name} gains +2 VP for being defeated by Pink Tulip.`);
+ }
  appendFeedback(s,{kind:'MAGE_DEFEATED',target:feedbackTarget,sourceId:source?.id??BLACK_ROSE_ID,
   contributions,awards,returnedCubes,respawnRoomId:target.wizard.startingRoomId,...(bonusPlayerId?{bonusPlayerId}:{})});
  target.wizard.damageCubes=0;
  target.wizard.blackDamage=0;
  target.wizard.damageByPlayer={};
+ target.wizard.damageOrder=[];
  target.wizard.position={...getRoom(s,target.wizard.startingRoomId).tiles[0]};
- emitEvent(s,{event:'DAMAGE_TAKEN',model:ref,actor,roomId,target:feedbackTarget});
+ // After-defeat splash only follows a confirmed defeat, never a rescued mage.
+ pending.beforeDefeat?.(target);
 }
 
-function damageEvocation(s:GameState,e:Evocation,amount:number,source:Player,actor=snapshot(s,source.id)) {
- if(e.playerId===source.id || !s.evocations.includes(e))return;
+// `source` is absent for Pink Tulip damage redirected onto an evocation: no physical cubes move.
+function damageEvocation(s:GameState,e:Evocation,amount:number,source?:Player,actor=source?snapshot(s,source.id):undefined) {
+ if(e.playerId===source?.id || !s.evocations.includes(e))return;
  const inflicted=Math.min(amount,Math.max(0,e.health-e.damageCubes));
  if(inflicted<=0)return;
  const ref=snapshot(s,e.id)!,roomId=roomAt(s,e.position)?.id;
  const feedbackTarget=modelFeedbackTarget(s,ref)!;
  e.damageCubes+=inflicted;
- const cubes=Math.min(inflicted,source.cubes.available);
- source.cubes.available-=cubes;source.cubes.onEvocations+=cubes;
- if(cubes)e.damageByPlayer[source.id]=(e.damageByPlayer[source.id]??0)+cubes;
- s.log.push(`${e.name} suffers ${inflicted} damage; ${source.name} places ${cubes} damage cubes.`);
- appendFeedback(s,{kind:'DAMAGE',target:feedbackTarget,sourceId:source.id,amount:inflicted});
+ const cubes=source?Math.min(inflicted,source.cubes.available):0;
+ if(source){source.cubes.available-=cubes;source.cubes.onEvocations+=cubes;}
+ if(source&&cubes)e.damageByPlayer[source.id]=(e.damageByPlayer[source.id]??0)+cubes;
+ s.log.push(source?`${e.name} suffers ${inflicted} damage; ${source.name} places ${cubes} damage cubes.`:`${e.name} suffers ${inflicted} black damage.`);
+ appendFeedback(s,{kind:'DAMAGE',target:feedbackTarget,sourceId:source?.id??BLACK_ROSE_ID,amount:inflicted});
  if(e.damageCubes<e.health){emitEvent(s,{event:'DAMAGE_TAKEN',model:ref,actor,roomId,target:feedbackTarget});return;}
  invalidateModel(s,ref);
  for(const owner of s.players) {
@@ -492,13 +780,41 @@ function modelTarget(s:GameState,id:string) {
 }
 
 type CubeLocation = 'onWizard' | 'onEvocations' | 'onBoard';
-type WoundedModel = Pick<Player['wizard'],'damageCubes'|'damageByPlayer'> & {blackDamage?:number};
+type WoundedModel = Pick<Player['wizard'],'damageCubes'|'damageByPlayer'> & {blackDamage?:number;damageOrder?:PlayerId[]};
 function removeCubes(ledger:Record<PlayerId,number>,id:PlayerId,amount:number) {
  ledger[id]-=amount;
  if(ledger[id]===0)delete ledger[id];
 }
+function appendDamageHistory(wizard: {damageOrder?:PlayerId[]}, sourceId: PlayerId, amount: number) {
+ wizard.damageOrder ??= [];
+ for(let i=0;i<amount;i++)wizard.damageOrder.push(sourceId);
+}
+function removeDamageHistory(wizard: {damageOrder?:PlayerId[]}, amount: number) {
+ if(amount<=0)return;
+ wizard.damageOrder ??= [];
+ wizard.damageOrder.splice(0,Math.min(amount,wizard.damageOrder.length));
+}
+function convertRecentDamageToBlackRose(s:GameState,target:Player,amount:number,targetFeedback:FeedbackTarget) {
+ target.wizard.damageOrder ??= [];
+ let remaining=Math.min(amount,target.wizard.damageOrder.length),converted=0;
+ for(let index=target.wizard.damageOrder.length-1; index>=0 && remaining>0; index--) {
+  const sourceId=target.wizard.damageOrder[index];
+  if(sourceId===BLACK_ROSE_ID)continue;
+  if((target.wizard.damageByPlayer[sourceId]??0)<=0)continue;
+  target.wizard.damageByPlayer[sourceId]-=1;
+  if(target.wizard.damageByPlayer[sourceId]===0)delete target.wizard.damageByPlayer[sourceId];
+  target.wizard.blackDamage+=1;
+  target.wizard.damageOrder[index]=BLACK_ROSE_ID;
+  converted++;remaining--;
+ }
+ if(converted>0) {
+  s.log.push(`${target.name} converts ${converted} recent wound${converted===1?'':'s'} to Pink Tulip.`);
+  appendFeedback(s,{kind:'CONVERT',target:targetFeedback,sourceId:BLACK_ROSE_ID,amount:converted,total:target.wizard.damageCubes});
+ }
+ return converted;
+}
 
-// Physical sources are always processed in seat order, then (not) Black Rose. Neutral
+// Physical sources are always processed in seat order, then Pink Tulip. Neutral
 // cubes have no supply to return; unattributed wounds are not convertible cubes.
 function convertCubes(s:GameState,p:Player,ledger:Record<PlayerId,number>,location:CubeLocation,amount:number,total:number,target:FeedbackTarget,model?:WoundedModel) {
  let remaining=Math.min(amount,p.cubes.available,total),converted=0;
@@ -517,6 +833,16 @@ function convertCubes(s:GameState,p:Player,ledger:Record<PlayerId,number>,locati
   }
  }
  if(converted>0) {
+  if(model && model.damageOrder) {
+   let remainingHistory=converted;
+   for(let i=model.damageOrder.length-1; i>=0 && remainingHistory>0; i--) {
+    const current=model.damageOrder[i];
+    const canConvert = current !== p.id && ((current===BLACK_ROSE_ID && (model.blackDamage ?? 0) >= 0) || (current !== BLACK_ROSE_ID && (model.damageByPlayer[current] ?? 0) > 0));
+    if (!canConvert) continue;
+    model.damageOrder[i]=p.id;
+    remainingHistory--;
+   }
+  }
   ledger[p.id]=(ledger[p.id]??0)+converted;
   p.cubes.available-=converted;p.cubes[location]+=converted;
   s.log.push(`${p.name} converts ${converted} ${location==='onBoard'?'instability':'damage'} cubes; total ${location==='onBoard'?'instability':'wounds'} is unchanged.`);
@@ -525,7 +851,7 @@ function convertCubes(s:GameState,p:Player,ledger:Record<PlayerId,number>,locati
 }
 
 // Healing returns colored cubes in seat order (including safe own-color legacy
-// ledgers), then removes (not) Black Rose cubes, then any unattributed wounds.
+// ledgers), then removes Pink Tulip cubes, then any unattributed wounds.
 function healModel(s:GameState,model:WoundedModel,location:Exclude<CubeLocation,'onBoard'>,amount:number,sourceId:string,target:FeedbackTarget) {
  const healed=Math.max(0,Math.min(amount,model.damageCubes));
  let remaining=healed;
@@ -540,6 +866,7 @@ function healModel(s:GameState,model:WoundedModel,location:Exclude<CubeLocation,
  if(black>0){removeCubes(model.damageByPlayer,BLACK_ROSE_ID,black);remaining-=black;}
  if(model.blackDamage!==undefined)model.blackDamage-=Math.min(remaining,model.blackDamage);
  model.damageCubes-=healed;
+ removeDamageHistory(model,healed);
  if(healed>0) {
   s.log.push(`Healing removes ${healed} wounds and returns their physical cubes.`);
   appendFeedback(s,{kind:'HEAL',target,sourceId,amount:healed});
@@ -562,11 +889,11 @@ function placeInstability(s: GameState, room: Room, amount: number, source?: Pla
  room.instability+=actual;
  room.cubesByPlayer[owner]=(room.cubesByPlayer[owner]??0)+actual;
  if(source) { source.cubes.available-=actual; source.cubes.onBoard+=actual; completeQuest(s,source,'INSTABILITY',actual); }
- s.log.push(`${source?.name ?? '(not) Black Rose'} places ${actual} instability in ${room.name} (${room.instability}/${room.instabilityLimit}).`);
+ s.log.push(`${source?.name ?? 'Pink Tulip'} places ${actual} instability in ${room.name} (${room.instability}/${room.instabilityLimit}).`);
  if(room.instability===room.instabilityLimit) {
   s.log.push(`${room.name} is full and cannot accept more instability; rebuilding, room VP and upgraded actions wait until Cleanup.`);
   if(source && room.cubesByPlayer[source.id]===room.instability) {
-   source.victoryPoints++;
+   awardVictoryPoints(s,source.id,1);
    s.log.push(`${source.name}: +1 VP for completing ${room.name} entirely in their color.`);
   }
   if(source) completeQuest(s,source,'REBUILD');
@@ -577,7 +904,9 @@ function placeInstability(s: GameState, room: Room, amount: number, source?: Pla
 function expireRoundSpells(s:GameState) {
  for(const active of [...s.readiedSpells!]) {
   removeActiveSpell(s,active);
-  getPlayer(s,active.playerId).hand.push(active.card);
+  const owner=getPlayer(s,active.playerId);
+  if(active.cleanupDestination==='MEMORIES'&&!active.card.powerful)owner.discard.push(active.card);
+  else owner.hand.push(active.card);
  }
  for(const active of [...s.ongoingSpells!])retireActiveSpell(s,active);
  s.activeSpellOrder=[];
@@ -598,12 +927,12 @@ function startBlackRose(s: GameState) {
   }
   p.prepared=emptyPrepared();
  }
- if(!s.eventDeck.length) { s.eventDeck=shuffle(s.eventDiscard); s.eventDiscard=[]; }
+ if(!s.eventDeck.length) { s.eventDeck=shuffle(s.eventDiscard,()=>resolutionRandom(s)); s.eventDiscard=[]; }
  const event=s.eventDeck.shift()!; s.usedEvent=event; s.eventDiscard.push(event);
- s.log.push(`Round ${s.round} · (not) Black Rose — ${event.name}.`);
+ s.log.push(`Round ${s.round} · Pink Tulip — ${event.name}.`);
  if(event.kind==='BLACK_DAMAGE') for(const p of s.players) damage(s,p,event.amount);
  else {
-  const candidates=shuffle(s.board.rooms.filter(r=>!r.startingFor && !r.reconstructed && r.instability<r.instabilityLimit));
+  const candidates=shuffle(s.board.rooms.filter(r=>!r.startingFor && !r.reconstructed && r.instability<r.instabilityLimit),()=>resolutionRandom(s));
   for(const room of candidates.slice(0,event.rooms)) placeInstability(s,room,event.amount);
  }
 }
@@ -614,7 +943,7 @@ function beginStudyIfQuestsFit(s:GameState) {
  if(s.players.some(p=>heldQuests(p).length>p.questLimit))return;
  for(const p of s.players) {
   let drawn=0;
-  while(drawn<2 && p.personalDeck.length+p.discard.length>0) {p.hand.push(drawOne(p.personalDeck,p.discard));drawn++;}
+  while(drawn<2 && p.personalDeck.length+p.discard.length>0) {p.hand.push(drawOne(s,p.personalDeck,p.discard));drawn++;}
   if(drawn<2)s.log.push(`${p.name} draws ${drawn} grimoire spells; the remaining personal spells are already held.`);
  }
  s.phase='STUDY'; s.log.push('STUDY — draw 2 grimoire spells, choose 4 blind library draws across schools, then discard 2 of those library spells.');
@@ -630,12 +959,12 @@ function finishBlackRose(s: GameState) {
   }
  }
  s.blackRoseResolved=true;
- if(s.players.some(p=>heldQuests(p).length>p.questLimit))s.log.push('(not) Black Rose — waiting for quest-limit discards.');
+ if(s.players.some(p=>heldQuests(p).length>p.questLimit))s.log.push('Pink Tulip — waiting for quest-limit discards.');
  beginStudyIfQuestsFit(s);
 }
 
-function drawOne(deck: Card[], discard: Card[]): Card {
- if(!deck.length) { deck.push(...shuffle(discard)); discard.length=0; }
+function drawOne(s:GameState,deck: Card[], discard: Card[]): Card {
+ if(!deck.length) { deck.push(...shuffle(discard,()=>resolutionRandom(s))); discard.length=0; }
  const card=deck.shift(); if(!card) throw new GameRuleError('This deck is empty');
  return card;
 }
@@ -647,6 +976,9 @@ function discardCard(s:GameState,p:Player,card:Card) {
 }
 
 function activateRoom(s:GameState,p:Player,targetRoomId?:string) {
+ atMomentEnd(s,()=>activateRoomBody(s,p,targetRoomId));
+}
+function activateRoomBody(s:GameState,p:Player,targetRoomId?:string) {
  const room=s.board.rooms.find(r=>inRoom(p,r));
  assert(room?.effect && !room.startingFor,'No room effect in a starting room');
  assert(!targetRoomId || room!.effect==='INSTABILITY','Only Emerald instability takes a target room');
@@ -656,13 +988,14 @@ function activateRoom(s:GameState,p:Player,targetRoomId?:string) {
  const targets=[...s.players.filter(t=>inRoom(t,room!)).map(t=>snapshot(s,t.id)!),...s.evocations.filter(e=>room!.tiles.some(h=>hexKey(h)===hexKey(e.position))).map(e=>snapshot(s,e.id)!)];
  s.log.push(`${p.name} activates ${room!.name} for free${reward===2?' (reconstructed special: double reward)':''}: ${ROOM_EFFECT_LABELS[room!.effect!]}.`);
  modelEvent(s,'ROOM_ACTIVATED',actor,actor,room!.id);
+ progressQuest(s,p,'ROOM_ACTIVATE');
  switch(room!.effect) {
   case 'ROOM_DAMAGE': {
    for(const ref of targets)resolveInstruction(s,p,{effect:'DAMAGE',amount:reward,target:'EVENT_MODEL'},ref,undefined,actor);
    break;
   }
   case 'DRAW_DISCARD': {
-  if(p.discard.length)for(let i=0;i<reward && p.discard.length;i++)p.hand.push(p.discard.splice(Math.floor(Math.random()*p.discard.length),1)[0]);
+  if(p.discard.length)for(let i=0;i<reward && p.discard.length;i++)p.hand.push(p.discard.splice(Math.floor(resolutionRandom(s)*p.discard.length),1)[0]);
    else s.log.push(`${p.name}'s personal discard is empty; no spell retrieved.`);
    break;
   }
@@ -673,16 +1006,12 @@ function activateRoom(s:GameState,p:Player,targetRoomId?:string) {
    assert(Number.isFinite(lineDistance) && lineDistance <= 1,'Room effect target out of range (maximum 1)');
   placeInstability(s,target,reward,p);break;
   }
-  case 'DRAW_GRIMOIRE':for(let i=0;i<reward && p.personalDeck.length+p.discard.length;i++)p.hand.push(drawOne(p.personalDeck,p.discard));break;
+  case 'DRAW_GRIMOIRE':for(let i=0;i<reward && p.personalDeck.length+p.discard.length;i++)p.hand.push(drawOne(s,p.personalDeck,p.discard));break;
   case 'SUMMON_CADAVER': {
-   const count=Math.min(reward,3-s.evocations.filter(e=>e.playerId===p.id).length);
-   for(let i=0;i<count;i++) {
-    const owned=s.evocations.filter(e=>e.playerId===p.id);
-    const number=[1,2,3].find(n=>!owned.some(e=>e.number===n))!;
-    s.evocations.push({id:crypto.randomUUID(),playerId:p.id,number,name:'Cadaver',archetype:'UNDEAD',movement:2,attack:2,health:2,passive:'WOUNDED_FURY',position:{...position},damageCubes:0,damageByPlayer:{},activated:false});
+   for(let i=0;i<reward;i++) {
+    if(!summonEvocation(s,p,'CADAVER',position))break;
     s.log.push(`${p.name} summons a Cadaver from the Grey room (Undead · move 2 · attack 2 · health 2).`);
    }
-   if(count===0)s.log.push(`${p.name} already controls 3 evocations; no Cadaver summoned.`);
    break;
   }
   case 'DRAW_QUEST': {
@@ -758,7 +1087,7 @@ export function canPlayerAct(s: GameState, p: Player): boolean {
  return spells.some(prepared=>{
   if(!prepared || prepared.used)return false;
   const card=prepared.card;
-  if(['TRAP','PROTECTION'].includes(getSpellType(card)) && !card.trigger)return false;
+  if(['TRAP','PROTECTION'].includes(getSpellType(card)))return !!card.trigger;
   if(card.target==='ROOM' || canUseSpellDummy(card))return s.board.rooms.some(r=>!r.startingFor && r.tiles.some(h=>isWithinSpellRange(p.wizard.position,h,card.range)));
   const legal=(ownerId:string,kind:'MAGE'|'EVOCATION',position:Hex)=>spellCanTargetModel(card,p.id,ownerId,kind)
    && !s.board.rooms.some(r=>r.startingFor && r.tiles.some(h=>hexKey(h)===hexKey(position)))
@@ -799,8 +1128,8 @@ function cleanup(s: GameState) {
  if(s.round>=3 || s.blackRose.victoryPoints>=30 || s.players.some(p=>p.victoryPoints>=30)) {
   s.log.push(`Endgame triggered after Cleanup: ${s.round>=3?'round limit reached':'a competitor reached 30 VP'}.`);
   scoreEndgame(s);
-  // Stable player seating order wins equal final scores; (not) Black Rose follows mages.
-  const leaders=[...s.players,{id:BLACK_ROSE_ID,name:'(not) Black Rose',victoryPoints:s.blackRose.victoryPoints}].sort((a,b)=>b.victoryPoints-a.victoryPoints);
+  // Stable player seating order wins equal final scores; Pink Tulip follows mages.
+  const leaders=[...s.players,{id:BLACK_ROSE_ID,name:'Pink Tulip',victoryPoints:s.blackRose.victoryPoints}].sort((a,b)=>b.victoryPoints-a.victoryPoints);
   s.phase='GAME_OVER';s.winner=leaders[0].id;
   s.log.push(`${leaders[0].name} wins with ${leaders[0].victoryPoints} VP!`);
  }
@@ -810,7 +1139,7 @@ function scoreEndgame(s:GameState) {
  if(s.endgameScored)return;
  s.endgameScored=true;
  const categories=[
-  {label:'kills majority',counts:{...Object.fromEntries(s.players.map(p=>[p.id,p.kills])),[BLACK_ROSE_ID]:s.blackRose.kills}},
+  {label:'trophy tokens majority',counts:{...Object.fromEntries(s.players.map(p=>[p.id,p.trophies.length])),[BLACK_ROSE_ID]:0}},
   {label:'completed quests majority',counts:Object.fromEntries(s.players.map(p=>[p.id,p.questsCompleted]))},
  ];
  for(const {label,counts} of categories) {
@@ -865,17 +1194,65 @@ function requireEvocation(s:GameState,id:string) {
 
 function afterAction(s: GameState) {
  const a=s.activation;if(!a)return;
- if(a.physicalAction || a.exploring>0) return;
+ if(s.evocationActivation || a.physicalAction || a.exploring>0) return;
  if(!canPlayerAct(s,getPlayer(s,a.playerId))) finishActivation(s);
 }
 
-function castSpell(s: GameState, p: Player, action: Extract<GameAction,{type:'CAST_SPELL'|'CAST_POWERFUL_SPELL'}>) {
+function summonForEffect(s:GameState,owner:Player,kind:'SUCCUBUS',position:Hex,effect?:EffectResolution) {
+ const evocation=summonEvocation(s,owner,kind,position);
+ if(effect)effect.summoned=evocation?snapshot(s,evocation.id):undefined;
+ if(!evocation)return;
+ evocation.activated=!effect?.activationIsExplicit;
+ s.log.push(effect?.activationIsExplicit?`${owner.name} summons ${evocation.name}.`:`${owner.name} summons and activates ${evocation.name}.`);
+}
+function activateEffectSummon(s:GameState,owner:Player,kind:'SUCCUBUS',effect?:EffectResolution) {
+ const evocation=liveModel(s,effect?.summoned)?.evocation;
+ // A failed summon or a destroyed model must never activate a different servant.
+ if(!evocation||evocation.playerId!==owner.id||evocation.name!==EVOCATION_TYPES[kind].name)return;
+ assert(s.phase==='ACTION'&&s.currentPlayerId===owner.id,'Resolve the summoned activation during its owner’s Action turn');
+ assert(!s.evocationActivation,'Finish the active evocation first');
+ evocation.activated=true;
+ s.evocationActivation={evocationId:evocation.id,playerId:owner.id,movesRemaining:evocation.movement,returnToAction:true};
+ s.log.push(`${owner.name} activates ${evocation.name} #${evocation.number??1} from the spell (no extra action or token): move ${evocation.movement}, attack ${evocationAttack(evocation)}.`);
+ modelEvent(s,'EVOCATION_ACTIVATED',snapshot(s,evocation.id)!);
+}
+function resolveEffectMoments(s:GameState,caster:Player,spell:Card,room:Room|undefined,refs:ModelSnapshot[],actor:ModelSnapshot) {
+ const effect:EffectResolution={activationIsExplicit:spell.moments.some(step=>step.effect==='ACTIVATE_EVOCATION')};
+ for(const step of spell.moments)atMomentEnd(s,()=>resolveMomentBody(s,caster,spell,step,room,refs,actor,effect));
+}
+function resolveMomentBody(s:GameState,caster:Player,spell:Card,step:Moment,room:Room|undefined,refs:ModelSnapshot[],actor:ModelSnapshot,effect:EffectResolution) {
+ if(step.effect==='PAIN') {
+  damage(s,caster,step.amount);
+  return;
+ }
+ if(step.effect==='SUMMON') {
+  const target = refs[0] ? liveModel(s, refs[0]) : undefined;
+  const position = step.position === 'TARGET' ? target?.model.position??room?.tiles[0] : caster.wizard.position;
+  if(!position)return;
+  summonForEffect(s,caster,step.kind,position,effect);
+  return;
+ }
+ if(step.effect==='ACTIVATE_EVOCATION') {
+  activateEffectSummon(s,caster,step.kind,effect);
+  return;
+ }
+ if(step.amount<=0)return;
+ // Instability always lands in the chosen room; conversion of a room spell converts that room's cubes.
+ if(step.effect==='INSTABILITY' || (step.effect==='CONVERT' && spell.target==='ROOM')) {
+  if(room)resolveInstruction(s,caster,{...step,target:'BOUND_ROOM'},undefined,room.id,actor);
+  return;
+ }
+ for(const ref of refs)resolveInstruction(s,caster,{...step,target:'BOUND_MODEL'},ref,undefined,actor);
+}
+
+function castSpell(s: GameState, p: Player, command: Extract<GameAction,{type:'CAST_SPELL'|'CAST_POWERFUL_SPELL'|'ACTIVATE_SPELL'}>) {
  const a=requireActivation(s,p.id);
  assert(a.exploring===0,'Finish exploring first');
  requireNoPendingPhysical(a);
  requireTurnAction(a);
  assert(!isInStartingRoom(s,p),'Leave the starting room before casting spells');
- if(action.type==='CAST_POWERFUL_SPELL')throw new GameRuleError('Forgotten spells cannot be cast from hand; prepare them in a later Preparation phase and use CAST_SPELL');
+ if(command.type==='CAST_POWERFUL_SPELL')throw new GameRuleError('Forgotten spells cannot be cast from hand; prepare them in a later Preparation phase and use CAST_SPELL');
+ const action=command as Extract<GameAction,{type:'CAST_SPELL'}>;
  const prepared=p.prepared[action.slot];
  const card=prepared&&!prepared.used?prepared.card:undefined;
  assert(card,'Spell unavailable');
@@ -885,30 +1262,38 @@ function castSpell(s: GameState, p: Player, action: Extract<GameAction,{type:'CA
  }
  const spell=card!;
  let targets: ReturnType<typeof modelTarget>[]=[]; let room: Room | undefined;
- if(spell.target==='ROOM' || action.dummy) {
-  assert(!action.dummy || canUseSpellDummy(spell),'Dummy targeting requires a MAGE, EVOCATION or MODEL spell');
-  assert(!action.targetPlayerId&&!action.targetEvocationId,'Choose either a room/dummy or a model');
-  assert(action.roomId,'Select a room'); room=getRoom(s,action.roomId!);
-  assert(!room.startingFor,'Starting rooms cannot be targeted');
-  assert(room.tiles.some(h=>isWithinSpellRange(p.wizard.position,h,spell.range)),'Room out of range');
-  if(!action.dummy)targets=[...s.players.filter(t=>inRoom(t,room!)).map(t=>modelTarget(s,t.id)),...s.evocations.filter(e=>room!.tiles.some(h=>hexKey(h)===hexKey(e.position))).map(e=>modelTarget(s,e.id))];
+ const reactive=['TRAP','PROTECTION'].includes(getSpellType(spell));
+ assert(command.type!=='ACTIVATE_SPELL'||reactive,'Only Trap and Protection spells can be activated');
+ // ACTIVATE_SPELL deliberately has no targeting payload, even on the wire.
+ if(reactive)assert(!('dummy' in action)&&!('roomId' in action)&&!('targetPlayerId' in action)&&!('targetEvocationId' in action),'Activate without choosing a room, model or dummy');
+ if(!reactive) {
+  if(spell.target==='ROOM' || action.dummy) {
+   assert(!action.dummy || canUseSpellDummy(spell),'Dummy targeting requires a MAGE, EVOCATION or MODEL spell');
+   assert(!action.targetPlayerId&&!action.targetEvocationId,'Choose either a room/dummy or a model');
+   assert(action.roomId,'Select a room'); room=getRoom(s,action.roomId!);
+   assert(!room.startingFor,'Starting rooms cannot be targeted');
+   assert(room.tiles.some(h=>isWithinSpellRange(p.wizard.position,h,spell.range)),'Room out of range');
+   if(!action.dummy)targets=[...s.players.filter(t=>inRoom(t,room!)).map(t=>modelTarget(s,t.id)),...s.evocations.filter(e=>room!.tiles.some(h=>hexKey(h)===hexKey(e.position))).map(e=>modelTarget(s,e.id))];
+  } else {
+   assert(!action.roomId,'Individual model spells cannot target a room');
+   const inferSelf=spell.target==='SELF' && !action.targetPlayerId && !action.targetEvocationId;
+   assert(inferSelf || !!action.targetPlayerId!==!!action.targetEvocationId,'Select one mage or evocation');
+   const id=inferSelf?p.id:action.targetEvocationId??action.targetPlayerId!;
+   const target=modelTarget(s,id);
+   assert(inferSelf || (action.targetPlayerId?!!target.mage:!!target.evocation),'Target payload does not match the model kind');
+   assert(spellCanTargetModel(spell,p.id,target.playerId,target.mage?'MAGE':'EVOCATION'),'Spell cannot target this model category or ownership');
+   room=s.board.rooms.find(r=>r.tiles.some(h=>hexKey(h)===hexKey(target.position)));
+   assert(!room?.startingFor,'Cannot target a model in its starting room');
+   assert(isWithinSpellRange(p.wizard.position,target.position,spell.range),'Model out of range');targets=[target];
+  }
  } else {
-  assert(!action.roomId,'Individual model spells cannot target a room');
-  const inferSelf=spell.target==='SELF' && !action.targetPlayerId && !action.targetEvocationId;
-  assert(inferSelf || !!action.targetPlayerId!==!!action.targetEvocationId,'Select one mage or evocation');
-  const id=inferSelf?p.id:action.targetEvocationId??action.targetPlayerId!;
-  const target=modelTarget(s,id);
-  assert(inferSelf || (action.targetPlayerId?!!target.mage:!!target.evocation),'Target payload does not match the model kind');
-  assert(spellCanTargetModel(spell,p.id,target.playerId,target.mage?'MAGE':'EVOCATION'),'Spell cannot target this model category or ownership');
-  room=s.board.rooms.find(r=>r.tiles.some(h=>hexKey(h)===hexKey(target.position)));
-  assert(!room?.startingFor,'Cannot target a model in its starting room');
-  assert(isWithinSpellRange(p.wizard.position,target.position,spell.range),'Model out of range');targets=[target];
+  assert(!action.targetPlayerId&&!action.targetEvocationId,'Reactive spells choose targets only when the trigger resolves');
+  assert(!action.roomId || action.dummy,'Reactive spells do not require activation targeting');
  }
  // Commit first, then interrupt SPELL_CAST before printed instructions. Model
  // generations and the chosen room are fixed before any interrupt can respawn.
  const refs=targets.map(t=>snapshot(s,t.mage?.id??t.evocation!.id)!);
  const actor=snapshot(s,p.id)!;
- const reactive=['TRAP','PROTECTION'].includes(getSpellType(spell));
  assert(!reactive || spell.trigger,'Active hidden spells require a trigger');
  assert(!spell.ongoing || action.dummy || refs.length===1,'Ongoing spells must bind one model');
  prepared!.used=true;
@@ -916,7 +1301,7 @@ function castSpell(s: GameState, p: Player, action: Extract<GameAction,{type:'CA
  // hidden/ongoing bindings or redirecting its model effects to room occupants.
  if(!action.dummy && (reactive || spell.ongoing)) {
   const target=targets[0];
-  const active:ActiveSpell={id:crypto.randomUUID(),playerId:p.id,card:spell,
+  const active:ActiveSpell={id:resolutionId(s),playerId:p.id,card:spell,
    ...(spell.target!=='ROOM' && target?.mage?{targetPlayerId:target.mage.id}:{}),
    ...(spell.target!=='ROOM' && target?.evocation?{targetEvocationId:target.evocation.id}:{}),
    ...(room?{roomId:room.id}:{})};
@@ -927,25 +1312,60 @@ function castSpell(s: GameState, p: Player, action: Extract<GameAction,{type:'CA
  a.spellsCast++;a.actionsUsed++;
  if(action.slot!=='rapid')a.sequencedSpellUsed=true;
  s.log.push(reactive&&!action.dummy?`${p.name} activates a hidden spell for 1 action (no physical token).`:`${p.name} casts ${spell.name}${action.dummy?' on a dummy (no model effects)':''} for 1 action (no physical token).`);
- modelEvent(s,'SPELL_CAST',actor);
+ // Activation is not a cast and cannot trigger "when a spell is cast".
+ if(!reactive)modelEvent(s,'SPELL_CAST',actor);
  if(!reactive || action.dummy) {
-  if(room && spell.instability>0)placeInstability(s,room,spell.instability,p);
-  if((spell.convert??0)>0) {
-   if(spell.target==='ROOM')resolveInstruction(s,p,{effect:'CONVERT',amount:spell.convert!,target:'BOUND_ROOM'},undefined,room?.id,actor);
-   else for(const ref of refs)resolveInstruction(s,p,{effect:'CONVERT',amount:spell.convert!,target:'BOUND_MODEL'},ref,undefined,actor);
-  }
-  if((spell.heal??0)>0)for(const ref of refs)resolveInstruction(s,p,{effect:'HEAL',amount:spell.heal!,target:'BOUND_MODEL'},ref,undefined,actor);
-  if(spell.damage>0)for(const ref of refs)resolveInstruction(s,p,{effect:'DAMAGE',amount:spell.damage,target:'BOUND_MODEL'},ref,undefined,actor);
+  // Printed moments resolve strictly in card order, and a card may repeat a moment.
+  // Each moment is a complete step: every interrupt it causes (reactive spells, a
+  // mage defeat with its scoring and respawn) finishes before the next moment
+  // resumes. Models defeated or destroyed meanwhile are skipped by later moments.
+  resolveEffectMoments(s,p,spell,room,refs,actor);
  }
  afterAction(s);
 }
 
 export function applyAction(state: GameState, action: GameAction): GameState {
+ const pending=state.pendingDecision;
+ if(action.type==='RESPOND_SOUL_TITHE') {
+  if(pending?.kind!=='SOUL_TITHE'||!pending.resume)throw new GameRuleError('No decision is waiting');
+  assert(pending.playerId===action.playerId,'This decision belongs to another mage');
+  assert(typeof action.accept==='boolean','Choose accept or decline');
+  const base=structuredClone(state);delete base.pendingDecision;
+  return runWithDecisions(base,pending.resume.action,[...pending.resume.answers,{key:pending.key,accept:action.accept}],pending.resume.entropy);
+ }
+ if(action.type==='RESPOND_REACTIVE_SPELL') {
+  if(pending?.kind!=='REACTIVE_SPELL'||!pending.resume)throw new GameRuleError('No reactive decision is waiting');
+  assert(pending.playerId===action.playerId,'This decision belongs to another mage');
+  assert(pending.key===action.key,'Stale reactive decision');
+  if(action.activeSpellId) {
+   const option=pending.options.find(o=>o.activeSpellId===action.activeSpellId);
+   assert(option && option.targets.some(t=>t.id===action.targetId),'Choose an eligible spell and target');
+  } else assert(!action.targetId,'Declining does not select a target');
+  const base=structuredClone(state);delete base.pendingDecision;
+  return runWithDecisions(base,pending.resume.action,[...pending.resume.answers,{key:pending.key,accept:!!action.activeSpellId,activeSpellId:action.activeSpellId,targetId:action.targetId}],pending.resume.entropy);
+ }
+ // The paused action's mage decides first; the owner may still adjust their own switches.
+ if(pending)assert(action.type==='SET_EVOCATION_AUTO',`Waiting for ${state.players.find(p=>p.id===pending.playerId)?.name??'a mage'} to decide`);
+ return runWithDecisions(state,action,[]);
+}
+
+function runWithDecisions(state:GameState,action:GameAction,answers:DecisionAnswer[],entropy:ReplayEntropy={ids:[],random:[]}):GameState {
+ const replay=structuredClone(entropy);
+ try {return runAction(state,action,answers,replay);}
+ catch(error) {
+  if(!(error instanceof DecisionNeeded))throw error;
+  const paused=structuredClone(state);
+  paused.pendingDecision=structuredClone({...error.decision,resume:{action,answers:error.answers,entropy:replay}});
+  return paused;
+ }
+}
+
+function runAction(state: GameState, action: GameAction, answers: DecisionAnswer[],entropy:ReplayEntropy): GameState {
  const s=structuredClone(state);
  s.feedbackEvents??=[];
  s.readiedSpells??=[];s.ongoingSpells??=[];
  s.activeSpellOrder??=[...s.readiedSpells,...s.ongoingSpells].map(a=>a.id);
- instructionContexts.set(s,{generations:new Map(),bindings:new Map(),resolutions:0});
+ instructionContexts.set(s,{generations:new Map(),bindings:new Map(),defeats:new Map(),resolutions:0,answers,cursor:0,momentDepth:0,events:[],entropy,idCursor:0,randomCursor:0});
  for(const active of [...s.readiedSpells,...s.ongoingSpells])bindActiveSpell(s,active);
  assert(s.phase!=='GAME_OVER','The game is over');
  // Wire payloads can include fields excluded by the TypeScript action union.
@@ -976,7 +1396,7 @@ export function applyAction(state: GameState, action: GameAction): GameState {
   case 'START_GAME':
    requirePhase(s,'LOBBY'); assert(p.id===s.hostId,'Only the creator can start');
    assert(canStartGame(s),'At least 2 mages must join and everyone must be ready with a valid starting school and enough school supply');
-    s.board=createDemoBoard(s.roomsPerColor??getDefaultRoomsPerColor(s.players.length));
+    s.board=createDemoBoard(s.roomsPerColor??getDefaultRoomsPerColor(s.players.length),()=>resolutionRandom(s));
     for(const mage of s.players) {
      const start=s.board.rooms.find(r=>r.startingFor===mage.id)!;
      mage.wizard.startingRoomId=start.id;mage.wizard.position={...start.tiles[0]};
@@ -986,7 +1406,7 @@ export function applyAction(state: GameState, action: GameAction): GameState {
     // These seven physical school cards are the entire starting grimoire.
     // Keep the last card in personal discard; normal Study draws fill the hand.
     for(let i=0;i<STARTING_SCHOOL_CARDS;i++) {
-     const card=drawOne(deck.cards,deck.discard);
+    const card=drawOne(s,deck.cards,deck.discard);
      (i===STARTING_SCHOOL_CARDS-1?mage.discard:mage.personalDeck).push(card);
     }
    }
@@ -1010,7 +1430,7 @@ export function applyAction(state: GameState, action: GameAction): GameState {
      const required=decks.filter(d=>d===deck).length;
      assert(deck.cards.length+deck.discard.length>=required,`${deck.name} has fewer than ${required} available spells`);
     }
-    const drawn=decks.map(deck=>drawOne(deck.cards,deck.discard));
+    const drawn=decks.map(deck=>drawOne(s,deck.cards,deck.discard));
     p.hand.push(...drawn);p.studyCardIds=drawn.map(c=>c.id);
     p.studyDrawn=true;s.log.push(`${p.name} draws 4 library spells from ${[...new Set(decks.map(d=>d.name))].join(', ')}.`);break;
   }
@@ -1026,7 +1446,7 @@ export function applyAction(state: GameState, action: GameAction): GameState {
    break;
   }
   case 'DISCARD_QUESTS': {
-  requirePhase(s,'BLACK_ROSE');assert(s.blackRoseResolved,'Resolve (not) Black Rose before discarding quests');
+  requirePhase(s,'BLACK_ROSE');assert(s.blackRoseResolved,'Resolve Pink Tulip before discarding quests');
    const quests=heldQuests(p),overflow=quests.length-p.questLimit;
    assert(overflow>0,'No quests over the quest limit');
    assert(Array.isArray(action.questIds) && action.questIds.length===overflow && new Set(action.questIds).size===overflow,`Discard exactly ${overflow} different quests`);
@@ -1104,16 +1524,28 @@ export function applyAction(state: GameState, action: GameAction): GameState {
    assert(areAdjacent(e.position,action.destination),'Move one adjacent space at a time');
    assert(s.board.tiles.some(h=>hexKey(h)===hexKey(action.destination)),'Destination outside board');
    assert(!s.board.rooms.some(r=>r.startingFor&&r.tiles.some(h=>hexKey(h)===hexKey(action.destination))),'Evocations cannot enter starting rooms');
-  active.movesRemaining--;moveModel(s,snapshot(s,e.id)!,action.destination);break;
+  active.movesRemaining--;moveModel(s,snapshot(s,e.id)!,action.destination);
+  if(s.evocationActivation===active&&active.movesRemaining===0&&active.attackUsed)finishEvocation(s);
+  break;
+  }
+  case 'END_EVOCATION_MOVEMENT': {
+   const {active}=requireEvocation(s,p.id);assert(active.movesRemaining>0,'No evocation movement remaining');
+   active.movesRemaining=0;
+   if(active.attackUsed)finishEvocation(s);
+   break;
   }
   case 'EVOCATION_ATTACK': {
-   const {e}=requireEvocation(s,p.id);const target=modelTarget(s,action.targetId);
+   const {active,e}=requireEvocation(s,p.id);assert(!active.attackUsed,'Evocation attack already used');
+   const target=modelTarget(s,action.targetId);
    assert(target.playerId!==p.id,'Evocations cannot damage their mage or friendly evocations');
    assert(!s.board.rooms.some(r=>r.startingFor&&r.tiles.some(h=>hexKey(h)===hexKey(target.position))),'Cannot target a model in its starting room');
   assert(areInSameRoom(s,e.position,target.position),'Target must be in the same room');
   const actor=snapshot(s,e.id)!,ref=snapshot(s,action.targetId)!,roomId=roomAt(s,target.position)?.id;
+  active.attackUsed=true;
   resolveInstruction(s,p,{effect:'DAMAGE',amount:evocationAttack(e),target:'EVENT_MODEL'},ref,undefined,actor);
-  modelEvent(s,'EVOCATION_ATTACK',ref,actor,roomId);finishEvocation(s);break;
+  modelEvent(s,'EVOCATION_ATTACK',ref,actor,roomId);
+  if(s.evocationActivation===active&&active.movesRemaining===0)finishEvocation(s);
+  break;
   }
   case 'END_EVOCATION':requireEvocation(s,p.id);finishEvocation(s);break;
   case 'BEGIN_PHYSICAL_ACTION': {
@@ -1200,7 +1632,38 @@ export function applyAction(state: GameState, action: GameAction): GameState {
   if(action.roomEffect==='END' && liveModel(s,actor)){activateRoom(s,p,action.roomTargetId);a.roomEffectUsed=true;}
   afterAction(s); break;
   }
-  case 'CAST_SPELL': case 'CAST_POWERFUL_SPELL': castSpell(s,p,action); break;
+  case 'ACTIVATE_SPELL': case 'CAST_SPELL': case 'CAST_POWERFUL_SPELL': castSpell(s,p,action); break;
+  case 'SET_ACTIVE_SPELL_CLEANUP': {
+   const active=s.readiedSpells!.find(a=>a.id===action.activeSpellId&&a.playerId===p.id);
+   assert(active,'Choose your own active spell');
+   assert(action.destination==='HAND'||action.destination==='MEMORIES','Choose Hand or Memories');
+   assert(!active!.card.powerful||action.destination==='HAND','Forgotten spells cannot be discarded');
+   active!.cleanupDestination=action.destination;
+   break;
+  }
+  case 'RESPOND_REACTIVE_SPELL': case 'RESPOND_SOUL_TITHE': throw new GameRuleError('No decision is waiting');
+  case 'SET_EVOCATION_AUTO': {
+   const e=s.evocations.find(model=>model.id===action.evocationId);
+   if(!e||e.playerId!==p.id)throw new GameRuleError('Choose one of your own evocations');
+   assert(e.ability==='SOUL_TITHE','This evocation has no ability to automate');
+   assert(typeof action.auto==='boolean','Choose on or off');
+   e.autoAbility=action.auto;
+   s.log.push(`${p.name}: ${e.name} #${e.number??1} now ${action.auto?'automatically takes':'asks before taking'} damage cubes.`);
+   break;
+  }
+  case 'USE_QUEST_REWARD': {
+   requirePhase(s,'ACTION');
+   const a=requireActivation(s,p.id); assert(a.exploring===0,'Finish exploring first'); requireNoPendingPhysical(a);
+  const quest=heldQuests(p).find(q=>q.id===action.questId)!;
+   assert(quest && quest.completed && !quest.claimed,'Quest reward unavailable');
+   if(quest.rewardAction)resolveQuestRewardAction(s,p,quest.rewardAction,{targetPlayerId:action.targetPlayerId,targetEvocationId:action.targetEvocationId,roomId:action.roomId,dummy:action.dummy});
+   awardVictoryPoints(s,p.id,quest.reward); p.questsCompleted++; quest.claimed=true;
+   modelEvent(s,'QUEST_SOLVED',snapshot(s,p.id)!,snapshot(s,p.id)!,roomAt(s,p.wizard.position)?.id);
+   s.log.push(`${p.name} resolves “${quest.name}” for +${quest.reward} VP.`);
+  const remaining=heldQuests(p).filter(q=>q.id!==quest.id);
+   p.quest=remaining.shift()??null; p.additionalQuests=remaining;
+   break;
+  }
   default: throw new GameRuleError('Unknown game action');
  }
  // Trigger destruction during activation or movement must release the lock and

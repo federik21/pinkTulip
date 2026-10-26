@@ -258,7 +258,7 @@ describe('public room and spell glossary',()=>{
    expect(cell.tiles).toEqual([positions[i]]);expect(p.wizard.startingRoomId).toBe(cell.id);
   }
   expect(new Set(s.board.rooms.map(r=>r.name)).size).toBe(23);
-  expect(s.board.rooms.find(r=>r.id==='room-0,0')!.name).toBe('(not) Black Rose Chamber');
+  expect(s.board.rooms.find(r=>r.id==='room-0,0')!.name).toBe('Pink Tulip Chamber');
  });
  it('uses COMBAT, secret activation, forgotten spells and the renamed central competitor in public strings',()=>{
   expect(createSpellDeck('legacy').every(c=>getSpellType(c)==='COMBAT')).toBe(true);
@@ -269,8 +269,8 @@ describe('public room and spell glossary',()=>{
   const s=readyLobby();s.eventDeck=createEvents();s.players[0].wizard.damageCubes=9;s.players[0].wizard.blackDamage=9;
   s.eventDeck.sort((a,b)=>Number(b.kind==='BLACK_DAMAGE')-Number(a.kind==='BLACK_DAMAGE'));
   const result=start(s),visible=[...result.log,...result.board.rooms.map(r=>r.name),...s.eventDeck.flatMap(e=>[e.name,e.description])].join('\n');
-  expect(visible).toContain('(not) Black Rose receives kill credit');
-  expect(visible).not.toMatch(/(?<!\(not\) )Black Rose|BLACK ROSE/);
+  expect(visible).toContain('Pink Tulip receives kill credit');
+  expect(visible).not.toMatch(/black\s*rose|\(not\)/i);
   expect(BLACK_ROSE_ID).toBe('black-rose');
  });
 });

@@ -1,3 +1,4 @@
+import { moment } from '../src/cards';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
  applyAction, BLACK_ROSE_ID, canPassActionPhase, canPlayerAct, createGame,
@@ -15,7 +16,7 @@ function actionFixture(count=4) {
 const player=(g:GameState,id='p1')=>g.players.find(p=>p.id===id)!;
 const room=(g:GameState,id:string)=>g.board.rooms.find(r=>r.id===id)!;
 function prepare(g:GameState,changes:Partial<Card>={},id='p1',slot:keyof Player['prepared']='rapid') {
- const card={...g.library[0].cards.shift()!,damage:0,instability:0,range:4,target:'ROOM' as const,...changes};
+ const card={...g.library[0].cards.shift()!,moments:[],range:4,target:'ROOM' as const,...changes};
  player(g,id).prepared[slot]={card,used:false};return card;
 }
 const settle=(g:GameState)=>applyAction(g,{type:'PASS_ROUND',playerId:g.currentPlayerId!});
@@ -95,7 +96,7 @@ describe('capacity-dependent triple prizes and finite dense rankings',()=>{
   expect(a.rooms.filter(r=>r.startingFor)).toHaveLength(4);
   for(const r of colored)expect(r.rewards).toEqual(getRoomRewards(r.instabilityLimit));
  });
- it('includes Black Rose in dense contribution ranks and returns no awards for zero or negative counts',()=>{
+ it('includes Pink Tulip in dense contribution ranks and returns no awards for zero or negative counts',()=>{
   expect(getContributionAwards({p1:4,p2:4,[BLACK_ROSE_ID]:1,p3:0,p4:-1},ENDGAME_REWARDS)).toEqual([
    {playerId:'p1',cubes:4,rank:1,tied:true,points:3},
    {playerId:'p2',cubes:4,rank:1,tied:true,points:3},
@@ -108,21 +109,21 @@ describe('capacity-dependent triple prizes and finite dense rankings',()=>{
   expect(getContributionAwards({p1:2,p2:2},[1]).map(a=>a.points)).toEqual([1,1]);
   expect(getContributionAwards({p1:1},[])[0].points).toBe(0);
  });
- it('reports Black Rose room majorities alone or tied, never zero-count winners',()=>{
+ it('reports Pink Tulip room majorities alone or tied, never zero-count winners',()=>{
   expect(getRoomMajorityWinners({cubesByPlayer:{p1:1,[BLACK_ROSE_ID]:3}})).toEqual([BLACK_ROSE_ID]);
   expect(getRoomMajorityWinners({cubesByPlayer:{p1:3,[BLACK_ROSE_ID]:3,p2:0}})).toEqual(['p1',BLACK_ROSE_ID]);
   expect(getRoomMajorityWinners({cubesByPlayer:{p1:0,[BLACK_ROSE_ID]:0}})).toEqual([]);
  });
 });
 
-describe('Black Rose defeat contributions and kills',()=>{
+describe('Pink Tulip defeat contributions and kills',()=>{
  it('wins a black-only defeat, gets kill credit but never the player-only solo-color bonus or physical cubes',()=>{
   const g=neutralDefeat({},9);expect(g.blackRose).toEqual({victoryPoints:4,kills:1});
   expect(g.players.map(p=>p.victoryPoints)).toEqual([0,0,0,0]);conservation(g);
  });
  it('can lead a damage ranking while a player receives second prize and the final-hit kill',()=>{
   let g=actionFixture();const victim=player(g,'p2');victim.wizard.damageCubes=8;victim.wizard.blackDamage=8;
-  prepare(g,{target:'MODEL',damage:2});player(g,'p3').actionTokens=1;
+  prepare(g,{target:'MODEL',moments:[moment.damage(2)]});player(g,'p3').actionTokens=1;
   g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',targetPlayerId:'p2'});
   expect(g.blackRose).toEqual({victoryPoints:4,kills:0});expect(player(g).victoryPoints).toBe(2);expect(player(g).kills).toBe(1);
   expect(victim.wizard.damageCubes).toBe(8);expect(player(g,'p2').wizard).toMatchObject({damageCubes:0,blackDamage:0,damageByPlayer:{}});conservation(g);
@@ -143,7 +144,7 @@ describe('room completion and Cleanup reconstruction',()=>{
   let g=actionFixture(2);const source=g.board.rooms.find(r=>r.color==='grey')!,id=source.id;
   placeLedger(g,source,{p1:source.instabilityLimit-2});player(g).wizard.position={...source.tiles[0]};player(g).actionTokens=1;
   player(g).quest={id:'rebuild-now',name:'Rebuild now',description:'Rebuild',kind:'REBUILD',amount:1,reward:3};
-  prepare(g,{instability:2},'p1','slot1');prepare(g,{instability:4},'p2');
+  prepare(g,{moments:[moment.instability(2)]},'p1','slot1');prepare(g,{moments:[moment.instability(4)]},'p2');
   g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'slot1',roomId:id});
   expect(room(g,id)).toMatchObject({instability:source.instabilityLimit,reconstructed:false,scored:false,specialUsed:false});
   expect(player(g).victoryPoints).toBe(4);expect(player(g).questsCompleted).toBe(1);expect(player(g).cubes.onBoard).toBe(source.instabilityLimit);
@@ -159,7 +160,7 @@ describe('room completion and Cleanup reconstruction',()=>{
   expect(room(g,id).cubesByPlayer).toEqual({p1:source.instabilityLimit});
   expect(g.log.filter(l=>l.includes('completes “Rebuild now”'))).toHaveLength(1);conservation(g);
  });
- it.each([4,5,6,10])('scores completed capacity-%i rooms including Black Rose, only once, retaining historical ledgers',capacity=>{
+ it.each([4,5,6,10])('scores completed capacity-%i rooms including Pink Tulip, only once, retaining historical ledgers',capacity=>{
   let g=actionFixture();const source=g.board.rooms.find(r=>!r.startingFor&&r.instabilityLimit===capacity)!;
   placeLedger(g,source,{[BLACK_ROSE_ID]:capacity-2,p1:1,p2:1});const ledger=structuredClone(source.cubesByPlayer);
     g=settle(g);const rewards=getRoomRewards(capacity);
@@ -177,7 +178,7 @@ describe('room completion and Cleanup reconstruction',()=>{
   expect(room(g,legacy.id).scored).toBe(true);expect(player(g).cubes.onBoard).toBe(1);expect(player(g,'p2').cubes.available).toBe(25);
   expect(player(g,'p2').victoryPoints).toBe(legacy.rewards[0]);conservation(g);
  });
- it('keeps Black Rose event completions pending and excludes already-full rooms from future event placements',()=>{
+ it('keeps Pink Tulip event completions pending and excludes already-full rooms from future event placements',()=>{
   let g=createGame(2);
   for(const p of g.players)p.connected=true;
   g=applyAction(g,{type:'SET_ROOM_COUNT',playerId:'p1',roomsPerColor:3});
@@ -219,20 +220,20 @@ describe('endgame timing, majorities and deterministic victory',()=>{
   expect(n.players.map(p=>p.victoryPoints)).toEqual([0,1,0,0]);expect(n.blackRose).toEqual({victoryPoints:0,kills:0});
   expect(n.log.filter(l=>l.includes('endgame')&&l.includes('majority'))).toEqual([]);
  });
- it('ranks nonzero kills including Black Rose and quests excluding it using dense 4/2/1 prizes',()=>{
+ it('ranks nonzero kills including Pink Tulip and quests excluding it using dense 4/2/1 prizes',()=>{
   const g=actionFixture();g.round=3;g.firstPlayerId='p2';
   [5,5,2,0].forEach((n,i)=>g.players[i].kills=n);g.blackRose.kills=1;
   [3,1,1,0].forEach((n,i)=>g.players[i].questsCompleted=n);
   const n=settle(g);expect(n.players.map(p=>p.victoryPoints)).toEqual([7,5,3,0]);expect(n.blackRose.victoryPoints).toBe(1);expect(n.winner).toBe('p1');
-  expect(n.log.some(l=>l.includes('Black Rose: +1 VP for endgame kills majority'))).toBe(true);
-  expect(n.log.some(l=>l.includes('Black Rose')&&l.includes('quests majority'))).toBe(false);
+  expect(n.log.some(l=>l.includes('Pink Tulip: +1 VP for endgame kills majority'))).toBe(true);
+  expect(n.log.some(l=>l.includes('Pink Tulip')&&l.includes('quests majority'))).toBe(false);
  });
- it('awards no fourth or fifth distinct endgame rank, including Black Rose, even with nonzero counts',()=>{
+ it('awards no fourth or fifth distinct endgame rank, including Pink Tulip, even with nonzero counts',()=>{
   const g=actionFixture();g.round=3;
   [5,4,3,2].forEach((n,i)=>{g.players[i].kills=n;g.players[i].questsCompleted=n;});g.blackRose.kills=1;
   const n=settle(g);expect(n.players.map(p=>p.victoryPoints)).toEqual([8,4,2,0]);expect(n.blackRose.victoryPoints).toBe(0);
  });
- it('reduces a tied human/Black Rose kill majority by exactly one and preserves dense second rank',()=>{
+ it('reduces a tied human/Pink Tulip kill majority by exactly one and preserves dense second rank',()=>{
   const g=actionFixture();g.round=3;player(g).kills=2;g.blackRose.kills=2;player(g,'p2').kills=1;
   const n=settle(g);expect(n.players.map(p=>p.victoryPoints)).toEqual([3,2,0,0]);expect(n.blackRose.victoryPoints).toBe(3);expect(n.winner).toBe('p1');
  });
@@ -241,14 +242,14 @@ describe('endgame timing, majorities and deterministic victory',()=>{
   player(g).victoryPoints=26;player(g,'p2').victoryPoints=29;player(g,'p2').kills=1;player(g,'p2').questsCompleted=1;g.firstPlayerId='p2';
   const n=settle(g);expect(n.phase).toBe('GAME_OVER');expect(player(n).victoryPoints).toBe(30);expect(player(n,'p2').victoryPoints).toBe(38);expect(n.winner).toBe('p2');conservation(n);
  });
- it('allows Black Rose alone to trigger 30 at Cleanup and win after kill-majority awards',()=>{
+ it('allows Pink Tulip alone to trigger 30 at Cleanup and win after kill-majority awards',()=>{
   const g=actionFixture();const source=g.board.rooms.find(r=>r.color==='crimson')!;placeLedger(g,source,{[BLACK_ROSE_ID]:source.instabilityLimit});
   g.blackRose={victoryPoints:26,kills:2};player(g).victoryPoints=29;player(g).kills=1;g.firstPlayerId='p1';
   const n=settle(g);expect(n.phase).toBe('GAME_OVER');expect(n.blackRose).toEqual({victoryPoints:34,kills:2});expect(player(n).victoryPoints).toBe(32);expect(n.winner).toBe(BLACK_ROSE_ID);
   const blackOnly=actionFixture();blackOnly.blackRose.victoryPoints=30;
   const winner=settle(blackOnly);expect(winner.winner).toBe(BLACK_ROSE_ID);expect(winner.endgameScored).toBe(true);
  });
- it('breaks equal final scores deterministically by player seating order before Black Rose',()=>{
+ it('breaks equal final scores deterministically by player seating order before Pink Tulip',()=>{
   const g=actionFixture();g.round=3;g.blackRose.victoryPoints=30;player(g).victoryPoints=30;player(g,'p2').victoryPoints=30;
   const n=settle(g);expect(n.winner).toBe('p1');expect(n.players.map(p=>p.victoryPoints)).toEqual([30,30,0,0]);
  });
@@ -262,7 +263,7 @@ describe('endgame timing, majorities and deterministic victory',()=>{
  });
  it('defers a human reaching 30 during an action until all actions and evocations finish',()=>{
   let g=actionFixture(2);player(g).victoryPoints=29;player(g,'p2').actionTokens=1;
-  player(g).quest={id:'finish',name:'Final quest',description:'Instability',kind:'INSTABILITY',amount:1,reward:1};prepare(g,{instability:1});
+  player(g).quest={id:'finish',name:'Final quest',description:'Instability',kind:'INSTABILITY',amount:1,reward:1};prepare(g,{moments:[moment.instability(1)]});
   g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:'room-0,0'});expect(player(g).victoryPoints).toBe(30);expect(g.phase).toBe('ACTION');expect(g.endgameScored).toBe(false);
   g=applyAction(g,{type:'EXPLORE',playerId:'p2'});g=applyAction(g,{type:'END_EXPLORE',playerId:'p2'});expect(g.phase).toBe('GAME_OVER');expect(player(g).victoryPoints).toBe(34);
  });
@@ -290,7 +291,7 @@ describe('power preparation, supply exhaustion, quest logs and model numbers',()
  it.each([0,1,2,3])('caps room and mage cube placement at a shared remaining supply of %i without reducing wounds',available=>{
   let g=actionFixture(2);player(g).cubes.available=available;player(g).cubes.onBoard=25-available;
   const storage=g.board.rooms.find(r=>r.color==='grey')!;storage.instabilityLimit=30;storage.instability=25-available;storage.cubesByPlayer={p1:25-available};
-  player(g,'p2').wizard.health=20;player(g,'p2').actionTokens=1;prepare(g,{damage:4,instability:2});
+  player(g,'p2').wizard.health=20;player(g,'p2').actionTokens=1;prepare(g,{moments:[moment.instability(2),moment.damage(4)]});
   g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:'room-0,0'});
   expect(room(g,'room-0,0').instability).toBe(Math.min(2,available));expect(player(g,'p2').wizard.damageCubes).toBe(4);
   expect(player(g,'p2').wizard.damageByPlayer.p1??0).toBe(Math.max(0,available-2));expect(player(g).cubes.available).toBe(0);conservation(g);
@@ -299,16 +300,16 @@ describe('power preparation, supply exhaustion, quest logs and model numbers',()
   let g=actionFixture(2);player(g,'p2').actionTokens=1;
   const quest=(id:string,amount:number,reward:number)=>({id,name:id,description:id,kind:'INSTABILITY' as const,amount,reward});
   player(g).quest=quest('First fracture',2,2);player(g).additionalQuests=[quest('Second fracture',2,3),quest('Unmet fracture',3,5)];
-  prepare(g,{instability:2},'p1','slot1');prepare(g,{instability:1});
+  prepare(g,{moments:[moment.instability(2)]},'p1','slot1');prepare(g,{moments:[moment.instability(1)]});
   g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'slot1',roomId:'room-0,0'});
   expect(g.log).toContain('Crimson Mage completes “First fracture”: +2 VP.');expect(g.log).toContain('Crimson Mage completes “Second fracture”: +3 VP.');
   g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:'room-0,0'});
   expect(g.log.filter(l=>l.includes('completes “'))).toHaveLength(2);expect(player(g).questsCompleted).toBe(2);expect(player(g).quest?.name).toBe('Unmet fracture');
   expect(g.questDiscard.map(q=>q.name)).toEqual(['First fracture','Second fracture']);conservation(g);
  });
- it('logs a final-hitter kill quest once, without attributing it to the Black Rose damage leader',()=>{
+ it('logs a final-hitter kill quest once, without attributing it to the Pink Tulip damage leader',()=>{
   let g=actionFixture(2);player(g,'p2').wizard.damageCubes=9;player(g,'p2').wizard.blackDamage=9;
-  player(g).quest={id:'kill-log',name:'Last thorn',description:'Defeat a mage',kind:'KILL',amount:1,reward:3};prepare(g,{target:'MODEL',damage:1});
+  player(g).quest={id:'kill-log',name:'Last thorn',description:'Defeat a mage',kind:'KILL',amount:1,reward:3};prepare(g,{target:'MODEL',moments:[moment.damage(1)]});
   g=applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',targetPlayerId:'p2'});
   expect(g.log.filter(l=>l.includes('completes “Last thorn”'))).toEqual(['Crimson Mage completes “Last thorn”: +3 VP.']);
   expect(g.blackRose).toEqual({victoryPoints:4,kills:0});expect(player(g)).toMatchObject({kills:1,questsCompleted:1,victoryPoints:5,quest:null});conservation(g);

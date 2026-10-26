@@ -1,5 +1,5 @@
 import { test, expect, Page, WebSocketRoute } from '@playwright/test';
-import { BLACK_ROSE_ID, Card, Evocation, GameAction, GameState, MAGE_COLORS, applyAction, createGame } from '../packages/game-engine/src/index';
+import { BLACK_ROSE_ID, Card, Evocation, GameAction, GameState, MAGE_COLORS, applyAction, createGame, moment } from '../packages/game-engine/src/index';
 import { expectSpellIcon, expectSpellType } from './spell-ui';
 import { assignPreparationCard, closeControls, expectReference, pressHistory, selectControlTab, selectSpells, viewRetinue } from './layout-ui';
 
@@ -12,14 +12,14 @@ test.beforeEach(async ({page})=>{
 });
 test.afterEach(async ({page})=>expect(errors.get(page)??[],'No uncaught React/browser errors').toEqual([]));
 
-const preparedSpell:Card={id:'fixture-spell',name:'Fixture Ember',kind:'SPELL',damage:2,instability:1,range:3,target:'MODEL'};
+const preparedSpell:Card={id:'fixture-spell',name:'Fixture Ember',kind:'SPELL',moments:[moment.instability(1),moment.damage(2)],range:3,target:'MODEL'};
 function fixtureState(count=2):GameState {
  const game=createGame(count);
  game.gameId='rule-polish';game.round=1;game.phase='ACTION';game.firstPlayerId='p1';
  game.currentPlayerId='p1';
  game.activation={playerId:'p1',actionsUsed:0,exploring:0,sequencedSpellUsed:false,spellsCast:0,discardedExit:false,roomEffectUsed:false,physicalAction:null};
  game.players.forEach((p,i)=>{p.name=['Rose Warden','Blue Seer','Amber Sage','Green Mage'][i];p.connected=true;p.ready=true;p.wizard.position={q:i%2,r:Math.floor(i/2)};});
- game.board.rooms.forEach((room,i)=>{room.name=room.id==='room-0,0'?'(not) Black Rose Chamber':`Chamber ${i+1}`;});
+ game.board.rooms.forEach((room,i)=>{room.name=room.id==='room-0,0'?'Pink Tulip Chamber':`Chamber ${i+1}`;});
  return game;
 }
 function model(id:string,playerId:string,number:number,position={q:0,r:0}):Evocation {
@@ -319,7 +319,7 @@ test('full rooms wait for Cleanup; rebuilt rooms expose only READY / USED, not h
  await expect(hex(page,pending.id).locator('.rebuilt-badge')).toHaveCount(0);
 });
 
-test('damage bars count wounds with owner, Black Rose and unattributed segments, including zero and full',async ({page})=>{
+test('damage bars count wounds with owner, Pink Tulip and unattributed segments, including zero and full',async ({page})=>{
  const game=fixtureState(4);
  Object.assign(game.players[1].wizard,{damageCubes:4,damageByPlayer:{p1:1,p3:1},blackDamage:1});
  Object.assign(game.players[2].wizard,{damageCubes:10,damageByPlayer:{p1:4,p2:3},blackDamage:3});
@@ -566,10 +566,10 @@ test('history clears discard-exit choice; missing or false metadata never create
  await expect(page.locator('.board-panel h2')).toHaveText('Discard to move · choose an adjacent space');
  await page.getByRole('button',{name:'Undo action',exact:true}).click();await expect.poll(()=>wire.commands.length).toBe(1);
  await expect(page.getByLabel('Card to discard to move')).toHaveValue('');
- await expect(page.locator('.board-panel h2')).toHaveText('Chambers of the (not) Black Rose');
+ await expect(page.locator('.board-panel h2')).toHaveText('Chambers of the Pink Tulip');
 });
 
-test('Black Rose score, first player and Black Rose game-over winner are public without extra mage rows',async ({page})=>{
+test('Pink Tulip score, first player and Pink Tulip game-over winner are public without extra mage rows',async ({page})=>{
  const game=fixtureState();game.blackRose={victoryPoints:35,kills:3};
  const wire=await mount(page,game);
  await expect(page.locator('.players-panel .player')).toHaveCount(2);
@@ -577,10 +577,10 @@ test('Black Rose score, first player and Black Rose game-over winner are public 
  await expect(page.locator('.black-rose-score')).toContainText('3 kills');
  await expect(player(page,'p1').getByRole('img',{name:'First player',exact:true})).toBeVisible();
  await expectReference(page,'round 3');
- for(const text of ['4 cubes · 2 / 1 / 0 VP','5 cubes · 4 / 2 / 1 VP','6 cubes · 5 / 3 / 1 VP','10 cubes · 6 / 3 / 1 VP','(not) Black Rose competes for kills, not quests'])await expectReference(page,text);
+ for(const text of ['4 cubes · 2 / 1 / 0 VP','5 cubes · 4 / 2 / 1 VP','6 cubes · 5 / 3 / 1 VP','10 cubes · 6 / 3 / 1 VP','Pink Tulip competes for kills, not quests'])await expectReference(page,text);
  game.phase='GAME_OVER';game.currentPlayerId=null;game.activation=null;game.winner=BLACK_ROSE_ID;game.endgameScored=true;wire.update(game);await dismissOverlay(page);
- await expect(page.locator('.victory h2')).toHaveText('♛ (not) Black Rose wins');
- await expect(page.locator('.victory')).toContainText('(not) Black Rose: 35 VP · 3 kills');
+ await expect(page.locator('.victory h2')).toHaveText('♛ Pink Tulip wins');
+ await expect(page.locator('.victory')).toContainText('Pink Tulip: 35 VP · 3 kills');
  await expect(page.locator('.victory')).toContainText('Final majorities and first-player bonus included');
  await expect(page.locator('.players-panel .player')).toHaveCount(2);
  await expect(page.locator('.actions-panel')).toHaveCount(0);
@@ -609,26 +609,26 @@ test(`glossary, Ready versus Active and accessible spell-type icons at ${viewpor
  Object.assign(game.players[1].wizard,{damageCubes:1,damageByPlayer:{[BLACK_ROSE_ID]:1}});
  Object.assign(game.board.rooms.find(r=>r.id==='room-0,0')!,{instability:1,cubesByPlayer:{[BLACK_ROSE_ID]:1}});
  await page.setViewportSize(viewport);await mount(page,game);
- await expect(page.locator('.brand')).toContainText(/\(not\) BLACK ROSE/i);
- await expect(page.locator('footer')).toContainText(/\(not\) BLACK ROSE/i);
- await expect(page.locator('.black-rose-score')).toHaveAttribute('aria-label','(not) Black Rose score');
- await expect(page.locator('.black-rose-score')).toContainText('(not) Black Rose');
- await expect(player(page,'p2').locator('.damage-contributions')).toContainText('(not) Black Rose: 1');
+ await expect(page.locator('.brand')).toContainText(/PINK TULIP BATTLES/i);
+ await expect(page.locator('footer')).toContainText(/PINK TULIP BATTLES/i);
+ await expect(page.locator('.black-rose-score')).toHaveAttribute('aria-label','Pink Tulip score');
+ await expect(page.locator('.black-rose-score')).toContainText('Pink Tulip');
+ await expect(player(page,'p2').locator('.damage-contributions')).toContainText('Pink Tulip: 1');
  await expect(page.locator('.board-panel .room-legend,.board-panel .mage-legend')).toHaveCount(0);
  await closeControls(page);
  await page.getByRole('button',{name:'Lodge information',exact:true}).click();
  const information=page.getByRole('dialog',{name:'Lodge information',exact:true});
  await expect(information.locator('.mage-legend')).toBeVisible();
- await expect(information.locator('.mage-legend')).toContainText('(not) Black Rose · neutral');
+ await expect(information.locator('.mage-legend')).toContainText('Pink Tulip · neutral');
  await information.getByRole('button',{name:'Close',exact:true}).click();
  await expect(information).toBeHidden();
  await hex(page,'room-0,0').click();
- await expect(page.locator('.room-detail .contributions')).toContainText('(not) Black Rose: 1');
+ await expect(page.locator('.room-detail .contributions')).toContainText('Pink Tulip: 1');
  await selectSpells(page);
  await expect(page.locator('.powerful-panel').getByRole('heading',{name:'Forgotten spells',exact:true})).toBeVisible();
  await expectReference(page,'Forgotten spells:');
- await expect(page.locator('.app')).not.toContainText(/Central powers|Black Rose spells|Readied & ongoing|Readied and ongoing|Hidden ready spell|Ready secretly|Offensive/);
- expect(await page.locator('.app').textContent()).not.toMatch(/(?<!\(not\) )Black Rose/i);
+ await expect(page.locator('.app')).not.toContainText(/Central powers|Readied & ongoing|Readied and ongoing|Hidden ready spell|Ready secretly|Offensive/);
+ expect(await page.locator('.app').textContent()).not.toMatch(/black\s*rose|\(not\)/i);
  for(const item of cases) {
   const card=page.locator('.prepared .spell').filter({has:page.locator('strong',{hasText:new RegExp(`^${item.name}$`)})});
   await expect(card.locator('.spell-type')).toHaveAttribute('data-spell-type',item.type);

@@ -11,7 +11,7 @@ const disabled = { canUndo:false, canRedo:false };
 const player = (game: GameState, id = 'p1') => game.players.find(p => p.id === id)!;
 const room = (game: GameState, id = center) => game.board.rooms.find(r => r.id === id)!;
 const hidden = (index: number): Card => ({ id:`hidden-${index}`, name:'Hidden spell', kind:'SPELL',
- damage:0, instability:0, range:0, target:'MODEL' });
+ moments:[], range:0, target:'MODEL' });
 
 // Turn setup is used only before a history sequence begins, never between its snapshots.
 function turn(game: GameState, id = 'p1') {
@@ -250,7 +250,7 @@ describe('reveals and expiry are irreversible information barriers', () => {
   }
   const hands = game.players.map(p => p.hand);
   game = apply(history, game, { type:'ADVANCE_PHASE', playerId:'p1', expectedPhase:'CLEANUP', expectedRound:1 });
-  expect(game.players.map(p => p.hand)).toEqual(hands); // No second return at Black Rose.
+  expect(game.players.map(p => p.hand)).toEqual(hands); // No second return at Pink Tulip.
   expect(game.players.every(p => p.studyCardIds?.length === 0)).toBe(true);
   conserved(game, cards); barrier(game, history);
  });

@@ -81,7 +81,6 @@
 .starting-school-choice .action-setting select{margin-bottom:10px}
 .starting-school-choice .hint{margin-bottom:0}
 .seat-school{display:block;font-size:12px;color:var(--gold);margin-top:5px}
-.entry h1 .parody-marker{display:block;font:600 22px 'DM Sans',sans-serif;letter-spacing:2px;line-height:1.5;color:var(--gold)}
 
 /* Primary controls live above the board; tab switches never own the map. */
 .control-banner{padding:18px 20px;border-color:#6a5542;background:linear-gradient(120deg,#2d222b,#19171d 70%);min-width:0;max-width:100%}
@@ -108,6 +107,12 @@
 .control-banner .evocation-controls{padding:14px;margin-bottom:16px;border:1px solid #9372a7;border-left:3px solid var(--mage-color);border-radius:8px;background:#b78adc0a}
 .control-banner .evocation-controls button{display:inline-block;width:auto;margin:6px 8px 0 0}
 .control-banner .evocations-panel{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(190px,100%),1fr));gap:12px}
+.evocation-supply .model-stats{flex-wrap:wrap;justify-content:flex-start;gap:10px 24px}
+.turn-banner .evocation-controls{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;min-width:0;margin:0;padding:0;border:0;background:none;box-shadow:none}
+.turn-banner .evocation-controls>.eyebrow,.turn-banner .evocation-controls>.hint{display:none}
+.turn-banner .evocation-controls h2{font-size:16px;margin:0}
+.turn-banner .evocation-controls p{flex-basis:100%;font-size:11px;margin:0}
+.turn-banner .evocation-controls button{width:auto;margin:0;font-size:11px;padding:8px 10px}
 .control-banner .evocations-panel>.section-heading,.control-banner .evocations-panel>p{grid-column:1/-1;margin:0}
 .control-banner .evocations-panel .evocation-card{margin:0;min-width:0}
 .control-banner .evocations-panel .section-heading h2{margin-bottom:0}

@@ -1,0 +1,9 @@
+.soul-tithe-popup{width:min(480px,calc(100vw - 28px))}
+.soul-tithe-popup h2{margin:6px 0 10px}
+.soul-tithe-waiting{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:60;max-width:min(560px,calc(100vw - 28px));background:#211a23;box-shadow:0 10px 40px #000a}
+.soul-tithe{margin:8px 0}
+.soul-tithe .hint{margin:0 0 6px}
+.auto-switch{display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px}
+.auto-switch small{display:block;color:var(--muted);font-size:10px}
+.auto-switch input{width:34px;height:18px;margin:0;accent-color:var(--gold);cursor:pointer}
+.auto-switch input:disabled{cursor:not-allowed}

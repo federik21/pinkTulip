@@ -3,6 +3,8 @@ import {
  applyAction, canPlayerAct, canUseSpellDummy, createEnchantmentDeck, createGame,
  createLibrary, getSpellType, hexDistance, spellCanTargetModel,
 } from '../src';
+import { moment, momentTotal } from '../src/cards';
+import { withMoments } from './flat-effects';
 import type { ActiveSpell, Card, Evocation, GameAction, GameState, Hex, Player, SpellType, TriggerCondition, TriggeredInstruction } from '../src';
 
 type Cast=Extract<GameAction,{type:'CAST_SPELL'}>;
@@ -39,7 +41,7 @@ function arm(s:GameState,name:Card|string,id='p1',selection:Selection={roomId:ce
 const instruction=(effect:TriggeredInstruction['effect'],amount:number,target:TriggeredInstruction['target']):TriggeredInstruction=>({effect,amount,target});
 let syntheticId=0;
 function custom(name:string,trigger:TriggerCondition,effects:TriggeredInstruction[],changes:Partial<Card>={}):Card {
- return {id:`synthetic-${++syntheticId}`,name,kind:'SPELL',target:'ROOM',range:3,damage:0,instability:0,spellType:'TRAP',trigger,triggerEffects:effects,...changes};
+ return {id:`synthetic-${++syntheticId}`,name,kind:'SPELL',target:'ROOM',range:3,moments:[],spellType:'TRAP',trigger,triggerEffects:effects,...changes};
 }
 const on=(event:TriggerCondition['event'],scope:TriggerCondition['scope']='BOUND_ROOM',relation:TriggerCondition['relation']='ENEMY'):TriggerCondition=>({event,scope,relation});
 function evoc(s:GameState,id='e1',owner='p2',health=4,position:Hex={q:0,r:0}):Evocation {
@@ -107,15 +109,15 @@ describe('Enchantment public catalog and active-zone contract',()=>{
  it.each(patterns)('%s has three distinct physical copies and complete printed rules', (name,spellType,target)=>{
   const copies=createEnchantmentDeck().filter(c=>c.name===name);expect(copies).toHaveLength(3);
   for(const card of copies) {
-   expect(card).toMatchObject({schoolId:'enchantment',kind:'SPELL',spellType,target,instability:0,damage:name==='Arcane Feedback'?1:0});
+   expect(card).toMatchObject({schoolId:'enchantment',kind:'SPELL',spellType,target});expect(momentTotal(card,'INSTABILITY')).toBe(0);expect(momentTotal(card,'DAMAGE')).toBe(name==='Arcane Feedback'?1:0);
    expect(card.range).toBeGreaterThanOrEqual(0);expect(card.rulesText!.length).toBeGreaterThan(30);
     if(['TRAP','PROTECTION'].includes(spellType)){expect(card.rulesText).toMatch(/^Activate secretly/);expect(card.trigger).toBeDefined();expect(card.triggerEffects!.length).toBeGreaterThan(0);}
    else {expect(card.ongoing?.trigger.relation).toBe('ANY');expect(card.ongoing?.trigger.scope).toBe('BOUND_MODEL');}
   }
  });
  it.each([{damage:1},{instability:1},{convert:1},{heal:2},{}])('infers legacy type without changing the card: %j',stats=>{
-  const card:Card={id:'legacy',name:'Legacy',kind:'SPELL',target:'MODEL',damage:0,instability:0,range:2,...stats};
-    const before=structuredClone(card);expect(getSpellType(card)).toBe(card.damage||card.instability||card.convert?'COMBAT':'CONTINGENCY');expect(card).toEqual(before);
+  const card:Card={id:'legacy',name:'Legacy',kind:'SPELL',target:'MODEL',moments:[],range:2,...withMoments(stats)};
+    const before=structuredClone(card);expect(getSpellType(card)).toBe(card.moments.some(m=>m.effect!=='HEAL')?'COMBAT':'CONTINGENCY');expect(card).toEqual(before);
   expect(getSpellType({...card,spellType:'PROTECTION'})).toBe('PROTECTION');
  });
  it('arms hidden, costs exactly one shared action and no token, and conserves the physical card',()=>{
@@ -159,7 +161,7 @@ describe('reactive targeting, quotas and dummy compatibility',()=>{
   expect(result.feedbackEvents).toEqual(s.feedbackEvents);expect(physicalCards(result)).toEqual(physicalCards(s));
  });
  it('ongoing MODEL spells and legacy MODEL offense both allow dummy targeting without binding',()=>{
-  const c:Card={id:'model',name:'Model',kind:'SPELL',target:'MODEL',range:2,damage:1,instability:0};
+  const c:Card={id:'model',name:'Model',kind:'SPELL',target:'MODEL',range:2,moments:[moment.damage(1)]};
   expect(canUseSpellDummy(c)).toBe(true);
   const bound={...c,ongoing:{trigger:on('ENTER_ROOM','BOUND_MODEL','ANY'),effects:[]}};
   expect(canUseSpellDummy(bound)).toBe(true);
@@ -219,7 +221,7 @@ describe('instruction interruption, single fire and depth-first ordering',()=>{
  });
  it('finishes a single model damage instruction, resolves its ward, then resumes the remaining area targets',()=>{
   let s=arm(fixture(),'Mending Ward','p2',{targetPlayerId:'p2'});turn(s,'p1');
-  prepare(s,{id:'area',name:'Area',kind:'SPELL',target:'ROOM',damage:2,instability:1,range:0});
+  prepare(s,{id:'area',name:'Area',kind:'SPELL',target:'ROOM',moments:[moment.instability(1),moment.damage(2)],range:0});
   s=cast(s,'p1',{roomId:center});expect(s.players.map(p=>p.wizard.damageCubes)).toEqual([0,0,2,2]);
   const text=s.log.join('\n');expect(text.indexOf('places 1 instability')).toBeLessThan(text.indexOf('Azure Mage suffers 2'));
   expect(text.indexOf('Azure Mage suffers 2')).toBeLessThan(text.indexOf('reveals Mending Ward'));
@@ -265,7 +267,7 @@ describe('instruction interruption, single fire and depth-first ordering',()=>{
   let s=fixture();player(s,'p3').wizard.health=1;
   s=arm(s,custom('protect another',on('DAMAGE_TAKEN','BOUND_MODEL','ANY'),[instruction('DAMAGE',1,'EVENT_ACTOR')],{target:'MAGE',spellType:'PROTECTION'}),'p3',{targetPlayerId:'p1'});
   s=arm(s,custom('fatal retort',on('DAMAGE_TAKEN','BOUND_MODEL','ENEMY'),[instruction('DAMAGE',10,'EVENT_ACTOR')],{target:'SELF',spellType:'PROTECTION'}),'p2',{});
-  turn(s,'p2');prepare(s,{id:'root-area',name:'Root area',kind:'SPELL',target:'ROOM',range:0,damage:1,instability:1},'p2');
+  turn(s,'p2');prepare(s,{id:'root-area',name:'Root area',kind:'SPELL',target:'ROOM',range:0,moments:[moment.instability(1),moment.damage(1)]},'p2');
   s=cast(s,'p2',{roomId:center});expect(player(s,'p3').wizard.damageCubes).toBe(0);
   expect(player(s,'p3').wizard.position).toEqual({q:-1,r:-2});expect(player(s,'p2').kills).toBe(1);
   expect(s.log.filter(l=>l.startsWith('Amber Mage suffers'))).toHaveLength(1);
@@ -289,7 +291,7 @@ describe('instruction interruption, single fire and depth-first ordering',()=>{
  });
  it('keeps an interrupted cast’s original selected room even if Spell Leech defeats its caster',()=>{
   let s=fixture();player(s,'p2').wizard.health=2;s=arm(s,'Spell Leech');turn(s,'p2');
-  prepare(s,{id:'committed',name:'Committed',kind:'SPELL',target:'MAGE',damage:1,instability:1,range:0},'p2');
+  prepare(s,{id:'committed',name:'Committed',kind:'SPELL',target:'MAGE',moments:[moment.instability(1),moment.damage(1)],range:0},'p2');
   s=cast(s,'p2',{targetPlayerId:'p3'});
   expect(player(s,'p2').wizard.position).toEqual({q:-3,r:2});expect(player(s,'p3').wizard.damageCubes).toBe(1);
   expect(room(s).instability).toBe(1);expect(room(s,'room--3,2').instability).toBe(0);conserved(s);
@@ -456,7 +458,7 @@ describe('continuous bindings, expiry, immunities and physical ledgers',()=>{
    if(kind==='EVOCATION')evoc(s,id,own?'p1':'p2',8);
    wound(s,id,{p1:1,p3:2,'black-rose':1});
    const trigger=on('ENTER_ROOM','BOUND_MODEL','ANY');
-   const card={...take(s,'Stolen Sigil'),convert:1,spellType:'CONTINGENCY' as const,ongoing:{trigger,effects:[
+   const card={...take(s,'Stolen Sigil'),moments:[moment.convert(1)],spellType:'CONTINGENCY' as const,ongoing:{trigger,effects:[
     instruction('CONVERT',2,'BOUND_MODEL'),instruction('INSTABILITY',1,'EVENT_ROOM'),
    ]}};
    prepare(s,card);const before=structuredClone(s),cards=physicalCards(s);

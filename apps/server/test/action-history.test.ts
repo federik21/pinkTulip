@@ -3,6 +3,7 @@ import { areAdjacent, createGame } from '@brw/game-engine';
 import type { Card, GameAction, GameState, Player, RoomEffect } from '@brw/game-engine';
 import { ActionHistory, HISTORY_LIMIT } from '../src/action-history';
 import { publicState } from '../src/public-state';
+import { setPrinted, withMoments } from '../../../packages/game-engine/test/flat-effects';
 
 function fixture(count = 2): GameState {
  const game = createGame(count);
@@ -18,7 +19,7 @@ function fixture(count = 2): GameState {
  return game;
 }
 function prepare(game: GameState, changes: Partial<Card> = {}, slot: keyof Player['prepared'] = 'rapid') {
- const card = { ...game.library[0].cards.shift()!, target:'ROOM' as const, damage:0, instability:0, range:4, ...changes };
+ const card = { ...game.library[0].cards.shift()!, target:'ROOM' as const, moments:[], range:4, ...changes };
  game.players[0].prepared[slot] = { card, used:false };
  return card;
 }
@@ -68,7 +69,7 @@ describe('private exact snapshot undo/redo', () => {
 
  it('restores casting, defeat respawn, contributions, cubes, scoring and completed/promoted quests', () => {
   const history = new ActionHistory(), initial = fixture(3);
-  prepare(initial, { damage:2, instability:2, target:'MODEL' }, 'slot1');
+  prepare(initial, { ...withMoments({ damage:2, instability:2 }), target:'MODEL' }, 'slot1');
   const [attacker, victim, contributor] = initial.players;
   victim.wizard.damageCubes = 8; victim.wizard.blackDamage = 1;
   victim.wizard.damageByPlayer = { p1:5, p3:2 };
@@ -264,7 +265,7 @@ describe('spell-only dummy targeting preserves rejected attack history', () => {
  it('still permits MAGE, EVOCATION and MODEL spell dummies with exact cast undo/redo', () => {
   for (const target of ['MAGE', 'EVOCATION', 'MODEL'] as const) {
    const history = new ActionHistory(), initial = fixture();
-   const card = prepare(initial, { target, spellType:'COMBAT', damage:4, heal:2, convert:1, instability:1, range:0 });
+   const card = prepare(initial, { target, spellType:'COMBAT', ...withMoments({ damage:4, heal:2, convert:1, instability:1 }), range:0 });
    delete card.trigger; delete card.triggerEffects; delete card.ongoing;
    const before = structuredClone(initial);
    let game = apply(history, initial, { ...cast, dummy:true }); const after = structuredClone(game);

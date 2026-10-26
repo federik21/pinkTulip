@@ -72,12 +72,14 @@ describe('areInSameRoom shared room membership',()=>{
 
 describe.each(['ACTION','EVOCATION'] as const)('%s authoritative evocation combat',phase=>{
  describe.each(['mage','evocation'] as const)('enemy %s targets',target=>{
-  it('attacks a co-located enemy, attributes damage/cubes, and immediately ends activation',()=>{
+  it('attacks a co-located enemy, attributes damage/cubes, and finishes when unused movement is skipped',()=>{
    const initial=fixture(phase),before=structuredClone(initial),active=activate(initial);
    expect(initial).toEqual(before);
    expect(active.players[0].actionTokens).toBe(phase==='ACTION'?1:0);
    expect(active.evocations[0].activated).toBe(phase==='EVOCATION');
-   const activeBefore=structuredClone(active),result=applyAction(active,attack(target));
+  const activeBefore=structuredClone(active),attacked=applyAction(active,attack(target));
+  expect(attacked.evocationActivation).toMatchObject({attackUsed:true,movesRemaining:2});
+  const result=applyAction(attacked,{type:'END_EVOCATION_MOVEMENT',playerId:'p1'});
    expect(active).toEqual(activeBefore);expect(result.evocationActivation).toBeNull();
    const victim=target==='mage'?result.players[1].wizard:result.evocations.find(e=>e.id==='victim')!;
    expect(victim.damageCubes).toBe(2);expect(victim.damageByPlayer).toEqual({p1:2});
@@ -115,7 +117,8 @@ describe.each(['ACTION','EVOCATION'] as const)('%s authoritative evocation comba
    const initial=fixture(phase),position={q:distance,r:0};sharedRoom(initial,position);targetPosition(initial,target,position);
    let game=activate(initial);
    if(distance===2)rejected(game,step(position),/adjacent/);
-   game=applyAction(game,attack(target));expect(game.evocationActivation).toBeNull();
+  game=applyAction(game,attack(target));expect(game.evocationActivation).toMatchObject({attackUsed:true,movesRemaining:2});
+  game=applyAction(game,{type:'END_EVOCATION_MOVEMENT',playerId:'p1'});expect(game.evocationActivation).toBeNull();
    const victim=target==='mage'?game.players[1].wizard:game.evocations.find(e=>e.id==='victim')!;
    expect(victim.damageCubes).toBe(2);cubesConserved(game);
   });
@@ -132,7 +135,7 @@ describe.each(['ACTION','EVOCATION'] as const)('%s authoritative evocation comba
    }
   });
 
-    it.each([0,1,25])('preserves Wounded Fury damage with %i available cubes and attributes only supplied cubes',available=>{
+   it.each([0,1,25])('preserves base Cadaver damage when wounded with %i available cubes and attributes only supplied cubes',available=>{
      const initial=fixture(phase),owner=initial.players[0];
      initial.evocations[0].damageCubes=1;initial.evocations[0].damageByPlayer={p2:1};
      initial.players[1].cubes.available--;initial.players[1].cubes.onEvocations++;
@@ -145,10 +148,10 @@ describe.each(['ACTION','EVOCATION'] as const)('%s authoritative evocation comba
      expect(remaining).toBe(0);cubesConserved(initial);
      const result=applyAction(activate(initial),attack(target));
      const victim=target==='mage'?result.players[1].wizard:result.evocations.find(e=>e.id==='victim')!;
-     expect(victim.damageCubes).toBe(3);
-     expect(victim.damageByPlayer).toEqual(available?{p1:Math.min(3,available)}:{});
-     expect(result.players[0].cubes.available).toBe(Math.max(0,available-3));
-     expect(result.players[0].cubes[target==='mage'?'onWizard':'onEvocations']).toBe(Math.min(3,available));
+   expect(victim.damageCubes).toBe(2);
+   expect(victim.damageByPlayer).toEqual(available?{p1:Math.min(2,available)}:{});
+   expect(result.players[0].cubes.available).toBe(Math.max(0,available-2));
+   expect(result.players[0].cubes[target==='mage'?'onWizard':'onEvocations']).toBe(Math.min(2,available));
      cubesConserved(result);
     });
 
@@ -197,11 +200,13 @@ describe.each(['ACTION','EVOCATION'] as const)('%s authoritative evocation comba
   }
  });
 
- it('defers a capped paid turn handoff until the attack resolves; free attacks alternate owners',()=>{
+ it('defers a capped paid turn handoff until attack and movement finish; free activations alternate owners',()=>{
   const initial=fixture(phase);
   if(phase==='ACTION')initial.activation!.actionsUsed=1;
   let game=activate(initial);expect(game.currentPlayerId).toBe('p1');
   game=applyAction(game,attack('mage'));
+  expect(game.currentPlayerId).toBe('p1');
+  game=applyAction(game,{type:'END_EVOCATION_MOVEMENT',playerId:'p1'});
   expect(game.currentPlayerId).toBe('p2');expect(game.evocationActivation).toBeNull();
   expect(game.activation?.actionsUsed).toBe(phase==='ACTION'?0:undefined);cubesConserved(game);
  });

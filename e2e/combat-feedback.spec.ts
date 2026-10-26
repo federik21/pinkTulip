@@ -17,7 +17,7 @@ const ofKind = <K extends Kind>(game: GameState, kind: K): Event<K>[] =>
   events(game).filter((event): event is Event<K> => event.kind === kind);
 const mage = (game: GameState, id = 'p1') => game.players.find(player => player.id === id)!;
 const room = (game: GameState, id = center) => game.board.rooms.find(chamber => chamber.id === id)!;
-const ownerName = (game: GameState, id: string) => id === BLACK_ROSE_ID ? '(not) Black Rose' : mage(game, id).name;
+const ownerName = (game: GameState, id: string) => id === BLACK_ROSE_ID ? 'Pink Tulip' : mage(game, id).name;
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const notifications = (page: Page) => page.locator('.combat-feedback[role="region"][aria-label="Combat notifications"]');
 const popup = (page: Page, name?: string) => page.locator('.combat-popup').and(
@@ -351,7 +351,7 @@ for (const viewport of [{ width: 1440, height: 1100 }, { width: 390, height: 844
     test('neutral finisher captures dense tied ranks without returning neutral cubes or awarding a solo bonus', async ({ page }) => {
       const game = fixture(); wound(game, 'p4', { p1: 4, p2: 4, p3: 1 });
       game.phase = 'CLEANUP'; game.currentPlayerId = null; game.activation = null;
-      // Deterministic real Black Rose event, not a fabricated defeat notification.
+      // Deterministic real Pink Tulip event, not a fabricated defeat notification.
       const blackEvent = game.eventDeck.find(event => event.kind === 'BLACK_DAMAGE')!;
       game.eventDeck = [{ ...blackEvent, amount: 1 }, ...game.eventDeck.filter(event => event.id !== blackEvent.id)];
       const wire = await mount(page, game);
@@ -474,7 +474,7 @@ for (const viewport of [{ width: 1440, height: 1100 }, { width: 390, height: 844
             expect(wire.visible.readiedSpells!.find(hidden => hidden.id === active.id)).toEqual({
               id: active.id, playerId: active.playerId, card: {
                 id: expect.stringMatching(/^hidden-\d+$/), name: 'Hidden spell', kind: 'SPELL',
-                damage: 0, instability: 0, range: 0, target: 'MODEL', spellType: active.card.spellType,
+                moments:[], range: 0, target: 'MODEL', spellType: active.card.spellType,
               },
             });
           }

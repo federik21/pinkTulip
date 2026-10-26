@@ -1,5 +1,5 @@
 import React from 'react';
-import { areInSameRoom, evocationAttack, GameAction, GameState, Hex, isInStartingRoom, hexKey } from '@brw/game-engine';
+import { areInSameRoom, evocationAttack, Evocation, EVOCATION_MODEL_LIMITS, getEvocationKind, getEvocationSupply, GameAction, GameState, Hex, isInStartingRoom, hexKey } from '@brw/game-engine';
 import { evocationNumber, mageStyle, ownerName, roomNameAt } from './presentation';
 import { DamageBar } from './DamageBar';
 import { ModelEffects } from './ModelEffects';
@@ -12,7 +12,18 @@ export function targetModels(game:GameState):TargetModel[] {
  ];
 }
 
+const portrait=(e:Evocation)=>e.archetype==='DEMON'?'♆':'☠';
 type Props={game:GameState;playerId:string;viewerId:string;enabled:boolean;pending:boolean;send:(action:GameAction)=>void};
+
+export function EvocationSupply({game}:{game:GameState}) {
+ const supply=getEvocationSupply(game);
+ return <section className="evocation-supply" aria-label="Shared evocation supply"><span className="eyebrow">Shared by all mages</span><h2>Model supply</h2>
+  <div className="model-stats" aria-live="polite">
+   <span data-evocation-kind="SUCCUBUS">♆ Succubi <b>{supply.SUCCUBUS}/{EVOCATION_MODEL_LIMITS.SUCCUBUS}</b> available</span>
+   <span data-evocation-kind="CADAVER">☠ Cadavers <b>{supply.CADAVER}/{EVOCATION_MODEL_LIMITS.CADAVER}</b> available</span>
+  </div><p className="hint">Destroyed models return to this supply. Each mage may control at most 3 evocations.</p>
+ </section>;
+}
 
 export function EvocationsPanel({game,playerId,viewerId,enabled,pending,send}:Props) {
  const owner=game.players.find(p=>p.id===playerId)!;
@@ -25,13 +36,16 @@ export function EvocationsPanel({game,playerId,viewerId,enabled,pending,send}:Pr
  return <section className="evocations-panel" id={`retinue-${playerId}`} aria-label={`${owner.name} evocations`}><div className="section-heading"><div><span className="eyebrow">{isOwn?'Your':`${owner.name}’s`} retinue · {evocations.length}/3</span><h2>Evocations · {owner.name}</h2></div></div>
   {!evocations.length&&<p>No evocations yet. Activate a Grey room to summon a Cadaver. Each mage may control up to three models; tokens activate existing models, not summon them.</p>}
   {evocations.map(e=><div className={`evocation-card ${e.id===active?.evocationId?'active-model':''}`} style={mageStyle(e.playerId)} data-owned={isOwn} data-owner-id={e.playerId} data-evocation-id={e.id} key={e.id}>
-    <strong className="evocation-heading"><span className="evocation-portrait" aria-hidden="true">☠</span><span>{e.name} <span className="evocation-number">#{evocationNumber(game,e)}</span></span></strong>
-   <small>{owner.name} · Undead · {roomNameAt(game,e.position)}</small>
+    <strong className="evocation-heading"><span className="evocation-portrait" aria-hidden="true">{portrait(e)}</span><span>{e.name} <span className="evocation-number">#{evocationNumber(game,e)}</span></span></strong>
+   <small>{owner.name} · {e.archetype==='DEMON'?'Demon':'Undead'} · {roomNameAt(game,e.position)}</small>
   <ModelEffects game={game} viewerId={viewerId} modelId={e.id}/>
    <div className="model-stats"><span>↝ {e.movement} movement</span><span>⚔ {evocationAttack(e)} attack</span></div>
    <DamageBar game={game} {...e} name={`${owner.name} ${e.name} #${evocationNumber(game,e)}`}/>
-    <p className="hint">Wounded Fury: +1 attack per damage taken. Attack one enemy model in the same room.</p>
-   {isOwn&&<button disabled={!canActivate||(game.phase==='EVOCATION'&&e.activated)} onClick={()=>send({type:'ACTIVATE_EVOCATION',playerId:viewerId,evocationId:e.id})}>Activate Cadaver #{evocationNumber(game,e)} <small>{game.phase==='EVOCATION'?(e.activated?'Already activated':'Free · once this phase'):'1 token · extra activation'}</small></button>}
+    {getEvocationKind(e)==='SUCCUBUS'&&e.passive==='WOUNDED_FURY'&&<p className="hint">Wounded Fury: +1 attack per damage taken.</p>}
+    <p className="hint">Attack one enemy model in the same room.</p>
+   {e.ability==='SOUL_TITHE'&&<div className="soul-tithe"><p className="hint">Soul Tithe: when {owner.name} takes damage, one of those damage cubes may go on this model instead, wherever it stands.</p>
+    <label className="auto-switch"><input type="checkbox" role="switch" aria-label={`Auto Soul Tithe for ${e.name} #${evocationNumber(game,e)}`} checked={!!e.autoAbility} disabled={!isOwn||!enabled||pending} onChange={event=>send({type:'SET_EVOCATION_AUTO',playerId:viewerId,evocationId:e.id,auto:event.target.checked})}/><span>Auto <small>{e.autoAbility?'Takes a cube without asking':'Asks before taking a cube'}</small></span></label></div>}
+   {isOwn&&<button disabled={!canActivate||(game.phase==='EVOCATION'&&e.activated)} onClick={()=>send({type:'ACTIVATE_EVOCATION',playerId:viewerId,evocationId:e.id})}>Activate {e.name} #{evocationNumber(game,e)} <small>{game.phase==='EVOCATION'?(e.activated?'Already activated':'Free · once this phase'):'1 token · extra activation'}</small></button>}
   </div>)}
   <p className="hint">{isOwn?'Free activations follow Action, one model at a time. Token activations are extra.':'Read-only · only the owner can activate these models.'} Friendly models cannot damage each other.</p>
  </section>;
@@ -43,9 +57,10 @@ export function ActiveEvocationControls({game,playerId,enabled,pending,send}:Omi
  const acting=game.evocations.find(e=>e.id===active?.evocationId);
  if(!active||!acting||active.playerId!==playerId)return null;
  const targets=targetModels(game).filter(t=>t.playerId!==playerId&&areInSameRoom(game,t.position,acting.position)&&!game.board.rooms.some(r=>r.startingFor&&r.tiles.some(h=>hexKey(h)===hexKey(t.position))));
- return <section className="evocation-controls" style={mageStyle(acting.playerId)}><span className="eyebrow">Your active evocation</span><h2><span className="evocation-portrait" aria-hidden="true">☠</span>{acting.name} #{evocationNumber(game,acting)}</h2><p>{active.movesRemaining} movement remaining. Move on the board, then attack one enemy model in this room or finish. Retinue details can stay hidden.</p>
-  {targets.length===0&&<p className="hint">No enemy models in this room. Move into an enemy’s room to attack, or finish the activation.</p>}
-  {targets.map(t=><button disabled={!enabled||pending} key={t.id} onClick={()=>send({type:'EVOCATION_ATTACK',playerId,targetId:t.id})}>Cadaver attack {t.name}<small>{evocationAttack(acting)} damage</small></button>)}
+ return <section className="evocation-controls" aria-label="Active evocation controls" style={mageStyle(acting.playerId)}><span className="eyebrow">Your active evocation</span><h2><span className="evocation-portrait" aria-hidden="true">{portrait(acting)}</span>{acting.name} #{evocationNumber(game,acting)}</h2><p>{active.movesRemaining} movement remaining · {active.attackUsed?'Attack used':'One attack available'}. Move and attack in either order, or use only one. Stop moving early or finish the activation at any time.</p>
+  {!active.attackUsed&&targets.length===0&&<p className="hint">No enemy models in this room. Move into an enemy’s room to attack, or finish the activation.</p>}
+  {!active.attackUsed&&targets.map(t=><button disabled={!enabled||pending} key={t.id} onClick={()=>send({type:'EVOCATION_ATTACK',playerId,targetId:t.id})}>{acting.name} attack {t.name}<small>{evocationAttack(acting)} damage</small></button>)}
+  {active.movesRemaining>0&&<button disabled={!enabled||pending} onClick={()=>send({type:'END_EVOCATION_MOVEMENT',playerId})}>Finish evocation movement early</button>}
   <button disabled={!enabled||pending} onClick={()=>send({type:'END_EVOCATION',playerId})}>Finish evocation</button>
  </section>;
 }

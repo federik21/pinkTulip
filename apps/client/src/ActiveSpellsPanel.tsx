@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActiveSpell, GameState, getSpellType } from '@brw/game-engine';
+import { ActiveSpell, GameAction, GameState, getSpellType } from '@brw/game-engine';
 import { SPELL_TYPE_LABELS, evocationNumber, mageStyle, ownerName } from './presentation';
 import { SpellTypeIcon } from './SpellTypeIcon';
 
@@ -20,6 +20,7 @@ function coversRoom(game:GameState,active:ActiveSpell,roomId:string) {
 }
 
 function condition(active:ActiveSpell) {
+ if(active.card.rulesText)return active.card.rulesText;
  const enemy=active.card.trigger?.relation==='ENEMY'?'An enemy':'The bound model';
  const color=active.card.trigger?.scope==='BOUND_COLOR';
  switch(active.card.trigger?.event) {
@@ -43,23 +44,23 @@ export function TrapReminders({game,viewerId,roomId,targetPlayerId,compact=false
   if(roomId || targetPlayerId)return true;
   if(active.targetPlayerId)return ![viewerId,game.players.find(p=>p.id===viewerId)?.wizard.id].includes(active.targetPlayerId);
   if(active.targetEvocationId)return game.evocations.some(model=>model.id===active.targetEvocationId&&model.playerId!==viewerId);
-  return !!active.roomId;
+  return true;
  });
  if(!own.length)return null;
  return <section className={`trap-reminders${compact?' compact':''}`} role="region" aria-label="Your trap and protection reminders">
-  <span className="eyebrow">Your active bindings · private reminder</span><h2>Remember your active magic</h2>
+  <span className="eyebrow">Your active spells · private reminder</span><h2>Remember your active magic</h2>
   <div className="trap-reminder-list">{own.map(active=><article className="trap-reminder" data-active-spell-id={active.id} style={mageStyle(viewerId)} key={active.id}>
-   <strong><SpellTypeIcon type={getSpellType(active.card)}/>{active.card.name}</strong><small>Bound to {binding(game,active)}</small><small>{condition(active)} · Active</small>
+  <strong><SpellTypeIcon type={getSpellType(active.card)}/>{active.card.name}</strong><small>No target chosen · face down</small><small>{condition(active)} · Active</small>
   </article>)}</div>
  </section>;
 }
 
-export function ActiveSpellsPanel({game,viewerId}:{game:GameState;viewerId:string}) {
+export function ActiveSpellsPanel({game,viewerId,send,disabled=false}:{game:GameState;viewerId:string;send?:(action:GameAction)=>void;disabled?:boolean}) {
  const readied=game.readiedSpells??[],ongoing=game.ongoingSpells??[];
  if(!readied.length&&!ongoing.length)return null;
  return <section className="active-spells-panel" aria-label="Active and ongoing spells">
   <span className="eyebrow">Magic at work</span><h2>Active & ongoing</h2>
-  <p className="hint">Conditions resolve automatically after the current instruction. Nested reactions finish before the interrupted effect resumes.</p>
+  <p className="hint">When a condition occurs, the owner may reveal at the end of the current moment or keep the spell hidden. Owners choose their spell order; different owners follow play order. Nested reactions finish before the interrupted effect resumes.</p>
   {readied.map(active=>{
    const own=active.playerId===viewerId;
    const type=getSpellType(active.card);
@@ -67,8 +68,9 @@ export function ActiveSpellsPanel({game,viewerId}:{game:GameState;viewerId:strin
    return <article className={`active-spell readied-spell ${own?'own-spell':'hidden-spell'}`} data-active-spell-id={active.id} style={mageStyle(active.playerId)} key={active.id}>
     <span className="spell-type" data-spell-type={own||known?type:undefined}>{(own||known)&&<SpellTypeIcon type={type}/>} {own||known?`${SPELL_TYPE_LABELS[type]} · Active`:'Face down · Active'}</span>
     <strong>{own?active.card.name:'Hidden active spell'}</strong>
-    <small>{ownerName(game,active.playerId)}{own?` · ${binding(game,active)}`:''}</small>
+    <small>{ownerName(game,active.playerId)}{own?' · No target chosen · face down':''}</small>
     <p>{own?active.card.rulesText:'Only its type is public. Its name, binding and trigger stay hidden until it reveals.'}</p>
+    {own&&send&&<label>At Cleanup<select aria-label={`Cleanup for ${active.card.name}`} value={active.cleanupDestination??'HAND'} disabled={disabled||!!game.pendingDecision} onChange={event=>send({type:'SET_ACTIVE_SPELL_CLEANUP',playerId:viewerId,activeSpellId:active.id,destination:event.target.value as 'HAND'|'MEMORIES'})}><option value="HAND">Return to Hand</option>{!active.card.powerful&&<option value="MEMORIES">Put in Memories</option>}</select></label>}
    </article>;
   })}
   {ongoing.map(active=><article className="active-spell ongoing-spell" data-active-spell-id={active.id} style={mageStyle(active.playerId)} key={active.id}>

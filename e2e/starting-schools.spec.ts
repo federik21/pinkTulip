@@ -36,7 +36,7 @@ async function expectNoStartingRecap(page: Page) {
 }
 
 const hiddenCard = (index: number): Card => ({ id: `hidden-${index}`, name: 'Hidden spell',
-  kind: 'SPELL', damage: 0, instability: 0, range: 0, target: 'MODEL' });
+  kind: 'SPELL', moments:[], range: 0, target: 'MODEL' });
 const masked = (count: number) => Array.from({ length: count }, (_, index) => hiddenCard(index));
 
 function physicalCards(state: GameState): Card[] {
@@ -105,12 +105,12 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       await pages[1].getByRole('button', { name: 'Mark ready', exact: true }).click();
       const publicDiscards: Card[][] = [];
       for (const [index, page] of pages.entries()) {
-        await expect(page.locator('.phase-track .current span')).toHaveText('(not) Black Rose');
+        await expect(page.locator('.phase-track .current span')).toHaveText('Pink Tulip');
         await dismissOverlay(page);
         const state = states[index]();
         expect(state.phase).toBe('BLACK_ROSE'); expect(state.round).toBe(1);
-        expect(state.log.join('\n')).toContain('Round 1 · (not) Black Rose —');
-        expect(state.log.join('\n')).not.toMatch(/(?<!\(not\) )Black Rose/i);
+        expect(state.log.join('\n')).toContain('Round 1 · Pink Tulip —');
+        expect(state.log.join('\n')).not.toMatch(/black\s*rose|\(not\)/i);
         expect(state.players.map(p => p.startingSchoolId)).toEqual(choices);
         for (const [seat, p] of state.players.entries()) {
           expect(p.hand).toEqual([]); expect(p.personalDeck).toEqual(masked(6));
@@ -141,7 +141,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       await pages[1].getByRole('button', { name: 'Join room', exact: true }).click();
       for (const [index, page] of pages.entries()) {
         await expect.poll(() => states[index]().players.every(p => p.connected)).toBe(true);
-        await expect(page.locator('.phase-track .current span')).toHaveText('(not) Black Rose');
+        await expect(page.locator('.phase-track .current span')).toHaveText('Pink Tulip');
         await dismissOverlay(page);
         const state = states[index]();
         expect(state.round).toBe(1); expect(state.usedEvent).toEqual(beforeReconnect.usedEvent);

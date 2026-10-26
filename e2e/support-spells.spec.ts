@@ -1,6 +1,6 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
 import { closeControls, openMageDetails, selectControlTab, selectSpells, viewRetinue } from './layout-ui';
-import { applyAction, BLACK_ROSE_ID, createGame, MAGE_COLORS } from '../packages/game-engine/src/index';
+import { applyAction, BLACK_ROSE_ID, createGame, MAGE_COLORS, momentTotal } from '../packages/game-engine/src/index';
 import type { Card, Evocation, GameAction, GameState, Hex, Room } from '../packages/game-engine/src/index';
 
 type Cast = Extract<GameAction, { type: 'CAST_SPELL' }>;
@@ -249,8 +249,8 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
         await expect(button).toBeEnabled(); await button.click();
         await expect(hex(page)).toHaveClass(/selected/);
         await expect(castButton(page)).toHaveText(`Cast ${name} on yourself`);
-        await expect(button.locator('.heal-effect')).toContainText(`${card.heal} heal`);
-        if (card.convert) await expect(button.locator('.convert-effect')).toContainText(`${card.convert} convert · damage cubes`);
+        await expect(button.locator('.heal-effect')).toContainText(`${momentTotal(card, 'HEAL')} heal`);
+        if (momentTotal(card, 'CONVERT')) await expect(button.locator('.convert-effect')).toContainText(`${momentTotal(card, 'CONVERT')} convert · damage cubes`);
         await expect(targetSelect(page)).toHaveCount(0); await expectTargetModes(page);
         await hex(page, 'room-0,1').click(); await expect(castButton(page)).toBeDisabled();
         await selectSpells(page); await button.click(); await expect(castButton(page)).toHaveCount(0);
@@ -265,7 +265,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
         expect(after.players.slice(1).map(p => p.wizard)).toEqual(outside.players.slice(1).map(p => p.wizard));
         expect(after.evocations).toEqual(outside.evocations);
         expect((after.feedbackEvents ?? []).map(event => [event.kind, 'amount' in event ? event.amount : null])).toEqual([
-          ['HEAL', card.heal],
+          ['HEAL', momentTotal(card, 'HEAL')],
         ]); // Alchemist's Refuge skips its own CONVERT, then heals the original owners' cubes.
         expect(after.board).toEqual(outside.board);
       });
@@ -290,7 +290,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
           await selectSpells(page);
           const slot: Slot = index === 0 ? 'slot1' : 'rapid';
           const button = prepared(page, scenario.name, slot);
-          const amount = card[scenario.effect]!;
+          const amount = momentTotal(card, scenario.effect === 'heal' ? 'HEAL' : 'CONVERT');
           await expect(button.locator(`.${scenario.effect}-effect`)).toContainText(`${amount} ${scenario.effect}`);
           if (scenario.effect === 'convert') await expect(button.locator('.convert-effect')).toContainText('damage cubes');
           await button.click(); await expectTargetModes(page); await hex(page).click();

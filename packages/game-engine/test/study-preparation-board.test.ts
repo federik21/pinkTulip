@@ -390,7 +390,7 @@ describe('host room-count configuration and atomic roster-scaled startup',()=>{
    expect(s.library[0].cards).toEqual(before.library[0].cards.slice(count*7));expect(s.library.slice(1)).toEqual(before.library.slice(1));
    expect(s.powerfulDeck).toEqual(before.powerfulDeck);conserved(s,ids);
   const board=structuredClone(s.board);s=advance(s);expect(s.board).toEqual(board);
-  // Isolate the next round boundary: sizing is not reapplied at Black Rose.
+  // Isolate the next round boundary: sizing is not reapplied at Pink Tulip.
   s.phase='CLEANUP';s=advance(s);expect(s.board).toEqual(board);
   });
  }

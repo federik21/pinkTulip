@@ -168,7 +168,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
             for (const p of game.players) {
               await expect(dialog.locator(`.mage-legend [data-player-id="${p.id}"]`)).toContainText(p.name);
             }
-            await expect(dialog.locator('.mage-legend')).toContainText('(not) Black Rose · neutral');
+            await expect(dialog.locator('.mage-legend')).toContainText('Pink Tulip · neutral');
             // Neither legend is duplicated elsewhere while the popup is open.
             await expect(page.locator('.room-legend')).toHaveCount(1);
             await expect(page.locator('.mage-legend')).toHaveCount(1);
@@ -486,7 +486,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       await openQuickReference(page); await expect(page.locator('.reference')).toContainText('Hand 1/7'); await closeQuickReference(page);
       expect(wire.state.feedbackEvents?.filter(event => event.kind === 'SPELL_TRIGGERED') ?? []).toEqual([]);
       await page.getByRole('button', { name: /^Begin round 3/ }).click();
-      await expect(page.locator('.phase-track .current span')).toHaveText('(not) Black Rose'); await dismissOverlay(page);
+      await expect(page.locator('.phase-track .current span')).toHaveText('Pink Tulip'); await dismissOverlay(page);
       expect(wire.commands).toEqual([
         { type: 'END_ACTIVATION', playerId: 'p1' },
         { type: 'ADVANCE_PHASE', playerId: 'p1', expectedPhase: 'CLEANUP', expectedRound: 2 },
@@ -531,7 +531,7 @@ for (const { count, override } of realBoards) {
       }
       for (const page of pages) await page.getByRole('button', { name: 'Mark ready', exact: true }).click();
       for (const [index, page] of pages.entries()) {
-        await expect(page.locator('.phase-track .current span')).toHaveText('(not) Black Rose'); await dismissOverlay(page);
+        await expect(page.locator('.phase-track .current span')).toHaveText('Pink Tulip'); await dismissOverlay(page);
         await expect(page.locator('.board .hex')).toHaveCount(roomsPerColor * 6 + 5);
         await expect(page.locator('.board .hex.start-room')).toHaveCount(4);
         for (const color of ['crimson', 'azure', 'emerald', 'amber', 'violet', 'grey']) {

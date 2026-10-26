@@ -9,12 +9,13 @@ type Entry = { before: GameState; after: GameState; label: string };
 const labels: Partial<Record<GameAction['type'], string>> = {
  END_ACTIVATION: 'End turn', PASS_ROUND: 'Pass round',
  ACTIVATE_EVOCATION: 'Activate evocation', EVOCATION_STEP: 'Move evocation',
+ END_EVOCATION_MOVEMENT: 'End evocation movement',
  EVOCATION_ATTACK: 'Evocation attack', END_EVOCATION: 'End evocation',
  BEGIN_PHYSICAL_ACTION: 'Begin physical action', PERFORM_MOVEMENT: 'Begin movement',
  ACTIVATE_ROOM: 'Activate room', SKIP_PHYSICAL_EFFECTS: 'Skip physical effects',
  INFLICT_ATTACK: 'Attack', EXPLORE: 'Explore', EXPLORE_STEP: 'Move mage',
  END_EXPLORE: 'End movement', DISCARD_EXIT: 'Discard to leave', PUNCH: 'Attack',
- CAST_SPELL: 'Cast spell', CAST_POWERFUL_SPELL: 'Cast forgotten spell',
+ CAST_SPELL: 'Cast spell', ACTIVATE_SPELL: 'Activate hidden spell', CAST_POWERFUL_SPELL: 'Cast forgotten spell',
 };
 const drawEffects = new Set<RoomEffect>(['DRAW_POWERFUL', 'DRAW_GRIMOIRE', 'DRAW_DISCARD', 'DRAW_QUEST']);
 const actionPhase = (game: GameState) => game.phase === 'ACTION' || game.phase === 'EVOCATION';
@@ -144,7 +145,9 @@ export class ActionHistory {
    after = applyAction(after, { type: 'START_GAME', playerId: after.hostId });
   }
   const label = labels[action.type];
-  if (!label || !actionPhase(before) || before.phase !== after.phase || before.round !== after.round ||
+  // A paused action (Soul Tithe prompt) and its resolution depend on another mage's
+  // answer, so neither side can be undone or redone.
+  if (!label || before.pendingDecision || after.pendingDecision || !actionPhase(before) || before.phase !== after.phase || before.round !== after.round ||
       activatesDrawRoom(before, after, action) || acquiredHiddenInformation(before, after)) {
    this.clear();
   } else {

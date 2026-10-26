@@ -1,5 +1,5 @@
 {
-  "name": "black-rose-wars-prototype",
+  "name": "pink-tulip-battles-prototype",
   "private": true,
   "workspaces": [
     "packages/*",

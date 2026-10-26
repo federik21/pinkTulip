@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page, type TestInfo, type WebSocketRoute } from '@playwright/test';
-import { applyAction, BLACK_ROSE_ID, createGame, getSpellType } from '../packages/game-engine/src/index';
+import { applyAction, BLACK_ROSE_ID, createGame, getSpellType, momentTotal } from '../packages/game-engine/src/index';
 import type { Card, Evocation, GameAction, GameState } from '../packages/game-engine/src/index';
 import { ActionHistory } from '../apps/server/src/action-history';
 import { publicState } from '../apps/server/src/public-state';
@@ -113,7 +113,7 @@ function expectProjection(game: GameState, history: ActionHistory, viewer: strin
   expect(visible.eventDeck).toEqual([]); expect(visible.questDeck).toEqual([]);
   const hidden = (cards: Card[]) => cards.forEach(card => expect(card).toEqual({
     id: expect.stringMatching(/^hidden-\d+$/), name: 'Hidden spell', kind: 'SPELL',
-    damage: 0, instability: 0, range: 0, target: 'MODEL',
+    moments:[], range: 0, target: 'MODEL',
   }));
   hidden(visible.powerfulDeck);
   expect(visible.powerfulDeck).toHaveLength(game.powerfulDeck.length);
@@ -140,7 +140,7 @@ function expectProjection(game: GameState, history: ActionHistory, viewer: strin
   }
   expect(visible.readiedSpells).toEqual(game.readiedSpells?.map((active, index) => active.playerId === viewer ? active : {
     id: active.id, playerId: active.playerId, card: { id: `hidden-${index}`, name: 'Hidden spell', kind: 'SPELL',
-      damage: 0, instability: 0, range: 0, target: 'MODEL', ...(active.card.spellType ? { spellType: active.card.spellType } : {}) },
+      moments:[], range: 0, target: 'MODEL', ...(active.card.spellType ? { spellType: active.card.spellType } : {}) },
   }));
   expect(visible.ongoingSpells).toEqual(game.ongoingSpells); expect(visible.activeSpellOrder).toEqual(game.activeSpellOrder);
   expect(visible.log).toEqual(game.log); return visible;
@@ -259,14 +259,14 @@ function dummyCost(reply: Reply, card: Card, id: string, slot: Slot) {
   const library = structuredClone(before.library); library.find(deck => deck.id === card.schoolId)!.discard.push(card);
   expect(after.library).toEqual(library); expect(after.removedCards).toEqual(before.removedCards);
   const board = structuredClone(before.board), target = board.rooms.find(candidate => candidate.id === id)!;
-  target.instability += card.instability;
-  if (card.instability) target.cubesByPlayer.p1 = (target.cubesByPlayer.p1 ?? 0) + card.instability;
+  target.instability += momentTotal(card, 'INSTABILITY');
+  if (momentTotal(card, 'INSTABILITY')) target.cubesByPlayer.p1 = (target.cubesByPlayer.p1 ?? 0) + momentTotal(card, 'INSTABILITY');
   expect(after.board).toEqual(board);
   expect(after.players[0].cubes).toEqual({ ...before.players[0].cubes,
-    available: before.players[0].cubes.available - card.instability, onBoard: before.players[0].cubes.onBoard + card.instability });
+    available: before.players[0].cubes.available - momentTotal(card, 'INSTABILITY'), onBoard: before.players[0].cubes.onBoard + momentTotal(card, 'INSTABILITY') });
   expect(after.players.slice(1).map(player => player.cubes)).toEqual(before.players.slice(1).map(player => player.cubes));
   const additions = [`Rose Warden casts ${card.name} on a dummy (no model effects) for 1 action (no physical token).`];
-  if (card.instability) additions.push(`Rose Warden places ${card.instability} instability in ${target.name} (${target.instability}/${target.instabilityLimit}).`);
+  if (momentTotal(card, 'INSTABILITY')) additions.push(`Rose Warden places ${momentTotal(card, 'INSTABILITY')} instability in ${target.name} (${target.instability}/${target.instabilityLimit}).`);
   if (after.currentPlayerId !== before.currentPlayerId) {
     additions.push(`${after.players.find(player => player.id === after.currentPlayerId)!.name} takes a turn: 2 actions total across physical actions, spell casts, and discard-to-move.`);
   }
