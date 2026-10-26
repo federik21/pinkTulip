@@ -5,6 +5,7 @@ export type Hex = { q: number; r: number };
 export type SpellTarget = 'SELF' | 'ROOM' | 'MAGE' | 'EVOCATION' | 'MODEL';
 export type SpellType = 'COMBAT' | 'CONTINGENCY' | 'TRAP' | 'PROTECTION';
 export type TriggerEvent = 'ENTER_ROOM' | 'DAMAGE_TAKEN' | 'DAMAGE_DEALT' | 'SPELL_CAST' | 'ROOM_ACTIVATED' | 'EVOCATION_ACTIVATED' | 'MAGE_ATTACK' | 'EVOCATION_ATTACK' | 'QUEST_SOLVED' | 'MAGE_DEFEATED' | 'VP_CHANGED';
+export type DamageOrigin = 'MAGE_PHYSICAL' | 'SPELL' | 'EVOCATION' | 'ROOM' | 'QUEST' | 'NEUTRAL';
 export type FeedbackTarget = { kind: 'MAGE' | 'EVOCATION' | 'ROOM'; id: string; name: string; roomId?: string };
 export type GameFeedbackEvent = { id: string; round: number; interruptId?: string } & (
  | { kind: 'DAMAGE'; target: FeedbackTarget; sourceId: string; amount: number }
@@ -13,13 +14,13 @@ export type GameFeedbackEvent = { id: string; round: number; interruptId?: strin
  | { kind: 'MAGE_DEFEATED'; target: FeedbackTarget; sourceId: string; contributions: Record<string, number>; awards: Array<{ playerId: string; cubes: number; rank: number; tied: boolean; points: number }>; bonusPlayerId?: string; returnedCubes: Record<string, number>; respawnRoomId: string }
  | { kind: 'SPELL_TRIGGERED'; activeSpellId: string; ownerId: string; cardName: string; spellType: SpellType; trigger: TriggerEvent; target?: FeedbackTarget; roomId?: string; ongoing: boolean; effects?: string[] }
 );
-export type TriggerCondition = { event: TriggerEvent; relation: 'ENEMY' | 'SELF' | 'ANY'; scope: 'BOUND_MODEL' | 'BOUND_ROOM' | 'BOUND_COLOR' | 'ANY' };
+export type TriggerCondition = { event: TriggerEvent; relation: 'ENEMY' | 'SELF' | 'ANY'; scope: 'BOUND_MODEL' | 'BOUND_ROOM' | 'BOUND_COLOR' | 'ANY'; relationTo?: 'EVENT_ACTOR' | 'EVENT_MODEL'; damageOrigins?: DamageOrigin[] };
 // One step of an effect. A Moment is a tagged union (the TypeScript equivalent of
 // a Swift enum with associated values): add a variant with its own payload to
 // teach the engine a new kind of step. A card resolves its moments in array
 // order, and the same moment may appear any number of times (e.g. two hits).
 export type MomentSplash = { amount?: number; range: number; when: 'AFTER_DEFEAT' };
-export type Moment =
+export type Moment = (
  | { effect: 'DAMAGE'; amount: number; splash?: MomentSplash }
  | { effect: 'HEAL'; amount: number }
  | { effect: 'CONVERT'; amount: number }
@@ -27,10 +28,11 @@ export type Moment =
  | { effect: 'INSTABILITY'; amount: number }
  | { effect: 'PAIN'; amount: number }
  | { effect: 'SUMMON'; kind: 'SUCCUBUS'; position?: 'CASTER' | 'TARGET' }
- | { effect: 'ACTIVATE_EVOCATION'; kind: 'SUCCUBUS' };
+ | { effect: 'ACTIVATE_EVOCATION'; kind: 'SUCCUBUS' }
+) & { scope?: 'CASTER' | 'CASTER_ROOM' };
 export type MomentEffect = Moment['effect'];
 export type TriggeredInstruction = Moment & { target: 'BOUND_MODEL' | 'BOUND_ROOM' | 'EVENT_MODEL' | 'EVENT_ACTOR' | 'EVENT_ROOM' | 'OWNER' };
-export type Card = { id: string; name: string; kind: 'SPELL'; moments: Moment[]; range: number; target: SpellTarget; schoolId?: string; powerful?: boolean; spellType?: SpellType; rulesText?: string; trigger?: TriggerCondition; triggerEffects?: TriggeredInstruction[]; ongoing?: { trigger: TriggerCondition; effects: TriggeredInstruction[] } };
+export type Card = { id: string; name: string; kind: 'SPELL'; moments: Moment[]; range: number; target: SpellTarget; schoolId?: string; powerful?: boolean; spellType?: SpellType; rulesText?: string; trigger?: TriggerCondition; triggerTarget?: 'EVENT_MODEL' | 'EVENT_ACTOR' | 'EVENT_ROOM'; triggerEffects?: TriggeredInstruction[]; ongoing?: { trigger: TriggerCondition; effects: TriggeredInstruction[] } };
 export type ActiveSpell = { id: string; playerId: string; card: Card; targetPlayerId?: string; targetEvocationId?: string; roomId?: string; cleanupDestination?: 'HAND' | 'MEMORIES' };
 export type RoomColor = 'crimson' | 'azure' | 'emerald' | 'amber' | 'violet' | 'grey';
 export type RoomEffect = 'ROOM_DAMAGE' | 'DRAW_DISCARD' | 'INSTABILITY' | 'DRAW_QUEST' | 'DRAW_GRIMOIRE' | 'SUMMON_CADAVER' | 'DRAW_POWERFUL';
@@ -96,7 +98,7 @@ export type Room = {
 export type Board = { tiles: Hex[]; rooms: Room[] };
 export type PhysicalAction = { kind: 'EXPLORE' | 'ATTACK'; mainEffectUsed: boolean; movementStarted: boolean };
 // actionsUsed counts every turn action, including spells and discard-to-move.
-export type Activation = { playerId: PlayerId; actionsUsed: number; exploring: number; sequencedSpellUsed: boolean; spellsCast: number; discardedExit: boolean; roomEffectUsed: boolean; physicalAction?: PhysicalAction | null };
+export type Activation = { playerId: PlayerId; actionsUsed: number; exploring: number; sequencedSpellUsed: boolean; spellsCast: number; discardedExit: boolean; roomEffectUsed: boolean; physicalAction?: PhysicalAction | null; mustExitCell?: boolean };
 export type GameState = {
  gameId: string; hostId: PlayerId; round: number; phase: Phase; players: Player[]; board: Board;
  // Undefined selects the roster-based default at START_GAME, not during play.

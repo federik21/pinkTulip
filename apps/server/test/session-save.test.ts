@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
-import { createGame, addPlayerToLobby } from '@brw/game-engine';
+import { applyAction, createGame, addPlayerToLobby } from '@brw/game-engine';
 import type { GameState } from '@brw/game-engine';
 import { isSavable, saveFileFromEnv, SessionStore } from '../src/session-store';
 
@@ -187,4 +187,24 @@ it('upgrades cards saved with flat damage, heal, convert and instability fields 
  const [room] = new SessionStore(file, () => []).load();
  expect(room.game.players[0].hand[0]).toEqual({ id:'legacy-card', name:'Old Hex', kind:'SPELL', range:2, target:'MODEL',
   moments:[{ effect:'INSTABILITY', amount:1 }, { effect:'DAMAGE', amount:2 }] });
+});
+
+it('restores infinite spell ranges from JSON saves and permits off-axis targeting', () => {
+ const file = join(tempDir(), 'infinite-range.json');
+ const game = createGame(2);game.phase='ACTION';game.round=1;game.currentPlayerId='p1';
+ game.activation={playerId:'p1',actionsUsed:0,exploring:0,sequencedSpellUsed:false,spellsCast:0,discardedExit:false,roomEffectUsed:false};
+ game.players[0].wizard.position={q:0,r:0};game.players[1].wizard.position={q:1,r:1};
+ const index=game.library[0].cards.findIndex(card=>card.name==='Submission');
+ const card=game.library[0].cards.splice(index,1)[0];
+ game.players[0].prepared.slot1={card,used:false};
+ const store=new SessionStore(file,()=>[{id:'infinite',game}]);
+ expect(store.flush()).toEqual(expect.any(String));
+ expect(JSON.parse(readFileSync(file,'utf8')).rooms[0].game.players[0].prepared.slot1.card.range).toBeNull();
+ const [loaded]=store.load();
+ expect(loaded.game.players[0].prepared.slot1!.card.range).toBe(Number.POSITIVE_INFINITY);
+ for(const p of loaded.game.players)p.connected=true;
+ const result=applyAction(loaded.game,{type:'CAST_SPELL',playerId:'p1',slot:'slot1',targetPlayerId:'p2'});
+ expect(result.players[1].wizard.damageCubes).toBe(1);
+ expect(result.players[0].wizard.blackDamage).toBe(1);
+ expect(result.players[0].prepared.slot1?.used).toBe(true);
 });

@@ -6,6 +6,19 @@
 .quick-access{position:fixed;z-index:70;bottom:calc(12px + env(safe-area-inset-bottom,0px));left:50%;transform:translateX(-50%);display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;width:min(620px,calc(100% - 24px));padding:6px;background:#19151ff5;border:1px solid #796144;border-radius:16px;box-shadow:0 8px 36px #0009;backdrop-filter:blur(16px)}
 .quick-access button{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-width:0;min-height:48px;padding:5px 4px;border-color:transparent;background:transparent}
 .quick-access button>span{font-size:19px;line-height:1}
+.quick-access-icon{position:relative}
+.quest-notification{position:absolute;top:-7px;left:12px;display:flex;align-items:center;justify-content:center;min-width:17px;height:17px;padding:0 4px;border-radius:10px;border:1px solid #ffdfa0;background:#e0b56f;color:#241522;font-size:10px;font-weight:800;box-shadow:0 0 9px #e0b56f66}
+.visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
+.quest-entry{min-width:0;overflow-wrap:anywhere;padding:14px 0;border-top:1px solid #574650}
+.quest-entry.quest-ready{border-top-color:#d7b67b}
+.quest-heading{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px 12px}
+.quest-heading h3{margin:0}
+.quest-ready-label{color:#f5d698;font-size:11px;font-weight:700}
+.quest-reward{margin:10px 0;padding:10px 12px;border:1px solid #69523d;border-radius:8px;background:#d7b67b0a}
+.quest-reward p{margin:4px 0;font-size:12px}
+.quest-entry>label{display:block;margin-top:12px;font-size:12px}
+.quest-entry select{display:block;width:100%;max-width:100%;min-height:44px;margin-top:6px;padding:9px 12px;border:1px solid #796144;border-radius:8px;background:#19151f;color:#e5e0da;font:inherit}
+.quest-entry>button{margin-top:10px;min-height:44px;white-space:normal;max-width:100%}
 .quick-access button>small{margin:0;font-size:10px;line-height:1.3}
 .quick-access button.selected,.quick-access button[aria-expanded="true"]{background:#d7b67b22;border-color:#d7b67b88;color:#f4d5a2}
 .control-banner.is-floating{position:fixed;z-index:65;left:50%;transform:translateX(-50%);bottom:calc(88px + env(safe-area-inset-bottom,0px));width:min(960px,calc(100% - 24px));max-height:calc(100dvh - 110px - env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;margin:0;padding:14px 18px;box-shadow:0 -8px 55px #0009;border-color:#b09263;background:#211a25fa;backdrop-filter:blur(16px)}
@@ -45,11 +58,11 @@
 .chronicle-drawer .log:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
 @keyframes chronicle-slide{from{transform:translateX(100%);opacity:.5}to{transform:translateX(0);opacity:1}}
 /* Acting-mage strip: stays under the top of the viewport and carries Undo/Redo and End turn. */
-.turn-banner{position:sticky;top:0;z-index:45;margin:10px auto 0;padding:9px 18px;gap:14px;background:linear-gradient(110deg,#45301f,#211b25 75%),#211b25;box-shadow:0 6px 22px #000a,0 0 24px #d7b67b1c}
-.turn-banner>.acting-mage-icon{font-size:30px}
+.turn-banner{position:sticky;top:0;z-index:45;margin:10px auto 0;padding:9px 18px;gap:10px 14px;flex-wrap:wrap;background:linear-gradient(110deg,#45301f,#211b25 75%),#211b25;box-shadow:0 6px 22px #000a,0 0 24px #d7b67b1c}
+.turn-banner>.acting-mage-icon{font-size:30px;flex-shrink:0}
 .turn-banner strong{font-size:18px;margin:1px 0}
-.turn-banner-text{flex:1 1 auto}
-.turn-banner-controls{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-left:auto;flex-shrink:0}
+.turn-banner-text{flex:1 1 160px}
+.turn-banner-controls{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px;max-width:100%;margin-left:auto;flex:0 1 auto}
 .turn-history{display:flex;gap:6px}
 .turn-banner button{min-height:40px;margin:0;padding:6px 12px;font-size:12px;white-space:nowrap}
 .turn-banner .end-turn{min-width:132px;font-size:13px}
@@ -57,6 +70,19 @@
 .physical-shortcuts button{max-width:220px;overflow:hidden;text-overflow:ellipsis}
 .turn-banner .end-turn:disabled{opacity:.55}
 .turn-action-count{font-weight:400;letter-spacing:.3px}
+.cell-exit-reminder{max-width:220px;color:#f5d698;font-size:11px;white-space:normal}
+/* Evocation controls occupy their own row, never the mage-name/history row. */
+.turn-banner>.evocation-controls{order:1;flex:1 1 100%;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px 12px;min-width:0;max-width:100%;margin:0;padding:10px 0 0;border:0;border-top:1px solid #d7b67b33;border-radius:0;background:none;box-shadow:none}
+.turn-banner .evocation-control-heading{grid-column:1/-1;display:flex;align-items:center;flex-wrap:wrap;gap:4px 14px}
+.turn-banner .evocation-control-heading h2{margin:0;font-size:17px;overflow-wrap:anywhere}
+.turn-banner .evocation-control-heading p,.turn-banner .evocation-no-targets{margin:0;font-size:12px;line-height:1.5}
+.turn-banner .evocation-attack-targets{display:flex;flex-wrap:wrap;align-items:stretch;gap:6px;max-height:min(120px,18dvh);min-width:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#b09263 #18131d;padding:2px}
+.turn-banner .evocation-attack-targets:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.turn-banner .evocation-controls button{width:auto;min-width:0;max-width:100%;margin:0;white-space:normal;overflow-wrap:anywhere;line-height:1.4}
+.turn-banner .evocation-attack-targets button{flex:1 1 175px;text-align:left}
+.turn-banner .evocation-controls button small{font-size:11px;margin-top:2px}
+.turn-banner .evocation-finish-actions{display:flex;align-items:stretch;gap:6px}
+.turn-banner .evocation-finish-actions button{flex:1 1 0;max-width:170px}
 @media(max-width:1380px){.turn-banner{margin-left:26px;margin-right:26px}}
 @media(max-width:720px){
  .turn-banner{margin:8px 8px 0;padding:7px 10px;gap:8px;flex-wrap:wrap}
@@ -68,6 +94,12 @@
  .physical-shortcuts button{flex:1 1 0;min-width:0}
  .turn-banner button{min-height:44px;padding:6px 10px}
  .turn-banner .end-turn{flex:1;min-width:0}
+ .turn-banner>.evocation-controls{grid-template-columns:minmax(0,1fr);padding-top:8px;gap:8px}
+ .turn-banner .evocation-control-heading{gap:4px 10px}
+ .turn-banner .evocation-control-heading h2{font-size:16px}
+ .turn-banner .evocation-control-heading p{font-size:11px}
+ .turn-banner .evocation-attack-targets button{flex-basis:130px;font-size:11px;padding:6px 8px}
+ .turn-banner .evocation-finish-actions button{max-width:none;font-size:11px;padding:6px 8px}
  .quick-access{width:calc(100% - 16px);bottom:calc(6px + env(safe-area-inset-bottom,0px));border-radius:13px}
  .control-banner.is-floating{bottom:calc(80px + env(safe-area-inset-bottom,0px));padding:10px 12px;width:calc(100% - 16px);max-height:calc(100dvh - 98px - env(safe-area-inset-bottom,0px))}
  .is-floating .control-banner-heading>.eyebrow{font-size:9px;letter-spacing:1px}

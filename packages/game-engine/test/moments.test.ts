@@ -75,25 +75,23 @@ describe('moments are an ordered, repeatable list of effect steps', () => {
  it('triggers a bound Pain Mark on each damage moment the mage deals', () => {
   const s = fixture();
   const mark: Card = {
-    id: 'pain-mark', name: 'Pain Mark', kind: 'SPELL', moments: [], range: 1, target: 'SELF',
+    id: 'pain-mark', name: 'Pain Mark', kind: 'SPELL', moments: [], range: 1, target: 'MAGE',
     ongoing: { trigger: { event: 'DAMAGE_DEALT', relation: 'ANY', scope: 'BOUND_MODEL' }, effects: [{ effect: 'DAMAGE', amount: 2, target: 'EVENT_ACTOR' }] },
   };
-  s.players[0].prepared.rapid = { card: mark, used: false };
-  const marked = applyAction(s, { type: 'CAST_SPELL', playerId: 'p1', slot: 'rapid', targetPlayerId: 'p1' });
-  const after = cast(marked, spell([moment.damage(3)], 'MODEL'), { targetPlayerId: 'p3' });
+  s.ongoingSpells = [{ id:'mark', playerId:'p2', targetPlayerId:'p1', card:mark }];
+  s.activeSpellOrder = ['mark'];
+  const after = cast(s, spell([moment.damage(3)], 'MODEL'), { targetPlayerId: 'p3' });
   expect(after.players[0].wizard.damageCubes).toBe(2);
-  expect(after.players[0].wizard.damageByPlayer.p1).toBe(2);
+  expect(after.players[0].wizard.damageByPlayer.p2).toBe(2);
  });
 
  it('converts the most recently taken damage cubes to Pink Tulip color', () => {
   const s = fixture();
-  s.players[0].wizard.damageByPlayer = { p3: 2, p2: 1 };
-  s.players[0].wizard.damageCubes = 3;
-  s.players[0].wizard.damageOrder = ['p3', 'p2', 'p3'];
-  const after = cast(s, spell([moment.blackRoseConvert(2)], 'SELF'), {});
-  expect(after.players[0].wizard.damageByPlayer).toEqual({ p3: 1 });
-  expect(after.players[0].wizard.blackDamage).toBe(2);
-  expect(after.players[0].wizard.damageOrder).toEqual(['p3', 'black-rose', 'black-rose']);
+  wound(s,1,{p3:2,p4:1});s.players[1].wizard.damageOrder=['p3','p4','p3'];
+  const after = cast(s, spell([moment.blackRoseConvert(2)], 'MAGE'), {targetPlayerId:'p2'});
+  expect(after.players[1].wizard.damageByPlayer).toEqual({ p3: 1 });
+  expect(after.players[1].wizard.blackDamage).toBe(2);
+  expect(after.players[1].wizard.damageOrder).toEqual(['p3', 'black-rose', 'black-rose']);
  });
 
  it('summons and activates a Succubus as a card moment', () => {

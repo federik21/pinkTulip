@@ -153,19 +153,18 @@ describe('optional reveal, interrupt ordering and resumption',()=>{
   expect(prompt).toEqual(before);
   expect(result.players[2].wizard.damageCubes).toBe(0);
  });
- it('chooses the Torment target only after a room is activated, with infinite range and no starting cells',()=>{
+ it('forces Torment onto the damage dealer after damage, not onto a bystander or victim',()=>{
   const s=fixture();s.currentPlayerId='p2';s.activation!.playerId='p2';
   s.players[2].wizard.position={q:1,r:1};
-  s.board.rooms.find(r=>r.id==='room-0,0')!.effect='INSTABILITY';
   active(s,card('Torment'));
-  const begun=applyAction(s,{type:'BEGIN_PHYSICAL_ACTION',playerId:'p2',kind:'EXPLORE'});
-  const prompt=applyAction(begun,{type:'ACTIVATE_ROOM',playerId:'p2'});
-  expect(decision(prompt).options[0].targets.map(t=>t.id)).toContain('p3');
-  const result=respond(prompt,'Torment','p3');
-  expect(result.players[1].wizard.damageCubes).toBe(0);
-  expect(result.players[2].wizard.damageCubes).toBe(2);
-  expect(result.evocations[0]).toMatchObject({playerId:'p1',name:'Succubus',position:{q:1,r:1},activated:true});
-  expect(result.board.rooms.find(r=>r.id==='room-0,0')!.instability).toBe(1);
+  prepare(s,{id:'dealer',name:'Dealer',kind:'SPELL',spellType:'COMBAT',target:'MAGE',range:Infinity,moments:[moment.damage(1)]},'p2');
+  const prompt=applyAction(s,{type:'CAST_SPELL',playerId:'p2',slot:'rapid',targetPlayerId:'p3'});
+  expect(decision(prompt).event).toBe('DAMAGE_DEALT');
+  expect(decision(prompt).options[0].targets.map(t=>t.id)).toEqual(['p2']);
+  const result=respond(prompt,'Torment','p2');
+  expect(result.players[1].wizard.damageCubes).toBe(2);
+  expect(result.players[2].wizard.damageCubes).toBe(1);
+  expect(result.evocations[0]).toMatchObject({playerId:'p1',name:'Succubus',position:{q:0,r:0},activated:true});
  });
  it('cancels remaining physical effects if the acting mage is defeated by a trap',()=>{
   const s=fixture();s.players[0].wizard.health=1;
@@ -178,11 +177,13 @@ describe('optional reveal, interrupt ordering and resumption',()=>{
   expect(result.activation?.exploring).toBe(0);
   expect(()=>applyAction(result,{type:'PERFORM_MOVEMENT',playerId:'p1'})).toThrow(/Begin a physical action|Not your turn/);
  });
- it('uses a room chosen at reveal for Liquefy the Pain, not the defeated mage respawn',()=>{
-  const s=fixture();s.players[1].wizard.health=1;active(s,card('Liquefy the Pain'));
+ it('forces Liquefy the Pain to its own defeated mage room before respawn',()=>{
+  const s=fixture();s.players[1].wizard.health=1;s.players[1].wizard.position={q:1,r:0};active(s,card('Liquefy the Pain'),'p2');
   const prompt=strike(s,[moment.damage(1)]);
+  expect(decision(prompt).playerId).toBe('p2');
+  expect(decision(prompt).options[0].targets.map(t=>t.id)).toEqual(['room-1,0']);
   const result=respond(prompt,'Liquefy the Pain','room-1,0');
-  expect(result.evocations[0]).toMatchObject({name:'Succubus',position:{q:1,r:0},activated:true});
+  expect(result.evocations[0]).toMatchObject({playerId:'p2',name:'Succubus',position:{q:1,r:0},activated:true});
   expect(result.players[1].wizard.position).not.toEqual(result.evocations[0].position);
  });
  it('rejects other players, stale prompts, forged targets, and unrelated actions atomically',()=>{

@@ -18,6 +18,7 @@ export function ActivationConfirmation({card,disabled,onConfirm,onCancel}:{card:
  return <Modal title={`Activate ${card.name}?`} onCancel={onCancel}>
   <p>{SPELL_TYPE_LABELS[getSpellType(card)]} · Place this spell face down and mark it Active. No room or target is chosen.</p>
   {card.rulesText&&<p>{card.rulesText}</p>}
+    {card.triggerTarget&&<p className="hint">The triggering event fixes this spell's target when you reveal it.</p>}
   <p className="hint">Costs 1 turn action. When its condition occurs, you may reveal and resolve it, or keep it hidden for later.</p>
   <div className="button-row"><button type="button" className="primary" autoFocus disabled={disabled} onClick={onConfirm}>Confirm activation</button><button type="button" disabled={disabled} onClick={onCancel}>Cancel</button></div>
  </Modal>;
@@ -27,13 +28,15 @@ function RevealDecision({decision,disabled,send}:{decision:Extract<PendingDecisi
  const [spellId,setSpellId]=useState(decision.options[0].activeSpellId);
  const option=decision.options.find(o=>o.activeSpellId===spellId)!;
  const [targetId,setTargetId]=useState('');
- const respond=(reveal:boolean)=>send({type:'RESPOND_REACTIVE_SPELL',playerId:decision.playerId,key:decision.key,...(reveal?{activeSpellId:spellId,targetId}:{} )});
+ const resolvedTargetId=option.card.triggerTarget?option.targets[0]?.id:targetId;
+ const respond=(reveal:boolean)=>send({type:'RESPOND_REACTIVE_SPELL',playerId:decision.playerId,key:decision.key,...(reveal?{activeSpellId:spellId,targetId:resolvedTargetId}:{} )});
  return <Modal title="Reveal an active spell?">
   <p>The current moment has finished. You may reveal a matching Trap or Protection, or keep all of them hidden for a later trigger.</p>
   <label>Spell to resolve next<select aria-label="Spell to reveal" value={spellId} disabled={disabled} onChange={event=>{setSpellId(event.target.value);setTargetId('');}}>{decision.options.map(o=><option key={o.activeSpellId} value={o.activeSpellId}>{o.card.name}</option>)}</select></label>
   {option.card.rulesText&&<p>{option.card.rulesText}</p>}
-  <label>Target<select aria-label="Triggered spell target" value={targetId} disabled={disabled} onChange={event=>setTargetId(event.target.value)}><option value="">Choose a target</option>{option.targets.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label>
-  <div className="button-row"><button type="button" className="primary" disabled={disabled||!targetId} onClick={()=>respond(true)}>Reveal and resolve</button><button type="button" disabled={disabled} onClick={()=>respond(false)}>Keep all hidden</button></div>
+    {option.card.triggerTarget?<p className="forced-trigger-target" role="status">Target fixed by trigger: <strong>{option.targets[0]?.name}</strong></p>:
+     <label>Target<select aria-label="Triggered spell target" value={targetId} disabled={disabled} onChange={event=>setTargetId(event.target.value)}><option value="">Choose a target</option>{option.targets.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label>}
+    <div className="button-row"><button type="button" className="primary" disabled={disabled||!resolvedTargetId} onClick={()=>respond(true)}>Reveal and resolve</button><button type="button" disabled={disabled} onClick={()=>respond(false)}>Keep all hidden</button></div>
   <p className="hint">Choose the order of your matching spells. Nested reactions finish before the interrupted effect resumes.</p>
  </Modal>;
 }

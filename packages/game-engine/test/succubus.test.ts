@@ -132,8 +132,9 @@ describe('Progressable quests',()=>{
   const card=createAgonyDeck('test').find(c=>c.name==='Master of Pleasure');
   expect(card).toBeTruthy();
   expect(card).toMatchObject({spellType:'TRAP',target:'MAGE',range:Number.POSITIVE_INFINITY});
-  expect(card?.trigger).toMatchObject({event:'QUEST_SOLVED',relation:'SELF',scope:'BOUND_MODEL'});
-  expect(card?.triggerEffects).toContainEqual(expect.objectContaining({effect:'DAMAGE',amount:2,target:'BOUND_MODEL'}));
+  expect(card?.trigger).toMatchObject({event:'QUEST_SOLVED',relation:'ENEMY',scope:'ANY'});
+  expect(card?.triggerTarget).toBe('EVENT_MODEL');
+  expect(card?.triggerEffects).toContainEqual(expect.objectContaining({effect:'DAMAGE',amount:2,target:'EVENT_MODEL'}));
   expect(card?.triggerEffects).toContainEqual(expect.objectContaining({effect:'SUMMON',kind:'SUCCUBUS',position:'TARGET'}));
  });
  it('defines Ineluctable Pain as a model spell that triggers on any VP change',()=>{

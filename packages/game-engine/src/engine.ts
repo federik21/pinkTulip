@@ -1,4 +1,4 @@
-import { Activation, ActiveSpell, Board, Card, DecisionAnswer, DecisionDetails, Evocation, EvocationKind, FeedbackTarget, GameAction, GameFeedbackEvent, GameState, Hex, Moment, Player, PlayerId, Room, RoomId, RoomColor, RoomEffect, TriggerCondition, TriggerEvent, TriggeredInstruction } from './types';
+import { Activation, ActiveSpell, Board, Card, DamageOrigin, DecisionAnswer, DecisionDetails, Evocation, EvocationKind, FeedbackTarget, GameAction, GameFeedbackEvent, GameState, Hex, Moment, Player, PlayerId, Room, RoomId, RoomColor, RoomEffect, TriggerCondition, TriggerEvent, TriggeredInstruction } from './types';
 import { createEvents, createLibrary, createPowerfulDeck, createQuests, getSpellType, hasMoment, shuffle } from './cards';
 
 export class GameRuleError extends Error {}
@@ -244,15 +244,11 @@ function awardVictoryPoints(s:GameState,id:PlayerId,points:number):string {
 }
 
 function completeQuest(s: GameState, p: Player, kind: NonNullable<Player['quest']>['kind'], amount=1) {
- const remaining: NonNullable<Player['quest']>[]=[];
- for(const quest of [p.quest,...p.additionalQuests]) {
-  if(!quest)continue;
-  if(quest.kind!==kind || amount<quest.amount){remaining.push(quest);continue;}
-  awardVictoryPoints(s,p.id,quest.reward);p.questsCompleted++;
-  s.log.push(`${p.name} completes “${quest.name}”: +${quest.reward} VP.`);
-  s.questDiscard.push(quest);
+ for(const quest of heldQuests(p)) {
+  if(quest.kind!==kind || amount<quest.amount || quest.completed || quest.claimed)continue;
+  quest.progress=quest.amount;quest.completed=true;
+  s.log.push(`${p.name} completes “${quest.name}” and may spend its reward action.`);
  }
- p.quest=remaining.shift()??null;p.additionalQuests=remaining;
 }
 
 function progressQuest(s: GameState, p: Player, kind: NonNullable<Player['quest']>['kind'], amount=1) {
@@ -268,6 +264,17 @@ function progressQuest(s: GameState, p: Player, kind: NonNullable<Player['quest'
    s.log.push(`${p.name} completes “${quest.name}” and may spend its reward action.`);
   }
  }
+}
+
+/** Public target choices for the quest panel, with the same printed targeting rules as resolution. */
+export function getQuestRewardTargets(s:GameState,p:Player,card:Card):FeedbackTarget[] {
+ if(card.target==='ROOM')return s.board.rooms.filter(room=>!room.startingFor && room.tiles.some(h=>isWithinSpellRange(p.wizard.position,h,card.range))).map(roomFeedbackTarget);
+ const models=[...s.players.map(m=>({id:m.id,name:m.name,playerId:m.id,position:m.wizard.position,kind:'MAGE' as const})),
+  ...s.evocations.map(e=>({id:e.id,name:`${e.name} #${e.number??1} · ${getPlayer(s,e.playerId).name}`,playerId:e.playerId,position:e.position,kind:'EVOCATION' as const}))];
+ return models.filter(model=>spellCanTargetModel(card,p.id,model.playerId,model.kind)
+  && (card.target==='SELF' || !roomAt(s,model.position)?.startingFor)
+  && isWithinSpellRange(p.wizard.position,model.position,card.range))
+  .map(model=>({id:model.id,name:model.name,kind:model.kind,roomId:roomAt(s,model.position)?.id}));
 }
 
 function resolveQuestRewardAction(s: GameState, p: Player, card: Card, action: { targetPlayerId?: PlayerId; targetEvocationId?: string; roomId?: RoomId; dummy?: boolean } = {}) {
@@ -297,12 +304,14 @@ function resolveQuestRewardAction(s: GameState, p: Player, card: Card, action: {
  }
  const refs=targets.map(t=>snapshot(s,t.mage?.id ?? t.evocation!.id)!);
  const actor=snapshot(s,p.id)!;
- resolveEffectMoments(s,p,card,room,refs,actor);
+ resolveEffectMoments(s,p,card,room,refs,actor,'QUEST');
 }
 
 function drawQuest(s:GameState) {
- if(!s.questDeck.length){s.questDeck=shuffle(s.questDiscard,()=>resolutionRandom(s));s.questDiscard=[];}
- return s.questDeck.shift()??null;
+ const quest=drawFromDiscard(s,s.questDeck,s.questDiscard);
+ // A recycled physical quest starts a new objective, not an already-earned reward.
+ if(quest){quest.progress=0;quest.completed=false;quest.claimed=false;}
+ return quest;
 }
 
 // Runtime-only instruction context. Nothing executable, cyclic or private is
@@ -310,7 +319,7 @@ function drawQuest(s:GameState) {
 type ModelSnapshot = { id:string; playerId:string; kind:'MAGE'|'EVOCATION'; generation:number };
 // Local to a single effect, so a nested spell cannot replace its summoned model.
 type EffectResolution = { summoned?:ModelSnapshot; activationIsExplicit:boolean };
-type SpellEvent = { event:TriggerEvent; model?:ModelSnapshot; actor?:ModelSnapshot; roomId?:string; target?:FeedbackTarget; afterResolution?:()=>void };
+type SpellEvent = { event:TriggerEvent; model?:ModelSnapshot; actor?:ModelSnapshot; roomId?:string; target?:FeedbackTarget; damageOrigin?:DamageOrigin; afterResolution?:()=>void };
 type PendingMageDefeat = { ref:ModelSnapshot; roomId?:string; target:FeedbackTarget; source?:Player; beforeDefeat?: (target:Player)=>void };
 type ReplayEntropy={ids:string[];random:number[]};
 type InstructionContext = { generations:Map<string,number>; bindings:Map<string,ModelSnapshot>; defeats:Map<string,PendingMageDefeat>; resolutions:number; interruptId?:string; answers:DecisionAnswer[]; cursor:number; momentDepth:number; events:SpellEvent[]; entropy:ReplayEntropy; idCursor:number; randomCursor:number };
@@ -387,8 +396,9 @@ function invalidateModel(s:GameState,ref:ModelSnapshot) {
   s.activation.physicalAction=null;
   s.activation.roomEffectUsed=true;
  }
- // A model-bound readiness cannot silently rebind to a mage's respawn either.
- for(const active of [...s.readiedSpells!,...s.ongoingSpells!]) {
+ // One-shot legacy bindings expire, but ongoing cards survive defeat. Their
+ // old-generation references stay invalid until the mage has actually respawned.
+ for(const active of s.readiedSpells!.slice()) {
   if(context(s).bindings.get(active.id)?.id!==ref.id)continue;
   retireActiveSpell(s,active);
   s.log.push(`${active.card.name} expires with its bound model.`);
@@ -396,7 +406,11 @@ function invalidateModel(s:GameState,ref:ModelSnapshot) {
 }
 function matchesTrigger(s:GameState,active:ActiveSpell,condition:TriggerCondition,event:SpellEvent) {
  if(condition.event!==event.event)return false;
- if(condition.relation!=='ANY' && (!event.actor || (condition.relation==='SELF')!==(event.actor.playerId===active.playerId)))return false;
+ // Legacy in-flight Pain Marks may predate the declarative source filter.
+ const damageOrigins=condition.damageOrigins??(active.card.name==='Pain Mark'&&active.card.ongoing&&condition.event==='DAMAGE_DEALT'?['MAGE_PHYSICAL','SPELL']:undefined);
+ if(damageOrigins&&(!event.damageOrigin||!damageOrigins.includes(event.damageOrigin)))return false;
+ const related=condition.relationTo==='EVENT_MODEL'?event.model:event.actor;
+ if(condition.relation!=='ANY' && (!related || (condition.relation==='SELF')!==(related.playerId===active.playerId)))return false;
  // Hidden spells have no board binding. Evaluate model/room conditions at the
  // event location instead; ongoing spells retain their explicit binding.
  if(s.readiedSpells!.some(a=>a.id===active.id)) {
@@ -433,17 +447,17 @@ function atMomentEnd(s:GameState,resolve:()=>void) {
   for(const event of events)resolveQueuedEvent(s,event);
  }
 }
-function resolveInstruction(s:GameState,owner:Player,instruction:TriggeredInstruction,ref:ModelSnapshot|undefined,roomId:string|undefined,actor:ModelSnapshot|undefined,effect?:EffectResolution) {
- atMomentEnd(s,()=>resolveInstructionBody(s,owner,instruction,ref,roomId,actor,effect));
+function resolveInstruction(s:GameState,owner:Player,instruction:TriggeredInstruction,ref:ModelSnapshot|undefined,roomId:string|undefined,actor:ModelSnapshot|undefined,effect?:EffectResolution,damageOrigin:DamageOrigin='SPELL') {
+ atMomentEnd(s,()=>resolveInstructionBody(s,owner,instruction,ref,roomId,actor,effect,damageOrigin));
 }
-function resolveInstructionBody(s:GameState,owner:Player,instruction:TriggeredInstruction,ref:ModelSnapshot|undefined,roomId:string|undefined,actor:ModelSnapshot|undefined,effect?:EffectResolution) {
+function resolveInstructionBody(s:GameState,owner:Player,instruction:TriggeredInstruction,ref:ModelSnapshot|undefined,roomId:string|undefined,actor:ModelSnapshot|undefined,effect?:EffectResolution,damageOrigin:DamageOrigin='SPELL') {
  const target=liveModel(s,ref),room=roomId?s.board.rooms.find(r=>r.id===roomId):undefined;
  if(instruction.effect==='INSTABILITY') {
   if(room)placeInstability(s,room,instruction.amount,owner);
  } else if(instruction.effect==='CONVERT' && room) {
   if(!room.scored&&!room.reconstructed)convertCubes(s,owner,room.cubesByPlayer,'onBoard',instruction.amount,room.instability,roomFeedbackTarget(room));
  } else if(instruction.effect==='BLACK_ROSE_CONVERT' && target && target.mage) {
-  convertRecentDamageToBlackRose(s,target.mage,instruction.amount,modelFeedbackTarget(s,ref)!);
+  convertRecentDamageToBlackRose(s,owner,target.mage,instruction.amount,modelFeedbackTarget(s,ref)!);
  } else if(instruction.effect==='PAIN') {
   damage(s,owner,instruction.amount);
  } else if(instruction.effect==='SUMMON') {
@@ -454,11 +468,11 @@ function resolveInstructionBody(s:GameState,owner:Player,instruction:TriggeredIn
   activateEffectSummon(s,owner,instruction.kind,effect);
  } else if(room && (instruction.effect==='DAMAGE' || instruction.effect==='HEAL')) {
   const refs=[...s.players.filter(p=>inRoom(p,room)).map(p=>snapshot(s,p.id)!),...s.evocations.filter(e=>room.tiles.some(h=>hexKey(h)===hexKey(e.position))).map(e=>snapshot(s,e.id)!)];
-  for(const model of refs)resolveInstruction(s,owner,instruction,model,undefined,actor);
+  for(const model of refs)resolveInstruction(s,owner,instruction,model,undefined,actor,effect,damageOrigin);
  } else if(target) {
   switch(instruction.effect) {
    case 'DAMAGE':
-    if(ref!.playerId===owner.id && instruction.target !== 'EVENT_ACTOR')break;
+    if(ref!.playerId===owner.id)break;
     if(target.mage) {
       const splash = instruction.splash;
       const position = { ...target.mage.wizard.position };
@@ -468,12 +482,12 @@ function resolveInstructionBody(s:GameState,owner:Player,instruction:TriggeredIn
         for(const other of s.players) {
           if(other.id===defeated.id || !other.wizard.alive)continue;
           if(hexDistance(position,other.wizard.position) <= splash.range) {
-            damage(s,other,splashAmount,owner,dealActor);
+            damage(s,other,splashAmount,owner,dealActor,undefined,damageOrigin);
           }
         }
-      } : undefined);
+      } : undefined,damageOrigin);
     }
-    else damageEvocation(s,target.evocation!,instruction.amount,owner,actor);
+    else damageEvocation(s,target.evocation!,instruction.amount,owner,actor,damageOrigin);
     break;
   case 'HEAL':healModel(s,target.model,target.location,instruction.amount,owner.id,modelFeedbackTarget(s,ref)!);break;
   case 'CONVERT':
@@ -499,17 +513,20 @@ function resolveQueuedEvent(s:GameState,event:SpellEvent) {
  resolveEvent(s,event);
  event.afterResolution?.();
 }
-function reactiveTargets(s:GameState,active:ActiveSpell):FeedbackTarget[] {
+function reactiveTargets(s:GameState,active:ActiveSpell,event:SpellEvent):FeedbackTarget[] {
  const owner=getPlayer(s,active.playerId),card=active.card;
- if(card.target==='ROOM')return s.board.rooms.filter(r=>!r.startingFor && r.tiles.some(h=>isWithinSpellRange(owner.wizard.position,h,card.range))).map(roomFeedbackTarget);
- const refs=[...s.players.filter(p=>p.wizard.alive).map(p=>snapshot(s,p.id)!),...s.evocations.map(e=>snapshot(s,e.id)!)];
+ if(card.target==='ROOM')return s.board.rooms.filter(r=>!r.startingFor && (!card.triggerTarget || card.triggerTarget==='EVENT_ROOM' && r.id===event.roomId) && r.tiles.some(h=>isWithinSpellRange(owner.wizard.position,h,card.range))).map(roomFeedbackTarget);
+ if(card.triggerTarget==='EVENT_ROOM')return [];
+ const forced=card.triggerTarget==='EVENT_ACTOR'?event.actor:event.model;
+ const refs=card.triggerTarget?(forced?[forced]:[]):[...s.players.filter(p=>p.wizard.alive).map(p=>snapshot(s,p.id)!),...s.evocations.map(e=>snapshot(s,e.id)!)];
  return refs.filter(ref=>{
-  const model=liveModel(s,ref)!,room=roomAt(s,model.model.position);
+  const model=liveModel(s,ref);if(!model)return false;
+  const room=roomAt(s,model.model.position);
   return !room?.startingFor && spellCanTargetModel(card,owner.id,ref.playerId,ref.kind) && isWithinSpellRange(owner.wizard.position,model.model.position,card.range);
  }).map(ref=>modelFeedbackTarget(s,ref)!);
 }
 function chooseReactiveSpell(s:GameState,owner:Player,eligible:ActiveSpell[],event:SpellEvent) {
- const options=eligible.map(active=>({activeSpellId:active.id,card:active.card,targets:reactiveTargets(s,active)})).filter(option=>option.targets.length);
+ const options=eligible.map(active=>({activeSpellId:active.id,card:active.card,targets:reactiveTargets(s,active,event)})).filter(option=>option.targets.length);
  if(!options.length)return;
  const ctx=context(s),key=`reactive|${event.event}|${owner.id}|${event.model?.id??event.roomId??''}|${ctx.cursor}`;
  const answer=ctx.answers[ctx.cursor];
@@ -547,6 +564,7 @@ function resolveEvent(s:GameState,event:SpellEvent) {
   const selectedRoom=selection?.targetId?s.board.rooms.find(r=>r.id===selection.targetId):undefined;
   const selectedRef=selection?.targetId&&!selectedRoom?snapshot(s,selection.targetId):undefined;
   const bound=selectedRef??context(s).bindings.get(active.id);
+  if(active.card.ongoing&&(active.targetPlayerId||active.targetEvocationId)&&!bound)continue;
   if(bound&&!liveModel(s,bound))continue;
   assert(++context(s).resolutions<=128,'Reactive spell resolution limit exceeded (128); root action cancelled');
   const ongoing=s.ongoingSpells!.some(a=>a.id===active.id);
@@ -557,7 +575,7 @@ function resolveEvent(s:GameState,event:SpellEvent) {
   // Event targets/rooms are public only now, after the canonical reveal above.
   const roomId=selectedRoom?.id??modelFeedbackTarget(s,selectedRef)?.roomId??event.roomId??eventTarget?.roomId??active.roomId;
   const room=roomId?s.board.rooms.find(r=>r.id===roomId):undefined;
-  const target=modelFeedbackTarget(s,bound)??eventTarget??(room?roomFeedbackTarget(room):undefined);
+  const target=modelFeedbackTarget(s,bound)??(selectedRoom?roomFeedbackTarget(selectedRoom):eventTarget)??(room?roomFeedbackTarget(room):undefined);
   const instructions=ongoing?active.card.ongoing!.effects:active.card.triggerEffects??[];
   const trigger=appendFeedback(s,{kind:'SPELL_TRIGGERED',activeSpellId:active.id,ownerId:owner.id,
    cardName:active.card.name,spellType:getSpellType(active.card),trigger:event.event,ongoing,
@@ -571,7 +589,8 @@ function resolveEvent(s:GameState,event:SpellEvent) {
      resolveEffectMoments(s,owner,active.card,selectedRoom??room,refs,ownerRef!);
     } else {
    const effect:EffectResolution={activationIsExplicit:instructions.some(step=>step.effect==='ACTIVATE_EVOCATION')};
-   for(const instruction of instructions) {
+  for(const [index,instruction] of instructions.entries()) {
+   s.log.push(`Moment ${index+1}/${instructions.length} · ${active.card.name}: ${describeInstruction(instruction)}`);
     let ref:ModelSnapshot|undefined,roomId:string|undefined;
     switch(instruction.target) {
      case 'BOUND_MODEL':ref=bound;break;
@@ -592,26 +611,27 @@ function resolveEvent(s:GameState,event:SpellEvent) {
 }
 function describeInstruction(instruction:TriggeredInstruction):string {
  const targets:Record<TriggeredInstruction['target'],string>={BOUND_MODEL:'the bound model',BOUND_ROOM:'the bound room',EVENT_MODEL:'the triggering model',EVENT_ACTOR:'the acting model',EVENT_ROOM:'the triggering room',OWNER:'the owner’s mage'};
- const target=targets[instruction.target];
+ const target=instruction.scope==='CASTER'?'the caster’s mage':instruction.scope==='CASTER_ROOM'?(instruction.effect==='DAMAGE'?'enemy models in the caster’s room':'every model in the caster’s room'):targets[instruction.target];
  switch(instruction.effect) {
   case 'DAMAGE':return `Deal ${instruction.amount} damage to ${target}.`;
   case 'HEAL':return `Heal up to ${instruction.amount} ${instruction.amount===1?'wound':'wounds'} on ${target}.`;
   case 'CONVERT':return `Convert up to ${instruction.amount} ${instruction.amount===1?'cube':'cubes'} on ${target} to the owner’s color.`;
-  case 'BLACK_ROSE_CONVERT':return `Pink Tulip converts up to ${instruction.amount} ${instruction.amount===1?'recent wound':'recent wounds'} on ${target} to Pink Tulip.`;
+  case 'BLACK_ROSE_CONVERT':return `Convert the last ${instruction.amount} damage cubes received from other mages on ${target} to Pink Tulip black (ignored on friendly models).`;
   case 'INSTABILITY':return `Place up to ${instruction.amount} instability in ${target}.`;
   case 'PAIN':return `The Pink Tulip inflicts ${instruction.amount} ${instruction.amount===1?'damage cube':'damage cubes'} on the resolving mage.`;
   case 'SUMMON':return `Summon a ${instruction.kind} ${instruction.position === 'TARGET' ? 'in the target’s room' : 'at the owner’s position'} and activate it.`;
   case 'ACTIVATE_EVOCATION':return `Activate the summoned ${instruction.kind}: move and attack in either order, or use only one, without spending another action or token.`;
  }
 }
-function modelEvent(s:GameState,event:TriggerEvent,ref:ModelSnapshot,actor=ref,roomId?:string) {
+function modelEvent(s:GameState,event:TriggerEvent,ref:ModelSnapshot,actor=ref,roomId?:string,damageOrigin?:DamageOrigin) {
  const model=liveModel(s,ref);
- emitEvent(s,{event,model:ref,actor,roomId:roomId??(model?roomAt(s,model.model.position)?.id:undefined)});
+ emitEvent(s,{event,model:ref,actor,roomId:roomId??(model?roomAt(s,model.model.position)?.id:undefined),damageOrigin});
 }
 function moveModel(s:GameState,ref:ModelSnapshot,destination:Hex) {
  const target=liveModel(s,ref);if(!target)return;
  const from=roomAt(s,target.model.position)?.id;
  target.model.position={...destination};
+ if(target.mage&&s.activation?.playerId===target.mage.id&&!isInStartingRoom(s,target.mage))delete s.activation.mustExitCell;
  const to=roomAt(s,destination)?.id;
  if(to && from!==to)modelEvent(s,'ENTER_ROOM',ref,ref,to);
 }
@@ -643,9 +663,10 @@ function soulTithe(s:GameState,target:Player,inflicted:number,source?:Player) {
  return taken;
 }
 
-function damage(s: GameState, target: Player, amount: number, source?: Player, actor?: ModelSnapshot | null, beforeDefeat?: (target: Player) => void) {
+function damage(s: GameState, target: Player, amount: number, source?: Player, actor?: ModelSnapshot | null, beforeDefeat?: (target: Player) => void, damageOrigin:DamageOrigin='NEUTRAL') {
+ if(source?.id===target.id)return;
  // Direct attacks/events get the same complete-moment reaction boundary as spells.
- if(context(s).momentDepth===0){atMomentEnd(s,()=>damage(s,target,amount,source,actor,beforeDefeat));return;}
+ if(context(s).momentDepth===0){atMomentEnd(s,()=>damage(s,target,amount,source,actor,beforeDefeat,damageOrigin));return;}
  if(amount<=0) return;
  const eventActor = actor === null ? undefined : (actor ?? (source ? snapshot(s,source.id):undefined));
  // Overkill cannot claim more contribution than the health actually removed.
@@ -654,7 +675,7 @@ function damage(s: GameState, target: Player, amount: number, source?: Player, a
  const tithed=soulTithe(s,target,inflicted,source);
  for(const e of tithed) {
   s.log.push(`${e.name} #${e.number??1} takes a damage cube meant for ${target.name}.`);
-  damageEvocation(s,e,1,source,eventActor);
+  damageEvocation(s,e,1,source,eventActor,damageOrigin);
  }
  inflicted-=tithed.length;
  if(inflicted===0)return;
@@ -676,11 +697,7 @@ function damage(s: GameState, target: Player, amount: number, source?: Player, a
  }
  s.log.push(`${target.name} suffers ${inflicted} ${source ? 'damage' : 'black damage'}.`);
  appendFeedback(s,{kind:'DAMAGE',target:feedbackTarget,sourceId:source?.id??BLACK_ROSE_ID,amount:inflicted});
- if(source && eventActor) {
-  const actorRef=snapshot(s,source.id)!;
-  const actorTarget=modelFeedbackTarget(s,actorRef)!;
-  emitEvent(s,{event:'DAMAGE_DEALT',model:actorRef,actor:eventActor,roomId:roomId??roomAt(s,source.wizard.position)?.id,target:actorTarget});
- }
+ if(source && eventActor)modelEvent(s,'DAMAGE_DEALT',eventActor,eventActor,undefined,damageOrigin);
  emitEvent(s,{event:'DAMAGE_TAKEN',model:ref,actor:eventActor,roomId,target:feedbackTarget});
  if(target.wizard.damageCubes<target.wizard.health)return;
  const existing=context(s).defeats.get(ref.id);
@@ -730,11 +747,11 @@ function settleMageDefeat(s:GameState,pending:PendingMageDefeat) {
   s.log.push(`${owner.name}: +1 VP exclusive-color bonus on defeated ${target.name}.`);
  }
  // The final hitter receives quest/kill trophy credit, but no separate flat VP bonus.
- if(source) {
+ if(source && source.id!==target.id) {
   source.trophies=[...source.trophies,target.id];
   source.kills=source.trophies.length;
   completeQuest(s,source,'KILL');
- } else {
+ } else if(!source) {
   s.blackRose.kills++; awardVictoryPoints(s,target.id,2);
   s.log.push(`${target.name} gains +2 VP for being defeated by Pink Tulip.`);
  }
@@ -745,13 +762,15 @@ function settleMageDefeat(s:GameState,pending:PendingMageDefeat) {
  target.wizard.damageByPlayer={};
  target.wizard.damageOrder=[];
  target.wizard.position={...getRoom(s,target.wizard.startingRoomId).tiles[0]};
+ for(const active of s.ongoingSpells!)if(active.targetPlayerId && [target.id,target.wizard.id].includes(active.targetPlayerId))bindActiveSpell(s,active);
  // After-defeat splash only follows a confirmed defeat, never a rescued mage.
  pending.beforeDefeat?.(target);
 }
 
 // `source` is absent for Pink Tulip damage redirected onto an evocation: no physical cubes move.
-function damageEvocation(s:GameState,e:Evocation,amount:number,source?:Player,actor=source?snapshot(s,source.id):undefined) {
+function damageEvocation(s:GameState,e:Evocation,amount:number,source?:Player,actor=source?snapshot(s,source.id):undefined,damageOrigin:DamageOrigin='NEUTRAL') {
  if(e.playerId===source?.id || !s.evocations.includes(e))return;
+ if(context(s).momentDepth===0){atMomentEnd(s,()=>damageEvocation(s,e,amount,source,actor,damageOrigin));return;}
  const inflicted=Math.min(amount,Math.max(0,e.health-e.damageCubes));
  if(inflicted<=0)return;
  const ref=snapshot(s,e.id)!,roomId=roomAt(s,e.position)?.id;
@@ -762,6 +781,7 @@ function damageEvocation(s:GameState,e:Evocation,amount:number,source?:Player,ac
  if(source&&cubes)e.damageByPlayer[source.id]=(e.damageByPlayer[source.id]??0)+cubes;
  s.log.push(source?`${e.name} suffers ${inflicted} damage; ${source.name} places ${cubes} damage cubes.`:`${e.name} suffers ${inflicted} black damage.`);
  appendFeedback(s,{kind:'DAMAGE',target:feedbackTarget,sourceId:source?.id??BLACK_ROSE_ID,amount:inflicted});
+ if(source && actor)modelEvent(s,'DAMAGE_DEALT',actor,actor,undefined,damageOrigin);
  if(e.damageCubes<e.health){emitEvent(s,{event:'DAMAGE_TAKEN',model:ref,actor,roomId,target:feedbackTarget});return;}
  invalidateModel(s,ref);
  for(const owner of s.players) {
@@ -794,15 +814,19 @@ function removeDamageHistory(wizard: {damageOrder?:PlayerId[]}, amount: number) 
  wizard.damageOrder ??= [];
  wizard.damageOrder.splice(0,Math.min(amount,wizard.damageOrder.length));
 }
-function convertRecentDamageToBlackRose(s:GameState,target:Player,amount:number,targetFeedback:FeedbackTarget) {
+function convertRecentDamageToBlackRose(s:GameState,caster:Player,target:Player,amount:number,targetFeedback:FeedbackTarget) {
+ if(caster.id===target.id)return 0;
  target.wizard.damageOrder ??= [];
  let remaining=Math.min(amount,target.wizard.damageOrder.length),converted=0;
  for(let index=target.wizard.damageOrder.length-1; index>=0 && remaining>0; index--) {
   const sourceId=target.wizard.damageOrder[index];
-  if(sourceId===BLACK_ROSE_ID)continue;
+  if(sourceId===BLACK_ROSE_ID || sourceId===target.id)continue;
+  const owner=s.players.find(p=>p.id===sourceId);
+  if(!owner)continue;
   if((target.wizard.damageByPlayer[sourceId]??0)<=0)continue;
   target.wizard.damageByPlayer[sourceId]-=1;
   if(target.wizard.damageByPlayer[sourceId]===0)delete target.wizard.damageByPlayer[sourceId];
+  owner.cubes.available++;owner.cubes.onWizard--;
   target.wizard.blackDamage+=1;
   target.wizard.damageOrder[index]=BLACK_ROSE_ID;
   converted++;remaining--;
@@ -927,8 +951,9 @@ function startBlackRose(s: GameState) {
   }
   p.prepared=emptyPrepared();
  }
- if(!s.eventDeck.length) { s.eventDeck=shuffle(s.eventDiscard,()=>resolutionRandom(s)); s.eventDiscard=[]; }
- const event=s.eventDeck.shift()!; s.usedEvent=event; s.eventDiscard.push(event);
+ const event=drawFromDiscard(s,s.eventDeck,s.eventDiscard);
+ if(!event)throw new GameRuleError('No event cards are available');
+ s.usedEvent=event; s.eventDiscard.push(event);
  s.log.push(`Round ${s.round} · Pink Tulip — ${event.name}.`);
  if(event.kind==='BLACK_DAMAGE') for(const p of s.players) damage(s,p,event.amount);
  else {
@@ -952,7 +977,11 @@ function beginStudyIfQuestsFit(s:GameState) {
 function finishBlackRose(s: GameState) {
  assert(!s.blackRoseResolved,'Waiting for quest-limit discards');
  for(const p of s.players) {
-  const quests=heldQuests(p);p.quest=quests.shift()??null;p.additionalQuests=quests;
+  const held=heldQuests(p);
+  // Legacy saves may still keep solved cards in a held slot. They neither
+  // block a replacement nor count against the active, unsolved quest limit.
+  for(const quest of held.filter(q=>q.claimed))if(!s.questDiscard.some(q=>q.id===quest.id))s.questDiscard.push(quest);
+  const quests=held.filter(q=>!q.claimed);p.quest=quests.shift()??null;p.additionalQuests=quests;
   if(!p.quest) {
    p.quest=drawQuest(s);
    if(p.quest)s.log.push(`${p.name} receives a personal quest.`);
@@ -963,9 +992,15 @@ function finishBlackRose(s: GameState) {
  beginStudyIfQuestsFit(s);
 }
 
-function drawOne(s:GameState,deck: Card[], discard: Card[]): Card {
+// Refill only on exhaustion, including between cards in a multi-card draw.
+// Use resolution entropy so an interrupted action replays the same shuffle.
+function drawFromDiscard<T>(s:GameState,deck:T[],discard:T[]):T|null {
  if(!deck.length) { deck.push(...shuffle(discard,()=>resolutionRandom(s))); discard.length=0; }
- const card=deck.shift(); if(!card) throw new GameRuleError('This deck is empty');
+ return deck.shift()??null;
+}
+
+function drawOne(s:GameState,deck: Card[], discard: Card[]): Card {
+ const card=drawFromDiscard(s,deck,discard); if(!card) throw new GameRuleError('This deck is empty');
  return card;
 }
 
@@ -991,7 +1026,7 @@ function activateRoomBody(s:GameState,p:Player,targetRoomId?:string) {
  progressQuest(s,p,'ROOM_ACTIVATE');
  switch(room!.effect) {
   case 'ROOM_DAMAGE': {
-   for(const ref of targets)resolveInstruction(s,p,{effect:'DAMAGE',amount:reward,target:'EVENT_MODEL'},ref,undefined,actor);
+  for(const ref of targets)resolveInstruction(s,p,{effect:'DAMAGE',amount:reward,target:'EVENT_MODEL'},ref,undefined,actor,undefined,'ROOM');
    break;
   }
   case 'DRAW_DISCARD': {
@@ -1034,6 +1069,7 @@ function activateRoomBody(s:GameState,p:Player,targetRoomId?:string) {
 
 function endExplore(s:GameState,p:Player,activate:boolean,targetRoomId?:string) {
  const a=s.activation!;
+ assert(!a.mustExitCell || !isInStartingRoom(s,p),'Use your remaining action to leave the cell before finishing movement');
  if(a.physicalAction) {
   assert(!activate,'Use ACTIVATE_ROOM separately for a pending physical action');
   a.exploring=0;a.physicalAction.mainEffectUsed=true;finishPhysicalEffects(s);return;
@@ -1073,6 +1109,16 @@ function validateExitDestination(s:GameState,p:Player,destination:Hex) {
  assert(areAdjacent(p.wizard.position,destination),'Move one adjacent space at a time');
  assert(s.board.tiles.some(h=>hexKey(h)===hexKey(destination)),'Destination outside board');
  assert(!s.board.rooms.some(r=>r.startingFor && r.tiles.some(h=>hexKey(h)===hexKey(destination))),'Mages cannot enter or reenter starting rooms');
+}
+
+export function mustLeaveCell(s:GameState,p:Player):boolean {
+ const a=s.activation;
+ if(s.phase!=='ACTION'||s.currentPlayerId!==p.id||a?.playerId!==p.id||!isInStartingRoom(s,p))return false;
+ if(a.mustExitCell)return true;
+ if(ACTIONS_PER_TURN-a.actionsUsed!==1)return false;
+ const destination=s.board.tiles.some(h=>areAdjacent(p.wizard.position,h)&&!s.board.rooms.some(r=>r.startingFor&&r.tiles.some(t=>hexKey(t)===hexKey(h))));
+ const discard=!a.discardedExit&&[...p.hand,...Object.values(p.prepared).flatMap(c=>c&&!c.used?[c.card]:[])].some(c=>!c.powerful);
+ return destination&&((p.actionTokens>0&&p.wizard.movement>0)||discard);
 }
 
 export function canPlayerAct(s: GameState, p: Player): boolean {
@@ -1195,7 +1241,11 @@ function requireEvocation(s:GameState,id:string) {
 function afterAction(s: GameState) {
  const a=s.activation;if(!a)return;
  if(s.evocationActivation || a.physicalAction || a.exploring>0) return;
- if(!canPlayerAct(s,getPlayer(s,a.playerId))) finishActivation(s);
+ const p=getPlayer(s,a.playerId);
+ // A free reward earned by the last paid action is still usable this turn.
+ // Do not schedule extra quest-only turns: End turn retains its usual handoff.
+ const rewardReady=heldQuests(p).some(q=>q.completed&&!q.claimed&&(!q.rewardAction||getQuestRewardTargets(s,p,q.rewardAction).length>0));
+ if(!canPlayerAct(s,p) && !rewardReady) finishActivation(s);
 }
 
 function summonForEffect(s:GameState,owner:Player,kind:'SUCCUBUS',position:Hex,effect?:EffectResolution) {
@@ -1216,11 +1266,19 @@ function activateEffectSummon(s:GameState,owner:Player,kind:'SUCCUBUS',effect?:E
  s.log.push(`${owner.name} activates ${evocation.name} #${evocation.number??1} from the spell (no extra action or token): move ${evocation.movement}, attack ${evocationAttack(evocation)}.`);
  modelEvent(s,'EVOCATION_ACTIVATED',snapshot(s,evocation.id)!);
 }
-function resolveEffectMoments(s:GameState,caster:Player,spell:Card,room:Room|undefined,refs:ModelSnapshot[],actor:ModelSnapshot) {
+function resolveEffectMoments(s:GameState,caster:Player,spell:Card,room:Room|undefined,refs:ModelSnapshot[],actor:ModelSnapshot,damageOrigin:DamageOrigin='SPELL') {
  const effect:EffectResolution={activationIsExplicit:spell.moments.some(step=>step.effect==='ACTIVATE_EVOCATION')};
- for(const step of spell.moments)atMomentEnd(s,()=>resolveMomentBody(s,caster,spell,step,room,refs,actor,effect));
+ for(const [index,step] of spell.moments.entries())atMomentEnd(s,()=>{
+  s.log.push(`Moment ${index+1}/${spell.moments.length} · ${spell.name}: ${describeInstruction({...step,target:spell.target==='SELF'?'OWNER':spell.target==='ROOM'?'BOUND_ROOM':'BOUND_MODEL'})}`);
+  resolveMomentBody(s,caster,spell,step,room,refs,actor,effect,damageOrigin);
+ });
 }
-function resolveMomentBody(s:GameState,caster:Player,spell:Card,step:Moment,room:Room|undefined,refs:ModelSnapshot[],actor:ModelSnapshot,effect:EffectResolution) {
+function resolveMomentBody(s:GameState,caster:Player,spell:Card,step:Moment,room:Room|undefined,refs:ModelSnapshot[],actor:ModelSnapshot,effect:EffectResolution,damageOrigin:DamageOrigin) {
+ if(step.scope==='CASTER')refs=[actor];
+ if(step.scope==='CASTER_ROOM') {
+  const origin=room??roomAt(s,caster.wizard.position);
+  refs=origin?[...s.players.filter(p=>inRoom(p,origin)).map(p=>snapshot(s,p.id)!),...s.evocations.filter(e=>origin.tiles.some(h=>hexKey(h)===hexKey(e.position))).map(e=>snapshot(s,e.id)!)]:[];
+ }
  if(step.effect==='PAIN') {
   damage(s,caster,step.amount);
   return;
@@ -1239,10 +1297,10 @@ function resolveMomentBody(s:GameState,caster:Player,spell:Card,step:Moment,room
  if(step.amount<=0)return;
  // Instability always lands in the chosen room; conversion of a room spell converts that room's cubes.
  if(step.effect==='INSTABILITY' || (step.effect==='CONVERT' && spell.target==='ROOM')) {
-  if(room)resolveInstruction(s,caster,{...step,target:'BOUND_ROOM'},undefined,room.id,actor);
+  if(room)resolveInstruction(s,caster,{...step,target:'BOUND_ROOM'},undefined,room.id,actor,effect,damageOrigin);
   return;
  }
- for(const ref of refs)resolveInstruction(s,caster,{...step,target:'BOUND_MODEL'},ref,undefined,actor);
+ for(const ref of refs)resolveInstruction(s,caster,{...step,target:'BOUND_MODEL'},ref,undefined,actor,effect,damageOrigin);
 }
 
 function castSpell(s: GameState, p: Player, command: Extract<GameAction,{type:'CAST_SPELL'|'CAST_POWERFUL_SPELL'|'ACTIVATE_SPELL'}>) {
@@ -1312,6 +1370,7 @@ function castSpell(s: GameState, p: Player, command: Extract<GameAction,{type:'C
  a.spellsCast++;a.actionsUsed++;
  if(action.slot!=='rapid')a.sequencedSpellUsed=true;
  s.log.push(reactive&&!action.dummy?`${p.name} activates a hidden spell for 1 action (no physical token).`:`${p.name} casts ${spell.name}${action.dummy?' on a dummy (no model effects)':''} for 1 action (no physical token).`);
+ if(spell.ongoing&&!action.dummy)s.log.push(`${spell.name} remains ongoing: ${spell.ongoing.effects.map(describeInstruction).join(' ')}`);
  // Activation is not a cast and cannot trigger "when a spell is cast".
  if(!reactive)modelEvent(s,'SPELL_CAST',actor);
  if(!reactive || action.dummy) {
@@ -1337,12 +1396,14 @@ export function applyAction(state: GameState, action: GameAction): GameState {
   if(pending?.kind!=='REACTIVE_SPELL'||!pending.resume)throw new GameRuleError('No reactive decision is waiting');
   assert(pending.playerId===action.playerId,'This decision belongs to another mage');
   assert(pending.key===action.key,'Stale reactive decision');
+  let targetId=action.targetId;
   if(action.activeSpellId) {
    const option=pending.options.find(o=>o.activeSpellId===action.activeSpellId);
-   assert(option && option.targets.some(t=>t.id===action.targetId),'Choose an eligible spell and target');
+   if(option?.card.triggerTarget && option.targets.length===1)targetId??=option.targets[0].id;
+   assert(option && option.targets.some(t=>t.id===targetId),'Choose an eligible spell and target');
   } else assert(!action.targetId,'Declining does not select a target');
   const base=structuredClone(state);delete base.pendingDecision;
-  return runWithDecisions(base,pending.resume.action,[...pending.resume.answers,{key:pending.key,accept:!!action.activeSpellId,activeSpellId:action.activeSpellId,targetId:action.targetId}],pending.resume.entropy);
+  return runWithDecisions(base,pending.resume.action,[...pending.resume.answers,{key:pending.key,accept:!!action.activeSpellId,activeSpellId:action.activeSpellId,targetId}],pending.resume.entropy);
  }
  // The paused action's mage decides first; the owner may still adjust their own switches.
  if(pending)assert(action.type==='SET_EVOCATION_AUTO',`Waiting for ${state.players.find(p=>p.id===pending.playerId)?.name??'a mage'} to decide`);
@@ -1498,11 +1559,13 @@ function runAction(state: GameState, action: GameAction, answers: DecisionAnswer
   case 'END_ACTIVATION': {
    const a=requireActivation(s,p.id); assert(a.exploring===0,'Finish exploring first');
     requireNoPendingPhysical(a);
+    assert(!mustLeaveCell(s,p),'Use your remaining action to leave the cell before ending your turn');
     assert(a.actionsUsed>=1 || a.spellsCast>0 || a.discardedExit,'Take an action, cast a spell, or pass for the round'); finishActivation(s); break;
   }
   case 'PASS_ROUND': {
    const a=requireActivation(s,p.id);assert(a.exploring===0,'Finish exploring first');
     requireNoPendingPhysical(a);
+    assert(!mustLeaveCell(s,p),'Use your remaining action to leave the cell before passing');
    assert(canPassActionPhase(s,p),'You may pass permanently only with no physical tokens and no unused spells');
    p.passed=true;s.log.push(`${p.name} passes for the rest of the Action phase.`);finishActivation(s);break;
   }
@@ -1542,7 +1605,7 @@ function runAction(state: GameState, action: GameAction, answers: DecisionAnswer
   assert(areInSameRoom(s,e.position,target.position),'Target must be in the same room');
   const actor=snapshot(s,e.id)!,ref=snapshot(s,action.targetId)!,roomId=roomAt(s,target.position)?.id;
   active.attackUsed=true;
-  resolveInstruction(s,p,{effect:'DAMAGE',amount:evocationAttack(e),target:'EVENT_MODEL'},ref,undefined,actor);
+  resolveInstruction(s,p,{effect:'DAMAGE',amount:evocationAttack(e),target:'EVENT_MODEL'},ref,undefined,actor,undefined,'EVOCATION');
   modelEvent(s,'EVOCATION_ATTACK',ref,actor,roomId);
   if(s.evocationActivation===active&&active.movesRemaining===0)finishEvocation(s);
   break;
@@ -1552,6 +1615,7 @@ function runAction(state: GameState, action: GameAction, answers: DecisionAnswer
    const a=requirePhysicalAction(s,p);assert(p.actionTokens>0,'No action tokens');
    assert(action.kind==='EXPLORE'||action.kind==='ATTACK','Unknown physical action kind');
    if(action.kind==='ATTACK')assert(!isInStartingRoom(s,p),'Leave the starting room before attacking');
+    if(mustLeaveCell(s,p)){assert(p.wizard.movement>0,'Discard a card to leave the cell');a.mustExitCell=true;}
    p.actionTokens--;a.actionsUsed++;a.roomEffectUsed=false;
    a.physicalAction={kind:action.kind,mainEffectUsed:false,movementStarted:false};
    s.log.push(`${p.name} begins ${action.kind}: resolve the primary and room effects in either order, or skip remaining effects.`);break;
@@ -1570,19 +1634,22 @@ function runAction(state: GameState, action: GameAction, answers: DecisionAnswer
    activateRoom(s,p,action.roomTargetId);a.roomEffectUsed=true;finishPhysicalEffects(s);break;
   }
   case 'SKIP_PHYSICAL_EFFECTS': {
-   const {a}=requirePendingPhysical(s,p);a.physicalAction=null;a.exploring=0;afterAction(s);break;
+    const {a}=requirePendingPhysical(s,p);
+    assert(!a.mustExitCell || !isInStartingRoom(s,p),'Leave the cell before skipping the remaining effects');
+    a.physicalAction=null;a.exploring=0;afterAction(s);break;
   }
   case 'INFLICT_ATTACK': {
    const {physical}=requirePendingPhysical(s,p);
    assert(physical.kind==='ATTACK','Attack requires a pending Attack');
    assert(!physical.mainEffectUsed,'Attack primary effect already used');
   const target=mageAttackTarget(s,p,action.targetId),ref=snapshot(s,action.targetId)!,actor=snapshot(s,p.id)!,roomId=roomAt(s,target.position)?.id;
-  resolveInstruction(s,p,{effect:'DAMAGE',amount:p.wizard.attack,target:'EVENT_MODEL'},ref,undefined,actor);
+  resolveInstruction(s,p,{effect:'DAMAGE',amount:p.wizard.attack,target:'EVENT_MODEL'},ref,undefined,actor,undefined,'MAGE_PHYSICAL');
   modelEvent(s,'MAGE_ATTACK',ref,actor,roomId);
    physical.mainEffectUsed=true;finishPhysicalEffects(s);break;
   }
   case 'EXPLORE': {
     const a=requirePhysicalAction(s,p);assert(p.actionTokens>0,'No action tokens');
+    if(mustLeaveCell(s,p)){assert(p.wizard.movement>0,'Discard a card to leave the cell');a.mustExitCell=true;}
     p.actionTokens--; a.actionsUsed++; a.exploring=p.wizard.movement;a.roomEffectUsed=false;
     const actor=snapshot(s,p.id)!;
     if(action.activateRoomAtStart){activateRoom(s,p,action.roomTargetId);a.roomEffectUsed=true;}
@@ -1626,7 +1693,7 @@ function runAction(state: GameState, action: GameAction, answers: DecisionAnswer
   if(action.roomEffect==='START'){activateRoom(s,p,action.roomTargetId);a.roomEffectUsed=true;}
   // A room effect may defeat the intended victim; never punch their respawn.
   if(liveModel(s,ref) && liveModel(s,actor)) {
-   resolveInstruction(s,p,{effect:'DAMAGE',amount:p.wizard.attack,target:'EVENT_MODEL'},ref,undefined,actor);
+  resolveInstruction(s,p,{effect:'DAMAGE',amount:p.wizard.attack,target:'EVENT_MODEL'},ref,undefined,actor,undefined,'MAGE_PHYSICAL');
    modelEvent(s,'MAGE_ATTACK',ref,actor,roomId);
   }
   if(action.roomEffect==='END' && liveModel(s,actor)){activateRoom(s,p,action.roomTargetId);a.roomEffectUsed=true;}
@@ -1662,6 +1729,8 @@ function runAction(state: GameState, action: GameAction, answers: DecisionAnswer
    s.log.push(`${p.name} resolves “${quest.name}” for +${quest.reward} VP.`);
   const remaining=heldQuests(p).filter(q=>q.id!==quest.id);
    p.quest=remaining.shift()??null; p.additionalQuests=remaining;
+    s.questDiscard.push(quest);
+  afterAction(s);
    break;
   }
   default: throw new GameRuleError('Unknown game action');

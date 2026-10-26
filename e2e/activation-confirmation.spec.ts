@@ -10,7 +10,7 @@ function fixture(name='Torment') {
  s.activation={playerId:'p1',actionsUsed:0,exploring:0,sequencedSpellUsed:false,spellsCast:0,discardedExit:false,roomEffectUsed:false};
  for(const p of s.players){p.connected=true;p.wizard.position={q:0,r:0};}
  let card:Card|undefined;
- if(name==='Torment'||name==='Cross and Delight') {
+ if(['Torment','Cross and Delight','Submission','Master of Pleasure','Liquefy the Pain'].includes(name)) {
   const deck=s.library[0],index=deck.cards.findIndex(c=>c.name===name);card=deck.cards.splice(index,1)[0];
  } else card=createEnchantmentDeck().find(c=>c.name===name);
  s.players[0].prepared.slot1={card:card!,used:false};
@@ -41,6 +41,37 @@ async function mount(page:Page,initial:GameState) {
 for(const viewport of [{width:1440,height:1000},{width:390,height:844}]) {
  test.describe(`${viewport.width}px target-free activation`,()=>{
   test.use({viewport,reducedMotion:'reduce'});
+  for(const target of ['MODEL','ROOM'] as const)test(`infinite-range ${target} spells reach rooms outside line of sight after WebSocket transport`,async({page})=>{
+   const initial=fixture('Submission');initial.players[1].wizard.position={q:1,r:1};
+   if(target==='ROOM')Object.assign(initial.players[0].prepared.slot1!.card,{name:'Boundless room',target,moments:[{effect:'INSTABILITY',amount:1}]});
+   const name=initial.players[0].prepared.slot1!.card.name;
+   const wire=await mount(page,initial);
+   const card=page.locator('.prepared .spell').filter({has:page.locator('strong',{hasText:name})});
+  await expect(card.locator('.hint')).toContainText('Range ∞ · ignores line of sight');
+   await card.click();
+   const offAxis=page.locator('.hex[data-room-id="room-1,1"]');
+   await expect(offAxis).toHaveClass(/\breachable\b/);
+   await expect(page.locator('.hex.start-room.reachable')).toHaveCount(0);
+   if(target==='ROOM')await expect(page.locator('.hex.reachable')).toHaveCount(initial.board.rooms.filter(r=>!r.startingFor).length);
+   await offAxis.click();
+   const cast=page.getByRole('button',{name:`Cast ${name} here`,exact:true});
+   await expect(cast).toBeEnabled();await cast.click();
+   await expect.poll(()=>wire.actions.length).toBe(1);
+   expect(wire.actions[0]).toEqual({type:'CAST_SPELL',playerId:'p1',slot:'slot1',...(target==='ROOM'?{roomId:'room-1,1'}:{targetPlayerId:'p2'})});
+   if(target==='ROOM')expect(wire.state.board.rooms.find(r=>r.id==='room-1,1')!.instability).toBe(1);
+   else expect(wire.state.players[1].wizard.damageCubes).toBe(1);
+   expect(wire.state.players[0].prepared.slot1?.used).toBe(true);
+   expect(wire.errors).toEqual([]);
+  });
+  test('finite range still excludes off-axis rooms after WebSocket transport',async({page})=>{
+   const initial=fixture('Submission');initial.players[1].wizard.position={q:1,r:1};initial.players[0].prepared.slot1!.card.range=4;
+   const wire=await mount(page,initial);
+   await page.locator('.prepared .spell').filter({has:page.locator('strong',{hasText:'Submission'})}).click();
+   const offAxis=page.locator('.hex[data-room-id="room-1,1"]');
+   await expect(offAxis).not.toHaveClass(/\breachable\b/);await offAxis.click();
+   await expect(page.getByRole('button',{name:'Cast Submission here',exact:true})).toBeDisabled();
+   expect(wire.actions).toEqual([]);expect(wire.errors).toEqual([]);
+  });
   for(const name of ['Torment','Mending Ward'])test(`${name} asks only to confirm activation, never for a room`,async({page})=>{
    const wire=await mount(page,fixture(name));
    await page.locator('.prepared .spell').filter({has:page.locator('strong',{hasText:name})}).click();
@@ -63,33 +94,98 @@ for(const viewport of [{width:1440,height:1000},{width:390,height:844}]) {
    await expect(dialog).toBeHidden();expect(wire.errors).toEqual([]);
   });
 
-  test('Torment can be kept hidden, then revealed with a target after a later trigger',async({page})=>{
+  test('Torment can stay hidden, then reveal against the fixed damage dealer without a target selector',async({page})=>{
    const wire=await mount(page,fixture());
    await page.locator('.prepared .spell').filter({has:page.locator('strong',{hasText:'Torment'})}).click();
    await page.getByRole('button',{name:'Confirm activation'}).click();
    await expect.poll(()=>wire.actions.length).toBe(1);
    const activeId=wire.state.readiedSpells![0].id;
    wire.dispatch({type:'END_ACTIVATION',playerId:'p1'});
-   // Use a deterministic, non-drawing room effect to exercise real interruptions.
-   const next=structuredClone(wire.state);next.board.rooms.find(r=>r.id==='room-0,0')!.effect='INSTABILITY';wire.update(next);
-   wire.dispatch({type:'BEGIN_PHYSICAL_ACTION',playerId:'p2',kind:'EXPLORE'});
-   wire.dispatch({type:'ACTIVATE_ROOM',playerId:'p2'});
+  wire.dispatch({type:'BEGIN_PHYSICAL_ACTION',playerId:'p2',kind:'ATTACK'});
+  wire.dispatch({type:'INFLICT_ATTACK',playerId:'p2',targetId:'p1'});
    const dialog=page.getByRole('dialog',{name:'Reveal an active spell?',exact:true});
    await expect(dialog).toBeVisible();
    await dialog.getByRole('button',{name:'Keep all hidden'}).click();
    await expect(dialog).toBeHidden();expect(wire.state.readiedSpells![0].id).toBe(activeId);
    wire.dispatch({type:'SKIP_PHYSICAL_EFFECTS',playerId:'p2'});
-   wire.dispatch({type:'BEGIN_PHYSICAL_ACTION',playerId:'p2',kind:'EXPLORE'});
-   wire.dispatch({type:'ACTIVATE_ROOM',playerId:'p2'});
+  wire.dispatch({type:'BEGIN_PHYSICAL_ACTION',playerId:'p2',kind:'ATTACK'});
+  wire.dispatch({type:'INFLICT_ATTACK',playerId:'p2',targetId:'p1'});
    await expect(dialog).toBeVisible();
-   await expect(dialog.getByRole('button',{name:'Reveal and resolve'})).toBeDisabled();
-   await dialog.getByRole('combobox',{name:'Triggered spell target'}).selectOption('p2');
+  await expect(dialog.getByRole('combobox',{name:'Triggered spell target'})).toHaveCount(0);
+  await expect(dialog.getByRole('status')).toContainText(`Target fixed by trigger: ${wire.state.players[1].name}`);
+  await expect(dialog.getByRole('button',{name:'Reveal and resolve'})).toBeEnabled();
    await dialog.getByRole('button',{name:'Reveal and resolve'}).click();
    await expect(dialog).toBeHidden();
    expect(wire.state.readiedSpells).toEqual([]);
    expect(wire.state.players[1].wizard.damageCubes).toBe(2);
+  expect(wire.state.players[0].wizard.damageCubes).toBe(4);
    expect(wire.state.players[0].discard.some(c=>c.name==='Torment')).toBe(true);
    expect(wire.state.evocations[0]).toMatchObject({name:'Succubus',playerId:'p1'});
+   expect(wire.errors).toEqual([]);
+  });
+
+  test('Torment fixes the target to an attacking evocation rather than its controlling mage',async({page})=>{
+   const initial=fixture(),dealer=summonEvocation(initial,initial.players[1],'CADAVER',{q:0,r:0})!;
+   const wire=await mount(page,initial);
+   await page.locator('.prepared .spell').filter({has:page.locator('strong',{hasText:'Torment'})}).click();
+   await page.getByRole('button',{name:'Confirm activation'}).click();
+   await expect.poll(()=>wire.actions.length).toBe(1);
+   wire.dispatch({type:'END_ACTIVATION',playerId:'p1'});
+   wire.dispatch({type:'ACTIVATE_EVOCATION',playerId:'p2',evocationId:dealer.id});
+   wire.dispatch({type:'EVOCATION_ATTACK',playerId:'p2',targetId:'p1'});
+   const dialog=page.getByRole('dialog',{name:'Reveal an active spell?',exact:true});
+   await expect(dialog).toBeVisible();await expect(dialog.getByRole('status')).toContainText('Target fixed by trigger: Cadaver');
+   await expect(dialog.getByRole('combobox',{name:'Triggered spell target'})).toHaveCount(0);
+   await dialog.getByRole('button',{name:'Reveal and resolve'}).click();
+   await expect(dialog).toBeHidden();
+   expect(wire.actions.at(-1)).toMatchObject({type:'RESPOND_REACTIVE_SPELL',targetId:dealer.id});
+   expect(wire.state.evocations.some(e=>e.id===dealer.id)).toBe(false);
+   expect(wire.state.players[1].wizard.damageCubes).toBe(0);
+   expect(wire.state.evocations[0]).toMatchObject({kind:'SUCCUBUS',playerId:'p1',position:{q:0,r:0}});
+   expect(wire.errors).toEqual([]);
+  });
+
+  test('Master of Pleasure fixes its target to the quest-solving mage',async({page})=>{
+   const initial=fixture('Master of Pleasure');initial.players[1].wizard.position={q:1,r:1};
+   initial.players[1].quest={id:'solved',name:'Solved quest',description:'Complete',kind:'ROOM_ACTIVATE',amount:1,progress:1,completed:true,claimed:false,reward:0};
+   const wire=await mount(page,initial);
+   await page.locator('.prepared .spell').filter({has:page.locator('strong',{hasText:'Master of Pleasure'})}).click();
+   await page.getByRole('button',{name:'Confirm activation'}).click();
+   await expect.poll(()=>wire.actions.length).toBe(1);
+   wire.dispatch({type:'END_ACTIVATION',playerId:'p1'});
+   wire.dispatch({type:'USE_QUEST_REWARD',playerId:'p2',questId:'solved'});
+   const dialog=page.getByRole('dialog',{name:'Reveal an active spell?',exact:true});
+   await expect(dialog).toBeVisible();await expect(dialog.getByRole('status')).toContainText(`Target fixed by trigger: ${wire.state.players[1].name}`);
+   await expect(dialog.getByRole('combobox',{name:'Triggered spell target'})).toHaveCount(0);
+   await expect(dialog.getByRole('button',{name:'Reveal and resolve'})).toBeEnabled();
+   await dialog.getByRole('button',{name:'Reveal and resolve'}).click();
+   await expect(dialog).toBeHidden();
+   expect(wire.actions.at(-1)).toMatchObject({type:'RESPOND_REACTIVE_SPELL',targetId:'p2'});
+   expect(wire.state.players[1]).toMatchObject({quest:null,questsCompleted:1,wizard:{damageCubes:2}});
+   expect(wire.state.evocations[0]).toMatchObject({kind:'SUCCUBUS',playerId:'p1',position:{q:1,r:1}});
+   expect(wire.errors).toEqual([]);
+  });
+
+  test('Liquefy the Pain fixes the own defeat room before any score or respawn to the cell',async({page})=>{
+   const initial=fixture('Liquefy the Pain');initial.players[0].wizard.position={q:1,r:1};initial.players[0].wizard.health=1;
+   initial.players[1].prepared.rapid={used:false,card:{id:'lethal',name:'Lethal',kind:'SPELL',spellType:'COMBAT',target:'MAGE',range:Infinity,moments:[{effect:'DAMAGE',amount:1}]}};
+   const wire=await mount(page,initial);
+   await page.locator('.prepared .spell').filter({has:page.locator('strong',{hasText:'Liquefy the Pain'})}).click();
+   await page.getByRole('button',{name:'Confirm activation'}).click();
+   await expect.poll(()=>wire.actions.length).toBe(1);
+   wire.dispatch({type:'END_ACTIVATION',playerId:'p1'});
+   wire.dispatch({type:'CAST_SPELL',playerId:'p2',slot:'rapid',targetPlayerId:'p1'});
+   const dialog=page.getByRole('dialog',{name:'Reveal an active spell?',exact:true});
+   await expect(dialog).toBeVisible();
+   const room=initial.board.rooms.find(r=>r.id==='room-1,1')!;
+   await expect(dialog.getByRole('status')).toContainText(`Target fixed by trigger: ${room.name}`);
+   await expect(dialog.getByRole('combobox',{name:'Triggered spell target'})).toHaveCount(0);
+   expect(wire.state.players[0].wizard.position).toEqual({q:1,r:1});expect(wire.state.players[1].victoryPoints).toBe(0);
+   await dialog.getByRole('button',{name:'Reveal and resolve'}).click();await expect(dialog).toBeHidden();
+   expect(wire.actions.at(-1)).toMatchObject({type:'RESPOND_REACTIVE_SPELL',targetId:'room-1,1'});
+   expect(wire.state.evocations[0]).toMatchObject({kind:'SUCCUBUS',playerId:'p1',position:{q:1,r:1}});
+   expect(wire.state.players[0].wizard.position).not.toEqual({q:1,r:1});expect(wire.state.players[1].victoryPoints).toBe(5);
+   expect(wire.state.feedbackEvents!.map(e=>e.kind)).toEqual(['DAMAGE','SPELL_TRIGGERED','MAGE_DEFEATED']);
    expect(wire.errors).toEqual([]);
   });
 

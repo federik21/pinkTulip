@@ -1,5 +1,12 @@
 import { Card, EventCard, LibraryDeck, Moment, MomentEffect, Quest, SpellType } from './types';
 
+const peakOfAgonyMoments=():Moment[]=>[
+ {effect:'DAMAGE',amount:2,scope:'CASTER_ROOM'},
+ {effect:'BLACK_ROSE_CONVERT',amount:2,scope:'CASTER'},
+];
+const peakOfAgonyRules='First, inflict 2 damage on enemy models in your room. The second moment selects your mage, but has no effect: friendly models never take your damage or damage conversion, including conversion to Pink Tulip black.';
+const painMarkRules='Ongoing: inflict 2 damage on the bound model whenever it deals damage with its own mage physical attack or spell. Evocation attacks, room effects and quest rewards do not trigger Pain Mark.';
+
 // Constructors for each Moment variant, e.g. `moments: [moment.damage(1), moment.damage(1)]`.
 export const moment = {
  damage: (amount: number, splash?: { amount?: number; range: number; when: 'AFTER_DEFEAT' }): Moment => ({ effect: 'DAMAGE', amount, ...(splash ? { splash } : {}) }),
@@ -22,10 +29,12 @@ export function getSpellType(card:Card):SpellType {
 
 // Saved games written before moments existed carry flat damage/instability/heal/convert
 // fields. Rewrite those cards in place, keeping the old fixed resolution order.
+// JSON also writes Infinity as null; restore spell ranges on both load and receipt.
 export function upgradeLegacyCards(value: unknown): void {
  if (!value || typeof value !== 'object') return;
  if (Array.isArray(value)) { value.forEach(upgradeLegacyCards); return; }
  const node = value as Record<string, unknown>;
+ if (node.kind === 'SPELL' && node.range === null) node.range = Number.POSITIVE_INFINITY;
  if (node.kind === 'SPELL' && !Array.isArray(node.moments)) {
   const moments: Moment[] = [];
   for (const [field, effect] of [['instability', 'INSTABILITY'], ['convert', 'CONVERT'], ['heal', 'HEAL'], ['damage', 'DAMAGE']] as const) {
@@ -35,6 +44,20 @@ export function upgradeLegacyCards(value: unknown): void {
   }
   node.moments = moments;
  }
+ if(node.kind==='SPELL'&&node.name==='Peak of Agony'&&(node.schoolId==='agony'||String(node.id).startsWith('agony-'))&&Array.isArray(node.moments)) {
+  const steps=node.moments as Moment[];
+  if(steps.length===2&&steps[0].effect==='DAMAGE'&&steps[0].amount===2&&(!steps[0].scope||steps[0].scope==='CASTER_ROOM')&&steps[1].effect==='BLACK_ROSE_CONVERT'&&steps[1].amount===2&&(!steps[1].scope||steps[1].scope==='CASTER')) {
+   node.moments=peakOfAgonyMoments();node.rulesText=peakOfAgonyRules;
+  }
+ }
+ if(node.kind==='SPELL'&&node.name==='Pain Mark'&&(node.schoolId==='agony'||String(node.id).startsWith('agony-'))) {
+  const ongoing=node.ongoing as Card['ongoing'];
+  if(ongoing?.trigger.event==='DAMAGE_DEALT'&&!ongoing.trigger.damageOrigins) {
+   ongoing.trigger.damageOrigins=['MAGE_PHYSICAL','SPELL'];node.rulesText=painMarkRules;
+  }
+ }
+ // Old saved/custom instructions cannot restore the removed friendly-fire opt-in.
+ if(node.effect==='DAMAGE')delete node.includeFriendly;
  Object.values(node).forEach(upgradeLegacyCards);
 }
 
@@ -131,22 +154,24 @@ export function createAgonyDeck(prefix: string, schoolId?: string): Card[] {
   { name: 'Shared Torture', moments: [moment.damage(4), moment.convert(1), moment.pain(3)], range: 1, target: 'MODEL' },
   { name: 'Grim Torment', moments: [moment.damage(3), moment.pain(1)], range: 2, target: 'MODEL' },
   { name: 'Cross and Delight', moments: [moment.summon('SUCCUBUS'), moment.pain(1), moment.activateEvocation('SUCCUBUS')], range: 1, target: 'ROOM' },
-  { name: 'Torment', spellType: 'TRAP', moments: [moment.damage(2), moment.summon('SUCCUBUS', 'TARGET')], range: Number.POSITIVE_INFINITY, target: 'MAGE',
-    rulesText: 'When an enemy mage activates a room, you may reveal this trap at the end of the current moment and choose its target.',
-   trigger:{event:'ROOM_ACTIVATED',relation:'ENEMY',scope:'ANY'}, triggerEffects:[{effect:'DAMAGE',amount:2,target:'EVENT_MODEL'},{effect:'SUMMON',kind:'SUCCUBUS',position:'TARGET',target:'EVENT_MODEL'}] },
+  { name: 'Torment', spellType: 'TRAP', moments: [moment.damage(2), moment.summon('SUCCUBUS', 'TARGET')], range: Number.POSITIVE_INFINITY, target: 'MODEL',
+   rulesText: 'When an enemy model deals damage, you may reveal this trap at the end of the current moment. Inflict 2 damage on that model, then summon a Succubus in its room. The target is fixed by the trigger.',
+   trigger:{event:'DAMAGE_DEALT',relation:'ENEMY',scope:'ANY'}, triggerTarget:'EVENT_ACTOR',
+   triggerEffects:[{effect:'DAMAGE',amount:2,target:'EVENT_ACTOR'},{effect:'SUMMON',kind:'SUCCUBUS',position:'TARGET',target:'EVENT_ACTOR'}] },
   { name: 'Visceral Fire', moments: [moment.damage(2, { range: 1, when: 'AFTER_DEFEAT' })], range: 2, target: 'MAGE',
    rulesText: 'Target a mage within range 2. If that mage is defeated, each other mage within range 1 of it suffers 2 damage.' },
-  { name: 'Peak of Agony', moments: [moment.damage(2), moment.blackRoseConvert(2)], range: 0, target: 'SELF' },
+  { name: 'Peak of Agony', moments: peakOfAgonyMoments(), range: 0, target: 'SELF', rulesText: peakOfAgonyRules },
   { name: 'Pain Mark', moments: [], range: 1, target: 'MODEL',
-   rulesText: 'When this model takes damage, the acting model suffers 2 damage.',
-   ongoing: { trigger: { event: 'DAMAGE_DEALT', relation: 'ANY', scope: 'BOUND_MODEL' }, effects: [{ effect: 'DAMAGE', amount: 2, target: 'EVENT_ACTOR' }] } },
+    rulesText: painMarkRules,
+    ongoing: { trigger: { event: 'DAMAGE_DEALT', relation: 'ANY', scope: 'BOUND_MODEL', damageOrigins:['MAGE_PHYSICAL','SPELL'] }, effects: [{ effect: 'DAMAGE', amount: 2, target: 'EVENT_ACTOR' }] } },
   { name: 'Master of Pleasure', spellType: 'TRAP', moments: [], range: Number.POSITIVE_INFINITY, target: 'MAGE',
-   rulesText: 'When a mage solves a quest, reveal and deal 2 damage to them, then summon a Succubus in that room at 0.',
-   trigger:{event:'QUEST_SOLVED',relation:'SELF',scope:'BOUND_MODEL'},
-   triggerEffects:[{effect:'DAMAGE',amount:2,target:'BOUND_MODEL'},{effect:'SUMMON',kind:'SUCCUBUS',position:'TARGET',target:'BOUND_MODEL'}] },
+    rulesText: 'When another mage solves a quest, you may reveal and inflict 2 damage on that mage, then summon a Succubus in their room. The target is fixed by the trigger.',
+    trigger:{event:'QUEST_SOLVED',relation:'ENEMY',scope:'ANY'}, triggerTarget:'EVENT_MODEL',
+    triggerEffects:[{effect:'DAMAGE',amount:2,target:'EVENT_MODEL'},{effect:'SUMMON',kind:'SUCCUBUS',position:'TARGET',target:'EVENT_MODEL'}] },
   { name: 'Liquefy the Pain', spellType: 'TRAP', moments: [], range: Number.POSITIVE_INFINITY, target: 'ROOM',
-   rulesText: 'When a mage is defeated, reveal and summon a Succubus in the target room at 0.',
-    trigger:{event:'MAGE_DEFEATED',relation:'SELF',scope:'ANY'}, triggerEffects:[{effect:'SUMMON',kind:'SUCCUBUS',position:'TARGET',target:'BOUND_ROOM'}] },
+    rulesText: 'When your mage is defeated, you may reveal and summon a Succubus in the room where they were defeated, during the defeat trigger window before scoring or returning to their cell. The room is fixed by the trigger.',
+    trigger:{event:'MAGE_DEFEATED',relation:'SELF',relationTo:'EVENT_MODEL',scope:'ANY'}, triggerTarget:'EVENT_ROOM',
+    triggerEffects:[{effect:'SUMMON',kind:'SUCCUBUS',position:'TARGET',target:'EVENT_ROOM'}] },
   { name: 'Submission', moments: [moment.damage(1), moment.convert(1), moment.pain(1)], range: Number.POSITIVE_INFINITY, target: 'MODEL' },
   { name: 'Ineluctable Pain', spellType: 'CONTINGENCY', moments: [], range: 2, target: 'MODEL',
    rulesText: 'Whenever a model gains or loses victory points, it suffers 2 damage.',
@@ -182,7 +207,6 @@ export function createEvents(): EventCard[] {
 export function createQuests(): Quest[] {
  const smallReward = (name: string, moments: Moment[], range = 0, target: Card['target'] = 'SELF'): Card => ({ id: `${name.toLowerCase().replace(/[^a-z]+/g, '-')}-reward`, name, kind: 'SPELL', moments, range, target });
  const patterns: Omit<Quest, 'id'>[] = [
-  { name: 'Duelist', description: 'Defeat another mage.', kind: 'KILL', amount: 1, reward: 3, rewardAction: smallReward('Final Flourish', [moment.damage(2)], 1, 'MODEL') },
   { name: 'Architect of Ruin', description: 'Place the final instability cube in a room.', kind: 'REBUILD', amount: 1, reward: 3, rewardAction: smallReward('Ruin Sigil', [moment.instability(1)], 2, 'ROOM') },
   { name: 'Fracture the Lodge', description: 'Place at least 2 instability in one room with a single spell.', kind: 'INSTABILITY', amount: 2, reward: 2, rewardAction: smallReward('Crack the Wall', [moment.damage(1)], 2, 'MODEL') },
   { name: 'Warden of the Rooms', description: 'Activate 3 rooms.', kind: 'ROOM_ACTIVATE', amount: 3, reward: 2, progress: 0, completed: false, rewardAction: smallReward('Lodge Blessing', [moment.heal(2)], 0, 'SELF') },

@@ -15,7 +15,8 @@ function fixture(mode: Mode, target: Hex, range: number, origin: Hex = {q:0,r:0}
  g.activation={playerId:'p1',actionsUsed:0,exploring:0,sequencedSpellUsed:false,spellsCast:0,discardedExit:false,roomEffectUsed:false};
  g.players[0].wizard.position={...origin};g.players[1].wizard.position={...target};
  if(mode==='EVOCATION')g.evocations.push({id:'enemy-cadaver',playerId:'p2',name:'Cadaver',archetype:'UNDEAD',movement:2,attack:2,health:2,passive:'WOUNDED_FURY',position:{...target},damageCubes:0,damageByPlayer:{},activated:false});
- const card:Card={...g.library[0].cards.shift()!,range,target:mode==='ROOM'?'ROOM':'MODEL',moments:[moment.instability(1),moment.damage(1)]};
+ const physicalCard=g.library[0].cards.shift()!;
+ const card:Card={id:physicalCard.id,name:'Range test',kind:'SPELL',spellType:'COMBAT',range,target:mode==='ROOM'?'ROOM':'MODEL',moments:[moment.instability(1),moment.damage(1)]};
  g.players[0].prepared.slot1={card,used:false};
  const targeting=mode==='ROOM'?{roomId:`room-${target.q},${target.r}`}:
   mode==='DUMMY'?{roomId:`room-${target.q},${target.r}`,dummy:true}:
@@ -62,7 +63,7 @@ describe('authoritative straight-line spell range',()=>{
     expect(next.players[0].actionTokens).toBe(2);
     expect(next.activation).toMatchObject({playerId:'p1',actionsUsed:1,spellsCast:1,sequencedSpellUsed:true});
     expect(physicalCards(next)).toEqual(physicalCards(before));
-    expect(physicalCards(next)).toHaveLength(120);expect(new Set(physicalCards(next)).size).toBe(120);
+    expect(new Set(physicalCards(next)).size).toBe(physicalCards(before).length);
    });
   }
 
@@ -109,7 +110,7 @@ describe('authoritative straight-line spell range',()=>{
   expect(next.players[0].hand).not.toContainEqual(power);
   expect(next.players[0].actionTokens).toBe(2);
   expect(next.activation).toMatchObject({actionsUsed:1,spellsCast:1,sequencedSpellUsed:false});
-  expect(physicalCards(next)).toEqual(cards);expect(new Set(cards).size).toBe(120);
+  expect(physicalCards(next)).toEqual(cards);expect(new Set(cards).size).toBe(cards.length);
  });
 
  it('preserves four-step sight across the board and two-step movement that can turn',()=>{

@@ -28,10 +28,11 @@ export function ControlBanner({selected,actions,spells,evocations,quests,floatin
  </section></div>;
 }
 
-export function QuickAccess({selected,expanded,chronicleOpen,onSelect,onChronicle}:{selected:ControlTab;expanded:boolean;chronicleOpen:boolean;onSelect:(tab:ControlTab)=>void;onChronicle:()=>void}) {
+export function QuickAccess({selected,expanded,chronicleOpen,onSelect,onChronicle,readyQuests=0}:{selected:ControlTab;expanded:boolean;chronicleOpen:boolean;onSelect:(tab:ControlTab)=>void;onChronicle:()=>void;readyQuests?:number}) {
  const icons:Record<ControlTab,string>={actions:'⚔',spells:'✧',evocations:'☠',quests:'◇'};
  return <nav className="quick-access" aria-label="Quick access">
-  {tabs.map(tab=><button type="button" key={tab.id} data-quick-tab={tab.id} aria-label={`Open ${tab.label.toLowerCase()}`} aria-controls="lodge-controls" aria-expanded={expanded&&selected===tab.id} className={expanded&&selected===tab.id?'selected':''} onClick={()=>onSelect(tab.id)}><span aria-hidden="true">{icons[tab.id]}</span><small>{tab.id==='actions'?'Actions':tab.label}</small></button>)}
+    {tabs.map(tab=><button type="button" key={tab.id} data-quick-tab={tab.id} aria-label={`Open ${tab.label.toLowerCase()}`} aria-describedby={tab.id==='quests'&&readyQuests?'quest-ready-status':undefined} title={tab.id==='quests'&&readyQuests?`${readyQuests} completed quest${readyQuests===1?'':'s'} · free reward ready on your turn`:undefined} aria-controls="lodge-controls" aria-expanded={expanded&&selected===tab.id} className={expanded&&selected===tab.id?'selected':''} onClick={()=>onSelect(tab.id)}><span className="quick-access-icon" aria-hidden="true">{icons[tab.id]}{tab.id==='quests'&&readyQuests>0&&<span className="quest-notification">{readyQuests}</span>}</span><small>{tab.id==='actions'?'Actions':tab.label}</small></button>)}
   <button type="button" aria-label="Open Chronicle" aria-controls="chronicle-drawer" aria-expanded={chronicleOpen} aria-haspopup="dialog" onClick={onChronicle}><span aria-hidden="true">☰</span><small>Chronicle</small></button>
+    <span id="quest-ready-status" className="visually-hidden" role="status">{readyQuests>0?`${readyQuests} completed, unsolved quest${readyQuests===1?'':'s'}. Free reward available during your turn.`:''}</span>
  </nav>;
 }
