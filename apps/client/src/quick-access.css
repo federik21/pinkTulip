@@ -8,6 +8,9 @@
 .quick-access button>span{font-size:19px;line-height:1}
 .quick-access-icon{position:relative}
 .quest-notification{position:absolute;top:-7px;left:12px;display:flex;align-items:center;justify-content:center;min-width:17px;height:17px;padding:0 4px;border-radius:10px;border:1px solid #ffdfa0;background:#e0b56f;color:#241522;font-size:10px;font-weight:800;box-shadow:0 0 9px #e0b56f66}
+.evocation-dot{position:absolute;top:-4px;right:-7px;width:11px;height:11px;border-radius:50%;border:2px solid #19151f;background:#e5313d;box-shadow:0 0 8px #e5313dcc;animation:evocation-dot-pulse 1.6s ease-in-out infinite}
+@keyframes evocation-dot-pulse{50%{transform:scale(1.25)}}
+@media (prefers-reduced-motion:reduce){.evocation-dot{animation:none}}
 .visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
 .quest-entry{min-width:0;overflow-wrap:anywhere;padding:14px 0;border-top:1px solid #574650}
 .quest-entry.quest-ready{border-top-color:#d7b67b}

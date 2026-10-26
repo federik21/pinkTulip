@@ -7,3 +7,8 @@
 .auto-switch small{display:block;color:var(--muted);font-size:10px}
 .auto-switch input{width:34px;height:18px;margin:0;accent-color:var(--gold);cursor:pointer}
 .auto-switch input:disabled{cursor:not-allowed}
+.decision-dialog .info-popup-content{position:relative}
+.decision-minimize{float:right;margin:-4px -4px 6px 10px;min-height:32px;padding:4px 10px;font-size:12px}
+.decision-pill{position:fixed;z-index:80;left:50%;transform:translateX(-50%);bottom:calc(88px + env(safe-area-inset-bottom,0px));display:flex;align-items:center;gap:12px;max-width:calc(100vw - 24px);padding:8px 8px 8px 16px;border:1px solid #e7bd76;border-radius:14px;background:#2a2018f8;box-shadow:0 10px 40px #000b;font-size:13px}
+.decision-pill button{min-height:36px;white-space:nowrap}
+@media(max-width:720px){.decision-pill{bottom:calc(80px + env(safe-area-inset-bottom,0px));font-size:12px}}

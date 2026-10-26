@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Card, GameAction, GameState, PendingDecision, getSpellType } from '@brw/game-engine';
 import { SPELL_TYPE_LABELS } from './presentation';
+import { DecisionDialog } from './DecisionDialog';
 import { SpellDescription } from './SpellDescription';
 
 function Modal({title,children,onCancel}:{title:string;children:React.ReactNode;onCancel?:()=>void}) {
@@ -31,15 +32,16 @@ function RevealDecision({decision,disabled,send}:{decision:Extract<PendingDecisi
  const [targetId,setTargetId]=useState('');
  const resolvedTargetId=option.card.triggerTarget?option.targets[0]?.id:targetId;
  const respond=(reveal:boolean)=>send({type:'RESPOND_REACTIVE_SPELL',playerId:decision.playerId,key:decision.key,...(reveal?{activeSpellId:spellId,targetId:resolvedTargetId}:{} )});
- return <Modal title="Reveal an active spell?">
-  <p>The current moment has finished. You may reveal a matching Trap or Protection, or keep all of them hidden for a later trigger.</p>
+ return <DecisionDialog ariaLabel="Reveal an active spell?" summary="Reveal an active spell?">
+  <h2>Reveal an active spell?</h2>
+  <p>The current moment has finished. You may reveal a matching Trap or Protection, or keep all of them hidden for a later trigger. Use Minimize to look over the board first.</p>
   <label>Spell to resolve next<select aria-label="Spell to reveal" value={spellId} disabled={disabled} onChange={event=>{setSpellId(event.target.value);setTargetId('');}}>{decision.options.map(o=><option key={o.activeSpellId} value={o.activeSpellId}>{o.card.name}</option>)}</select></label>
   <SpellDescription card={option.card}/>
     {option.card.triggerTarget?<p className="forced-trigger-target" role="status">Target fixed by trigger: <strong>{option.targets[0]?.name}</strong></p>:
      <label>Target<select aria-label="Triggered spell target" value={targetId} disabled={disabled} onChange={event=>setTargetId(event.target.value)}><option value="">Choose a target</option>{option.targets.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label>}
     <div className="button-row"><button type="button" className="primary" disabled={disabled||!resolvedTargetId} onClick={()=>respond(true)}>Reveal and resolve</button><button type="button" disabled={disabled} onClick={()=>respond(false)}>Keep all hidden</button></div>
   <p className="hint">Choose the order of your matching spells. Nested reactions finish before the interrupted effect resumes.</p>
- </Modal>;
+ </DecisionDialog>;
 }
 
 export function ReactiveSpellPrompt({game,viewerId,connected,pending,send}:{game:GameState;viewerId:string;connected:boolean;pending:boolean;send:(action:GameAction)=>void}) {

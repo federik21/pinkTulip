@@ -14,7 +14,7 @@ const liquefyThePainEffects=():NonNullable<Card['triggerEffects']>=>[
 
 // Constructors for each Moment variant, e.g. `moments: [moment.damage(1), moment.damage(1)]`.
 export const moment = {
- damage: (amount: number, splash?: { amount?: number; range: number; when: 'AFTER_DEFEAT' }): Moment => ({ effect: 'DAMAGE', amount, ...(splash ? { splash } : {}) }),
+ damage: (amount: number): Moment => ({ effect: 'DAMAGE', amount }),
  heal: (amount: number): Moment => ({ effect: 'HEAL', amount }),
  convert: (amount: number): Moment => ({ effect: 'CONVERT', amount }),
  blackRoseConvert: (amount: number): Moment => ({ effect: 'BLACK_ROSE_CONVERT', amount }),
@@ -22,6 +22,9 @@ export const moment = {
  pain: (amount: number): Moment => ({ effect: 'PAIN', amount }),
  summon: (kind: 'SUCCUBUS', position: 'CASTER' | 'TARGET' = 'CASTER'): Moment => ({ effect: 'SUMMON', kind, position }),
  activateEvocation: (kind: 'SUCCUBUS'): Moment => ({ effect: 'ACTIVATE_EVOCATION', kind }),
+ // Modifiers: wrap any moment, e.g. `moment.ifTargetDefeated(moment.nearTarget(moment.damage(1), 1))`.
+ ifTargetDefeated: (step: Moment): Moment => ({ ...step, when: 'TARGET_DEFEATED' }),
+ nearTarget: (step: Moment, range: number): Moment => ({ ...step, area: { range } }),
 };
 
 export const momentTotal = (card: Pick<Card, 'moments'>, effect: MomentEffect): number =>
@@ -88,6 +91,14 @@ export function upgradeLegacyCards(value: unknown): void {
   }
   node.moments = moments;
  }
+ // The removed `splash` field on a damage moment becomes a conditional follow-up moment.
+ if(node.kind==='SPELL'&&Array.isArray(node.moments)&&node.moments.some((m:any)=>m?.splash)) {
+  node.moments=(node.moments as any[]).flatMap(m=>{
+   if(!m?.splash)return [m];
+   const {splash,...base}=m;
+   return [base,{effect:'DAMAGE',amount:splash.amount??base.amount,when:'TARGET_DEFEATED',area:{range:splash.range}}];
+  });
+ }
  if(node.kind==='SPELL'&&node.name==='Peak of Agony'&&(node.schoolId==='agony'||String(node.id).startsWith('agony-'))&&Array.isArray(node.moments)) {
   const steps=node.moments as Moment[];
   if(steps.length===2&&steps[0].effect==='DAMAGE'&&steps[0].amount===2&&(!steps[0].scope||steps[0].scope==='CASTER_ROOM')&&steps[1].effect==='BLACK_ROSE_CONVERT'&&steps[1].amount===2&&(!steps[1].scope||steps[1].scope==='CASTER')) {
@@ -120,93 +131,6 @@ export const shuffle = <T>(items: T[], random:()=>number = Math.random): T[] => 
  return result;
 };
 
-// The 36-card spell set, with unique physical IDs and optional shared-school origin.
-export function createSpellDeck(prefix: string, schoolId?: string): Card[] {
- const patterns: Omit<Card, 'id' | 'kind'>[] = [
-  { name: 'Ember Lance', moments: [moment.damage(4)], range: 1, target: 'MODEL' },
-  { name: 'Arcane Bolt', moments: [moment.damage(3)], range: 3, target: 'MODEL' },
-  { name: 'Splinter Hex', moments: [moment.instability(1), moment.damage(2)], range: 2, target: 'MODEL' },
-  { name: 'Fracture', moments: [moment.instability(2)], range: 2, target: 'ROOM' },
-  { name: 'Firestorm', moments: [moment.instability(1), moment.damage(2)], range: 1, target: 'ROOM' },
-  { name: 'Ruin Pulse', moments: [moment.instability(2), moment.damage(1)], range: 0, target: 'ROOM' },
-  { name: 'Distant Tremor', moments: [moment.instability(1)], range: 4, target: 'ROOM' },
-  { name: 'Soul Needle', moments: [moment.damage(2)], range: 4, target: 'MODEL' },
-  { name: 'Shatter', moments: [moment.instability(1), moment.damage(3)], range: 1, target: 'MODEL' },
-  { name: 'Nova', moments: [moment.damage(3)], range: 0, target: 'ROOM' },
-  { name: 'Withering Mist', moments: [moment.instability(1), moment.damage(1)], range: 3, target: 'ROOM' },
-  { name: 'Cataclysm', moments: [moment.instability(2), moment.damage(4)], range: 0, target: 'ROOM' },
- ];
- return Array.from({ length: 36 }, (_, i) => ({ ...patterns[i % patterns.length], id: `${prefix}-${i + 1}`, kind: 'SPELL', ...(schoolId ? {schoolId} : {}) }));
-}
-
-export function createTransmutationDeck(): Card[] {
- const patterns: Omit<Card, 'id' | 'kind' | 'schoolId'>[] = [
-  { name: 'Mending Light', target: 'SELF', moments: [moment.heal(3)], range: 0 },
-  { name: 'Vital Thread', target: 'MODEL', moments: [moment.heal(2)], range: 2 },
-  { name: "Summoner's Balm", target: 'EVOCATION', moments: [moment.heal(2)], range: 3 },
-  { name: 'Renewing Word', target: 'MAGE', moments: [moment.heal(3)], range: 2 },
-  { name: 'Sanctuary', target: 'ROOM', moments: [moment.heal(2)], range: 1 },
-  { name: 'Restorative Tide', target: 'ROOM', moments: [moment.instability(1), moment.heal(1)], range: 2 },
-  { name: 'Stolen Sigil', target: 'MODEL', moments: [moment.convert(2)], range: 2 },
-  { name: "Mage's Due", target: 'MAGE', moments: [moment.convert(3)], range: 2 },
-  { name: 'Reclaimed Servant', target: 'EVOCATION', moments: [moment.convert(2)], range: 3 },
-  { name: 'Rewrite the Lodge', target: 'ROOM', moments: [moment.convert(3)], range: 2 },
-  { name: "Alchemist's Refuge", target: 'SELF', moments: [moment.convert(1), moment.heal(2)], range: 0 },
-  { name: 'Transmuting Surge', target: 'MODEL', moments: [moment.convert(1), moment.damage(1)], range: 2 },
- ];
- return Array.from({ length: 36 }, (_, i) => ({ ...patterns[i % patterns.length], id: `transmutation-${i + 1}`, kind: 'SPELL', schoolId: 'transmutation' }));
-}
-
-export function createEnchantmentDeck(): Card[] {
- const patterns: Omit<Card, 'id' | 'kind' | 'schoolId'>[] = [
-  { name:'Threshold Snare', spellType:'TRAP', target:'ROOM', moments: [], range:2,
-  triggerText:'When an enemy enters a room within range 2',
-  rulesText:'When an enemy enters a room within range 2, reveal and deal 2 damage to that model.',
-   trigger:{event:'ENTER_ROOM',relation:'ENEMY',scope:'BOUND_ROOM'}, triggerEffects:[{effect:'DAMAGE',amount:2,target:'EVENT_MODEL'}] },
-  { name:'Spell Leech', spellType:'TRAP', target:'ROOM', moments: [], range:2,
-  triggerText:'When an enemy casts in a room within range 2',
-  rulesText:'When an enemy casts in a room within range 2, reveal and deal 2 damage to that caster before its printed effects resolve.',
-   trigger:{event:'SPELL_CAST',relation:'ENEMY',scope:'BOUND_ROOM'}, triggerEffects:[{effect:'DAMAGE',amount:2,target:'EVENT_ACTOR'}] },
-  { name:'Thorn Retort', spellType:'PROTECTION', target:'SELF', moments: [], range:0,
-  triggerText:'When damage is dealt to you',
-  rulesText:'When damage is dealt to you, reveal and heal 1 wound before dealing 1 damage back to the attacker.',
-   trigger:{event:'DAMAGE_TAKEN',relation:'ENEMY',scope:'BOUND_MODEL'}, triggerEffects:[{effect:'HEAL',amount:1,target:'BOUND_MODEL'},{effect:'DAMAGE',amount:1,target:'EVENT_ACTOR'}] },
-  { name:'Mending Ward', spellType:'PROTECTION', target:'MAGE', moments: [], range:2,
-  triggerText:'When a mage within range 2 takes damage',
-  rulesText:'When a mage within range 2 takes damage, reveal and heal that mage 2 wounds. Defeated models cannot be healed.',
-   trigger:{event:'DAMAGE_TAKEN',relation:'ANY',scope:'BOUND_MODEL'}, triggerEffects:[{effect:'HEAL',amount:2,target:'BOUND_MODEL'}] },
-  { name:"Servant's Safeguard", spellType:'PROTECTION', target:'EVOCATION', moments: [], range:3,
-  triggerText:'When an evocation within range 3 takes damage',
-  rulesText:'When an evocation within range 3 takes damage, reveal and heal it 2 wounds. Destroyed models cannot be healed.',
-   trigger:{event:'DAMAGE_TAKEN',relation:'ANY',scope:'BOUND_MODEL'}, triggerEffects:[{effect:'HEAL',amount:2,target:'BOUND_MODEL'}] },
-  { name:'Hearth Ward', spellType:'PROTECTION', target:'ROOM', moments: [], range:2,
-  triggerText:'When an enemy activates a room within range 2',
-  rulesText:'When an enemy activates a room within range 2, reveal and heal your mage 2 wounds before the room reward.',
-   trigger:{event:'ROOM_ACTIVATED',relation:'ENEMY',scope:'BOUND_ROOM'}, triggerEffects:[{effect:'HEAL',amount:2,target:'OWNER'}] },
-  { name:'Tripwire', spellType:'TRAP', target:'ROOM', moments: [], range:2,
-  triggerText:'When an enemy evocation activates in a room within range 2 or in a room of the same color',
-  rulesText:'When an enemy evocation activates in a room within range 2 or in a room of the same color, reveal and deal 1 damage to it.',
-   trigger:{event:'EVOCATION_ACTIVATED',relation:'ENEMY',scope:'BOUND_COLOR'}, triggerEffects:[{effect:'DAMAGE',amount:1,target:'EVENT_MODEL'}] },
-  { name:'Cinder Seal', spellType:'TRAP', target:'ROOM', moments: [], range:2,
-  triggerText:'When an enemy activates a room within range 2 or in the same color',
-  rulesText:'When an enemy activates a room within range 2 or in the same color, reveal and place 2 instability in that activated room before its reward.',
-   trigger:{event:'ROOM_ACTIVATED',relation:'ENEMY',scope:'BOUND_COLOR'}, triggerEffects:[{effect:'INSTABILITY',amount:2,target:'EVENT_ROOM'}] },
-  { name:"Pilgrim's Mark", spellType:'CONTINGENCY', target:'SELF', moments: [], range:0,
-   rulesText:'When you enter a different room, convert the live instability there to your color.',
-   ongoing:{trigger:{event:'ENTER_ROOM',relation:'ANY',scope:'BOUND_MODEL'},effects:[{effect:'CONVERT',amount:1,target:'EVENT_ROOM'}]} },
-  { name:'Thorned Path', spellType:'COMBAT', target:'MAGE', moments: [moment.convert(1)], range:2,
-   rulesText:'When a mage within range 2 enters a different room, place 1 instability there in your color.',
-   ongoing:{trigger:{event:'ENTER_ROOM',relation:'ANY',scope:'BOUND_MODEL'},effects:[{effect:'INSTABILITY',amount:1,target:'EVENT_ROOM'}]} },
-  { name:'Runic Remedy', spellType:'CONTINGENCY', target:'MAGE', moments: [moment.heal(1)], range:2,
-   rulesText:'When a mage within range 2 activates a room, heal it before the reward.',
-   ongoing:{trigger:{event:'ROOM_ACTIVATED',relation:'ANY',scope:'BOUND_MODEL'},effects:[{effect:'HEAL',amount:1,target:'BOUND_MODEL'}]} },
-  { name:'Arcane Feedback', spellType:'COMBAT', target:'MAGE', moments: [moment.damage(1)], range:2,
-   rulesText:'Target an enemy mage within range 2, then remain bound. Whenever it casts, it suffers further harm before the printed effects.',
-   ongoing:{trigger:{event:'SPELL_CAST',relation:'ANY',scope:'BOUND_MODEL'},effects:[{effect:'DAMAGE',amount:1,target:'EVENT_ACTOR'}]} },
- ];
- return Array.from({length:36},(_,i)=>({...patterns[i%patterns.length],id:`enchantment-${i+1}`,kind:'SPELL',schoolId:'enchantment'}));
-}
-
 export function createAgonyDeck(prefix: string, schoolId?: string): Card[] {
  const patterns: Omit<Card, 'id' | 'kind'>[] = [
   { name: 'Shared Torture', moments: [moment.damage(4), moment.convert(1), moment.pain(3)], range: 1, target: 'MODEL' },
@@ -216,14 +140,15 @@ export function createAgonyDeck(prefix: string, schoolId?: string): Card[] {
     triggerText: 'When an enemy model deals damage',
    trigger:{event:'DAMAGE_DEALT',relation:'ENEMY',scope:'ANY'}, triggerTarget:'EVENT_ACTOR',
    triggerEffects:[{effect:'DAMAGE',amount:2,target:'EVENT_ACTOR'},{effect:'SUMMON',kind:'SUCCUBUS',position:'TARGET',target:'EVENT_ACTOR'}] },
-  { name: 'Visceral Fire', moments: [moment.damage(2, { range: 1, when: 'AFTER_DEFEAT' })], range: 2, target: 'MAGE',
-   rulesText: 'Target a mage within range 2. If that mage is defeated, each other mage within range 1 of it suffers 2 damage.' },
+  { name: 'Visceral Fire', moments: [moment.damage(2), moment.ifTargetDefeated(moment.nearTarget(moment.damage(1), 1))], range: 2, target: 'MAGE',
+   rulesText: 'Target a mage within range 2 and deal 2 damage. If that mage is defeated, each other mage within range 1 of where it stood suffers 1 damage.' },
   { name: 'Peak of Agony', moments: peakOfAgonyMoments(), range: 2, target: 'ROOM' },
   { name: 'Pain Mark', moments: [], range: 1, target: 'MODEL',
     rulesText: painMarkRules,
     ongoing: { trigger: { event: 'DAMAGE_DEALT', relation: 'ANY', scope: 'BOUND_MODEL', damageOrigins:['MAGE_PHYSICAL','SPELL'] }, effects: [{ effect: 'DAMAGE', amount: 2, target: 'EVENT_ACTOR' }] } },
   { name: 'Master of Pleasure', spellType: 'TRAP', moments: [], range: Number.POSITIVE_INFINITY, target: 'MAGE',
     triggerText: 'When another mage solves a quest',
+
     trigger:{event:'QUEST_SOLVED',relation:'ENEMY',scope:'ANY'}, triggerTarget:'EVENT_MODEL',
     triggerEffects:[{effect:'DAMAGE',amount:2,target:'EVENT_MODEL'},{effect:'SUMMON',kind:'SUCCUBUS',position:'TARGET',target:'EVENT_MODEL'}] },
   { name: 'Liquefy the Pain', spellType: 'TRAP', moments: [], range: Number.POSITIVE_INFINITY, target: 'ROOM',

@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
-import { applyAction, createEnchantmentDeck, createGame, summonEvocation } from '../packages/game-engine/src';
+import { applyAction, createGame, summonEvocation } from '../packages/game-engine/src';
+import { createEnchantmentFixtures } from '../packages/game-engine/test/enchantment-fixtures';
 import type { Card, GameAction, GameState } from '../packages/game-engine/src';
 import { ActionHistory } from '../apps/server/src/action-history';
 import { publicState } from '../apps/server/src/public-state';
@@ -12,7 +13,7 @@ function fixture(name='Torment') {
  let card:Card|undefined;
  if(['Torment','Cross and Delight','Submission','Master of Pleasure','Liquefy the Pain'].includes(name)) {
   const deck=s.library[0],index=deck.cards.findIndex(c=>c.name===name);card=deck.cards.splice(index,1)[0];
- } else card=createEnchantmentDeck().find(c=>c.name===name);
+ } else card=createEnchantmentFixtures().find(c=>c.name===name);
  s.players[0].prepared.slot1={card:card!,used:false};
  return s;
 }

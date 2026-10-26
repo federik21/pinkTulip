@@ -69,7 +69,7 @@ test('a Succubus shows its Demon stats and an Auto switch that only its owner ca
   await expect(card).toContainText('without asking');
 });
 
-test('the owner must answer the prompt: Escape keeps it open and both answers are sent', async ({ page }) => {
+test('the owner must answer the prompt: Escape only minimizes it, Reopen restores it and both answers are sent', async ({ page }) => {
   const game = fixture(), wire = await mount(page, game);
   game.pendingDecision = decision('p1'); wire.update(game);
   const dialog = page.getByRole('dialog', { name: 'Let Succubus #1 take a damage cube?', exact: true });
@@ -77,7 +77,19 @@ test('the owner must answer the prompt: Escape keeps it open and both answers ar
   await expect(dialog).toContainText('Blue Seer deals 2 damage to Rose Warden');
   await expect(dialog).toContainText('1/3 damage');
   await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  expect(wire.commands, 'Minimizing never answers').toEqual([]);
+  const pill = page.getByRole('region', { name: 'Minimized decision' });
+  await expect(pill).toContainText('Soul Tithe');
+  // The board and retinue stay inspectable while the decision waits.
+  await selectControlTab(page, 'Evocations');
+  await expect(page.locator('#retinue-p1 .evocation-card[data-evocation-id="succ"]')).toBeVisible();
+  await pill.getByRole('button', { name: 'Reopen', exact: true }).click();
   await expect(dialog).toBeVisible();
+  await expect(pill).toHaveCount(0);
+  await dialog.getByRole('button', { name: 'Minimize to inspect the game' }).click();
+  await expect(dialog).toBeHidden();
+  await pill.getByRole('button', { name: 'Reopen', exact: true }).click();
   await dialog.getByRole('button', { name: 'Decline', exact: true }).click();
   expect(wire.commands.at(-1)!.action).toEqual({ type: 'RESPOND_SOUL_TITHE', playerId: 'p1', accept: false });
   wire.ack();

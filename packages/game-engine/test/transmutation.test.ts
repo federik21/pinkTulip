@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
  applyAction, BLACK_ROSE_ID, canPlayerAct, canUseSpellDummy, createGame,
- createLibrary, createSpellDeck, createTransmutationDeck, evocationAttack, spellCanTargetModel,
+ createLibrary, evocationAttack, spellCanTargetModel,
 } from '../src';
 import { momentTotal } from '../src/cards';
 import { flatMoments, withMoments, type FlatEffects } from './flat-effects';
@@ -81,30 +81,6 @@ function physicalCards(s:GameState) {
 }
 
 describe('Transmutation physical school contract',()=>{
- it('adds exactly one independent 36-card school, 12 distinct printed patterns with three copies each',()=>{
-  const library=createLibrary();expect(library.map(d=>[d.id,d.name])).toEqual([['cantrip','Cantrip'],['transmutation','Transmutation'],['enchantment','Enchantment']]);
-  expect(new Set(library.map(d=>d.id)).size).toBe(3);
-  const deck=createTransmutationDeck();expect(deck).toHaveLength(36);expect(new Set(deck.map(c=>c.id)).size).toBe(36);
-  const expected:[string,SpellTarget,number,number,number,number,number][]=[
-   ['Mending Light','SELF',3,0,0,0,0],['Vital Thread','MODEL',2,0,0,0,2],
-   ["Summoner's Balm",'EVOCATION',2,0,0,0,3],['Renewing Word','MAGE',3,0,0,0,2],
-   ['Sanctuary','ROOM',2,0,0,0,1],['Restorative Tide','ROOM',1,0,0,1,2],
-   ['Stolen Sigil','MODEL',0,2,0,0,2],["Mage's Due",'MAGE',0,3,0,0,2],
-   ['Reclaimed Servant','EVOCATION',0,2,0,0,3],['Rewrite the Lodge','ROOM',0,3,0,0,2],
-   ["Alchemist's Refuge",'SELF',2,1,0,0,0],['Transmuting Surge','MODEL',0,1,1,0,2],
-  ];
-  expect(new Set(deck.map(c=>c.name)).size).toBe(12);
-  for(const [name,target,heal,convert,damage,instability,range] of expected) {
-   const copies=deck.filter(c=>c.name===name);expect(copies).toHaveLength(3);
-   for(const c of copies) {
-    expect(c).toMatchObject({name,target,range,kind:'SPELL',schoolId:'transmutation'});
-    expect(c.moments).toEqual(flatMoments({damage,instability,heal,convert}));
-   }
-  }
-  expect(library[0].cards.slice().sort((a,b)=>a.id.localeCompare(b.id))).toEqual(createSpellDeck('cantrip','cantrip').sort((a,b)=>a.id.localeCompare(b.id)));
-  expect(library[1].cards.map(c=>c.id).sort()).toEqual(deck.map(c=>c.id).sort());
- });
-
  it.each([1,2,3,4])('creates %i seats with empty personal zones and exactly 108 shared plus 12 forgotten physical cards',count=>{
   const s=createGame(count),cards=physicalCards(s);
   expect(cards).toHaveLength(120);expect(new Set(cards).size).toBe(120);

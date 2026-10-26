@@ -19,9 +19,13 @@ export type TriggerCondition = { event: TriggerEvent; relation: 'ENEMY' | 'SELF'
 // a Swift enum with associated values): add a variant with its own payload to
 // teach the engine a new kind of step. A card resolves its moments in array
 // order, and the same moment may appear any number of times (e.g. two hits).
-export type MomentSplash = { amount?: number; range: number; when: 'AFTER_DEFEAT' };
+// `when` makes a moment conditional on what earlier moments of the same card did:
+// it resolves only if the card's chosen model has been defeated or destroyed by then
+// (a defeat rescued by a reaction does not count). `area` redirects the moment to
+// every other mage within `range` of where the chosen model was. Both compose.
+export type MomentCondition = 'TARGET_DEFEATED';
 export type Moment = (
- | { effect: 'DAMAGE'; amount: number; splash?: MomentSplash }
+ | { effect: 'DAMAGE'; amount: number }
  | { effect: 'HEAL'; amount: number }
  | { effect: 'CONVERT'; amount: number }
  // An explicit CASTER scope converts that mage's foreign wounds to neutral
@@ -31,7 +35,7 @@ export type Moment = (
  | { effect: 'PAIN'; amount: number }
  | { effect: 'SUMMON'; kind: 'SUCCUBUS'; position?: 'CASTER' | 'TARGET' }
  | { effect: 'ACTIVATE_EVOCATION'; kind: 'SUCCUBUS' }
-) & { scope?: 'CASTER' | 'CASTER_ROOM' };
+) & { scope?: 'CASTER' | 'CASTER_ROOM'; when?: MomentCondition; area?: { range: number } };
 export type MomentEffect = Moment['effect'];
 export type TriggeredInstruction = Moment & { target: 'BOUND_MODEL' | 'BOUND_ROOM' | 'EVENT_MODEL' | 'EVENT_ACTOR' | 'EVENT_ROOM' | 'OWNER' };
 // triggerText is optional display copy only; trigger conditions govern matching.
@@ -107,6 +111,10 @@ export type Board = { tiles: Hex[]; rooms: Room[] };
 export type PhysicalAction = { kind: 'EXPLORE' | 'ATTACK'; mainEffectUsed: boolean; movementStarted: boolean };
 // actionsUsed counts every turn action, including spells and discard-to-move.
 export type Activation = { playerId: PlayerId; actionsUsed: number; exploring: number; sequencedSpellUsed: boolean; spellsCast: number; discardedExit: boolean; roomEffectUsed: boolean; physicalAction?: PhysicalAction | null; mustExitCell?: boolean };
+export type TurnRecapCard = { at: number; role: 'CAST' | 'DISCARDED' | 'TRIGGERED'; ownerId: PlayerId; card: Card; trigger?: TriggerEvent };
+// `lines` is the public log of one Action-phase turn; each card is shown after line `at - 1`.
+// Only publicly revealed cards are recorded: a hidden Trap/Protection appears once it triggers.
+export type TurnRecap = { id: string; round: number; playerId: PlayerId; playerName: string; isBot: boolean; lines: string[]; cards: TurnRecapCard[] };
 export type GameState = {
  gameId: string; hostId: PlayerId; round: number; phase: Phase; players: Player[]; board: Board;
  // Undefined selects the roster-based default at START_GAME, not during play.
@@ -126,6 +134,9 @@ export type GameState = {
  currentPlayerId: PlayerId | null; activation: Activation | null; winner: PlayerId | null; log: string[];
  // Public resolution facts only; optional for snapshots created before feedback events.
  feedbackEvents?: GameFeedbackEvent[];
+ // Draft of the turn in progress, and the last few finished turns (oldest first).
+ turnRecapDraft?: { playerId: PlayerId; logStart: number; cards: TurnRecapCard[] } | null;
+ turnRecaps?: TurnRecap[];
  usedEvent: EventCard | null; blackRoseResolved: boolean;
 };
 export type GameAction =

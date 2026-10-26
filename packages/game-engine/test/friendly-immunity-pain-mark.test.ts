@@ -119,8 +119,8 @@ describe('friendly damage and ordinary damage conversion remain blocked',()=>{
   const after=applyAction(s,{type:'CAST_SPELL',playerId:'p2',slot:'rapid',targetPlayerId:'p3'});
   expect(marks(after)).toHaveLength(1);expect(after.players[1].wizard.damageCubes).toBe(0);expect(after.players[1].cubes.onWizard).toBe(1);conserved(after);
  });
- it('keeps death splash off the caster while still damaging nearby enemy mages',()=>{
-  const s=fixture();s.players[2].wizard.health=1;prepare(s,[moment.damage(1,{range:1,when:'AFTER_DEFEAT'})]);
+ it('keeps the target-defeated area damage off the caster while still damaging nearby enemy mages',()=>{
+  const s=fixture();s.players[2].wizard.health=1;prepare(s,[moment.damage(1),moment.ifTargetDefeated(moment.nearTarget(moment.damage(1),1))]);
   const after=applyAction(s,{type:'CAST_SPELL',playerId:'p2',slot:'rapid',targetPlayerId:'p3'});
   expect(after.feedbackEvents!.filter(e=>e.kind==='DAMAGE'&&e.target.id==='p2').every(e=>e.sourceId==='p1')).toBe(true);
   expect(after.feedbackEvents!.some(e=>e.kind==='DAMAGE'&&e.target.id==='p4'&&e.sourceId==='p2')).toBe(true);conserved(after);

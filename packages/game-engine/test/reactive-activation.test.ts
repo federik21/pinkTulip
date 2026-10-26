@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { applyAction, createAgonyDeck, createEnchantmentDeck, createGame, moment } from '../src';
+import { applyAction, createAgonyDeck, createGame, moment } from '../src';
+import { createEnchantmentFixtures } from './enchantment-fixtures';
 import type { ActiveSpell, Card, GameAction, GameState, PendingDecision } from '../src';
 
 function fixture(count=3):GameState {
@@ -9,7 +10,7 @@ function fixture(count=3):GameState {
  return s;
 }
 function prepare(s:GameState,card:Card,owner='p1') {s.players.find(p=>p.id===owner)!.prepared.rapid={card,used:false};}
-function card(name:string):Card {return [...createAgonyDeck('test'),...createEnchantmentDeck()].find(c=>c.name===name)!;}
+function card(name:string):Card {return [...createAgonyDeck('test'),...createEnchantmentFixtures()].find(c=>c.name===name)!;}
 function active(s:GameState,spell:Card,owner='p1',id=spell.name):ActiveSpell {
  const a={id,playerId:owner,card:spell};s.readiedSpells!.push(a);s.activeSpellOrder!.push(a.id);return a;
 }

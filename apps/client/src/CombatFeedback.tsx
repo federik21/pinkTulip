@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { FeedbackTarget, GameFeedbackEvent, GameState, TriggerEvent } from '@brw/game-engine';
-import { ownerName } from './presentation';
+import { mageStyle, ownerName } from './presentation';
 import { SpellTypeIcon } from './SpellTypeIcon';
 import './feedback.css';
 
@@ -302,9 +302,9 @@ function NumericBalloon({ pulse, svg, slot }: { pulse: TimedPulse; svg: boolean;
  // Changing the delay on every STATE would double-advance existing animations.
  const [age] = useState(() => -Math.max(0, Date.now() - pulse.starts));
  const label = pulseLabel(event);
- const style = { '--feedback-slot': slot, '--feedback-age': `${age}ms` } as React.CSSProperties;
+ const style = { '--feedback-slot': slot, '--feedback-age': `${age}ms`, ...mageStyle(event.sourceId) } as React.CSSProperties;
  const props = { className: `feedback-pulse ${event.kind.toLowerCase()}-pulse`, style,
-  'data-event-id': event.id, 'data-feedback-kind': event.kind, 'data-target-id': event.target.id, 'data-target-kind': event.target.kind,
+  'data-event-id': event.id, 'data-feedback-kind': event.kind, 'data-source-id': event.sourceId, 'data-target-id': event.target.id, 'data-target-kind': event.target.kind,
   'data-stack-slot': slot, 'aria-label': `${event.target.name}: ${label}`, role: 'img' };
  return svg ? <g {...props} transform={`translate(${boardColumn(slot) * 46 + (slot % 2 ? 3 : -3)},${-10 - boardRow(slot) * SVG_STACK_STEP})`}>
   <g className="feedback-motion"><rect className="feedback-balloon-background" x={-11} y={-8} width={22} height={14} rx={4}/>

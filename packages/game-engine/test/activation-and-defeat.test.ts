@@ -129,8 +129,8 @@ describe('defeat reactions happen before scoring and respawn',()=>{
   expect(recap).toMatchObject({contributions:{p1:7,p3:3}});
   const kinds=result.feedbackEvents!.map(e=>e.kind);expect(kinds.indexOf('CONVERT')).toBeLessThan(kinds.indexOf('MAGE_DEFEATED'));
  });
- it('does not apply after-defeat splash when a reaction prevents defeat',()=>{
-  const result=respond(strike(lethalFixture([moment.damage(1,{range:1,amount:2,when:'AFTER_DEFEAT'})])));
+ it('does not run the target-defeated moment when a reaction prevents defeat',()=>{
+  const result=respond(strike(lethalFixture([moment.damage(1),moment.ifTargetDefeated(moment.nearTarget(moment.damage(2),1))])));
   expect(result.players[2].wizard.damageCubes).toBe(0);expect(result.players[1].wizard.damageCubes).toBe(8);
  });
  it('also cancels Pink Tulip defeat credit and the defeated-mage reward when Pain is healed',()=>{

@@ -1,6 +1,6 @@
 import { moment, momentTotal } from '../src/cards';
 import { describe, expect, it, vi } from 'vitest';
-import { applyAction, createGame, createSpellDeck, GameState, Card, Quest, RoomEffect, ROOM_COLORS, hexDistance } from '../src';
+import { applyAction, createGame, GameState, Card, Quest, RoomEffect, ROOM_COLORS, hexDistance } from '../src';
 
 const advance=(g:GameState)=>applyAction(g,{type:'ADVANCE_PHASE',playerId:'p1',expectedPhase:g.phase,expectedRound:g.round});
 
@@ -108,33 +108,16 @@ describe('lobby and decks',()=>{
   expect(starts.every(r=>r.color===null && r.effect===null)).toBe(true);
   for(const start of starts)expect(g.board.rooms.some(r=>!r.startingFor && hexDistance(start.tiles[0],r.tiles[0])===1)).toBe(true);
  });
- it('creates three unique 36-card schools while preserving the unchanged Cantrip deck and bounded effects',()=>{
-  const g=createGame(); expect(g.phase).toBe('LOBBY'); expect(g.library).toHaveLength(3);
-  expect(g.library.map(({id,name,discard})=>({id,name,discard}))).toEqual([
-   {id:'cantrip',name:'Cantrip',discard:[]},{id:'transmutation',name:'Transmutation',discard:[]},
-   {id:'enchantment',name:'Enchantment',discard:[]},
-  ]);
-  expect(new Set(g.library.map(d=>d.id)).size).toBe(3);
-  const all=g.library.flatMap(d=>d.cards); expect(all).toHaveLength(108);expect(new Set(all.map(c=>c.id)).size).toBe(108);
-  for(const deck of g.library) {
-   expect(deck.cards).toHaveLength(36);
-   expect(deck.cards.every(c=>c.schoolId===deck.id && c.id.startsWith(`${deck.id}-`) && !c.powerful)).toBe(true);
-   const names=[...new Set(deck.cards.map(c=>c.name))];expect(names).toHaveLength(12);
-   for(const name of names)expect(deck.cards.filter(c=>c.name===name)).toHaveLength(3);
-  }
-  const cantrip=g.library[0].cards;
-  expect([...cantrip].sort((a,b)=>a.id.localeCompare(b.id))).toEqual(createSpellDeck('cantrip','cantrip').sort((a,b)=>a.id.localeCompare(b.id)));
-  for(const c of cantrip){expect(momentTotal(c,'DAMAGE')).toBeLessThanOrEqual(4);expect(momentTotal(c,'INSTABILITY')).toBeLessThanOrEqual(2);}
-  expect(createSpellDeck('a').map(({id,...c})=>c)).toEqual(createSpellDeck('b').map(({id,...c})=>c));
-  expectConserved(g,physicalCards(g).map(c=>c.id));
- });
- it('assigns shared origin explicitly, never inferring it from a physical card prefix',()=>{
-  for(const prefix of ['p1','cantrip','school-1'])expect(createSpellDeck(prefix).every(c=>!c.schoolId)).toBe(true);
-  const shared=createSpellDeck('different-prefix','cantrip');
-  expect(shared).toHaveLength(36);expect(shared.every(c=>c.schoolId==='cantrip' && c.id.startsWith('different-prefix-'))).toBe(true);
+ it('creates only the Agony school, 36 unique cards with bounded effects',()=>{
+  const g=createGame(); expect(g.phase).toBe('LOBBY'); expect(g.library).toHaveLength(1);
+  expect(g.library.map(({id,discard})=>({id,discard}))).toEqual([{id:'agony',discard:[]}]);
+  const deck=g.library[0];expect(deck.cards).toHaveLength(36);expect(new Set(deck.cards.map(c=>c.id)).size).toBe(36);
+  expect(deck.cards.every(c=>c.schoolId==='agony' && c.id.startsWith('agony-') && !c.powerful)).toBe(true);
+  for(const c of deck.cards){expect(momentTotal(c,'DAMAGE')).toBeLessThanOrEqual(4);expect(momentTotal(c,'INSTABILITY')).toBeLessThanOrEqual(2);}
   for(const p of createGame(4).players) {
     expect(p.personalDeck).toEqual([]);expect(p.hand).toEqual([]);expect(p.discard).toEqual([]);
   }
+  expectConserved(g,physicalCards(g).map(c=>c.id));
  });
  it('requires both players connected and ready, and only the host may start',()=>{
   const g=createGame();expect(()=>applyAction(g,{type:'START_GAME',playerId:'p1'})).toThrow();

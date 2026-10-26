@@ -111,17 +111,46 @@ describe('moments are an ordered, repeatable list of effect steps', () => {
   expect(() => cast(s, { ...spell([moment.damage(1)], 'MODEL'), range: Number.POSITIVE_INFINITY }, { targetPlayerId: 'p2' })).toThrow(/starting room/i);
  });
 
- it('deals a single-step death splash to nearby mages when a damage moment defeats its target', () => {
-  const s = fixture();
+ const fire = [moment.damage(2), moment.ifTargetDefeated(moment.nearTarget(moment.damage(1), 1))];
+ const place = (s: GameState, health: number) => {
   s.players[1].wizard.position = { q: 2, r: 0 };
-  s.players[1].wizard.health = 2;
+  s.players[1].wizard.health = health;
   s.players[1].wizard.damageCubes = 0;
   s.players[2].wizard.position = { q: 3, r: 0 };
   s.players[3].wizard.position = { q: 6, r: 0 };
-  const after = cast(s, spell([moment.damage(2, { range: 1, when: 'AFTER_DEFEAT' })], 'MODEL'), { targetPlayerId: 'p2' });
+ };
+
+ it('runs a conditional follow-up moment on nearby mages only when the target is defeated', () => {
+  const s = fixture(); place(s, 2);
+  const after = cast(s, spell(fire, 'MODEL'), { targetPlayerId: 'p2' });
   expect(after.players[1].wizard.damageCubes).toBe(0);
-  expect(after.players[2].wizard.damageCubes).toBe(2);
+  expect(after.players[2].wizard.damageCubes).toBe(1);
   expect(after.players[3].wizard.damageCubes).toBe(0);
+  expect(after.log.some(line => /Moment 2\/2/.test(line) && /If the target is defeated/.test(line))).toBe(true);
+ });
+
+ it('skips the conditional moment when the target survives', () => {
+  const s = fixture(); place(s, 5);
+  const after = cast(s, spell(fire, 'MODEL'), { targetPlayerId: 'p2' });
+  expect(after.players[1].wizard.damageCubes).toBe(2);
+  expect(after.players[2].wizard.damageCubes).toBe(0);
+  expect(after.log.some(line => /skipped; the target was not defeated/.test(line))).toBe(true);
+ });
+
+ it('includes mages exactly at the range and excludes evocations and farther mages', () => {
+  const s = fixture(); place(s, 2);
+  s.players[3].wizard.position = { q: 4, r: 0 };
+  s.evocations = [{ id: 'evoc-3', playerId: 'p3', name: 'Cadaver', archetype: 'UNDEAD', movement: 2, attack: 2, health: 10, passive: 'WOUNDED_FURY', position: { q: 3, r: 0 }, damageCubes: 0, damageByPlayer: {}, activated: false }];
+  const after = cast(s, spell(fire, 'MODEL'), { targetPlayerId: 'p2' });
+  expect(after.players[2].wizard.damageCubes).toBe(1);
+  expect(after.players[3].wizard.damageCubes).toBe(0);
+  expect(after.evocations[0].damageCubes).toBe(0);
+ });
+
+ it('upgrades a saved legacy splash damage moment into a conditional follow-up', () => {
+  const saved = { kind: 'SPELL', moments: [{ effect: 'DAMAGE', amount: 2, splash: { range: 1, when: 'AFTER_DEFEAT' } }] };
+  upgradeLegacyCards(saved);
+  expect(saved.moments).toEqual([{ effect: 'DAMAGE', amount: 2 }, { effect: 'DAMAGE', amount: 2, when: 'TARGET_DEFEATED', area: { range: 1 } }]);
  });
 });
 
