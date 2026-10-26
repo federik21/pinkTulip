@@ -14,7 +14,7 @@ export function publicState(game: GameState, viewer: PlayerId | null, history: A
   delete copy.pendingDecision.resume;
   // A trigger opportunity must not reveal the identity/condition of a hidden
   // card, even if the owner chooses to ignore it.
-  if(copy.pendingDecision.kind==='REACTIVE_SPELL' && copy.pendingDecision.playerId!==viewer)
+  if((copy.pendingDecision.kind==='REACTIVE_SPELL' || copy.pendingDecision.kind==='CHOICE') && copy.pendingDecision.playerId!==viewer)
    copy.pendingDecision={kind:'WAITING',playerId:copy.pendingDecision.playerId,key:'waiting'};
  }
  copy.powerfulDeck=copy.powerfulDeck.map((_,i)=>hiddenCard(i));

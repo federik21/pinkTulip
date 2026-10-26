@@ -21,7 +21,7 @@ const descriptions: Description[] = [
     chips: ['⚔ Inflict 2', '✧ Summon SUCCUBUS'] },
   { name: 'Liquefy the Pain', type: 'TRAP', trigger: 'When you are defeated',
     body: 'you may reveal and summon a Succubus in the room where they were defeated, during the defeat trigger window before scoring or returning to their cell. Then activate that Succubus for free: move and attack in either order, or finish early, even during another mage’s turn. Resume the interrupted turn or evocation afterward. The room is fixed by the trigger.',
-    chips: ['✧ Summon SUCCUBUS', '↝ Activate Succubus · move / attack in either order'] },
+    chips: ['✧ Summon SUCCUBUS', '↝ It activates · move / attack in either order'] },
   { name: 'Threshold Snare', type: 'TRAP', trigger: 'When an enemy enters a room within range 2',
     body: 'reveal and deal 2 damage to that model.', chips: ['⚔ Inflict 2'] },
   { name: 'Spell Leech', type: 'TRAP', trigger: 'When an enemy casts in a room within range 2',

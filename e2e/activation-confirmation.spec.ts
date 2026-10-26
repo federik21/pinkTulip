@@ -222,7 +222,7 @@ for(const viewport of [{width:1440,height:1000},{width:390,height:844}]) {
      const initial=fixture('Cross and Delight'),tokens=initial.players[0].actionTokens;
      const wire=await mount(page,initial);
      const card=page.locator('.prepared .spell').filter({has:page.locator('strong',{hasText:'Cross and Delight'})});
-    await expect(card.locator('.spell-effects > span')).toHaveText([/Summon SUCCUBUS/,/Pain 1/,/Activate Succubus/]);
+    await expect(card.locator('.spell-effects > span')).toHaveText([/Summon SUCCUBUS/,/Pain 1/,/It activates/]);
      await card.click();
      await page.locator('.hex[data-room-id="room-0,0"]').click();
      await page.getByRole('button',{name:'Cast Cross and Delight here',exact:true}).click();

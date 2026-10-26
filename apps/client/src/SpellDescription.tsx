@@ -8,9 +8,9 @@ function MomentChip({moment,target}:{moment:Moment;target:Card['target']}) {
   case 'INSTABILITY':return <span>◆ {moment.amount} instability</span>;
   case 'HEAL':return <span className="heal-effect">♥ {moment.amount} heal</span>;
   case 'CONVERT':return <span className="convert-effect">↻ {moment.amount} convert · {target==='ROOM'?'room cubes':'damage cubes'}</span>;
-  case 'BLACK_ROSE_CONVERT':return <span className="convert-effect">✺ Pink Tulip convert {moment.amount}{moment.scope==='CASTER'?' · your mage · last damage from other mages':''}</span>;
+  case 'BLACK_ROSE_CONVERT':return <span className="convert-effect">✺ White Lotus convert {moment.amount}{moment.scope==='CASTER'?' · your mage · last damage from other mages':''}</span>;
   case 'SUMMON':return <span className="summon-effect">✧ Summon {moment.kind}</span>;
-  case 'ACTIVATE_EVOCATION':return <span className="summon-effect">↝ Activate Succubus · move / attack in either order</span>;
+  case 'ACTIVATE_EVOCATION':return <span className="summon-effect">↝ It activates · move / attack in either order</span>;
  }
 }
 

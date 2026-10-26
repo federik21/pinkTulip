@@ -215,7 +215,7 @@ describe('card catalog and legacy saves', () => {
    for (const flat of ['damage', 'instability', 'heal', 'convert']) expect(card).not.toHaveProperty(flat);
   for (const m of card.moments) {
    if('amount' in m)expect(m.amount).toBeGreaterThan(0);
-  else {expect(['SUMMON','ACTIVATE_EVOCATION']).toContain(m.effect);expect(m).toMatchObject({kind:'SUCCUBUS'});}
+  else if((m.effect==='SUMMON'||m.effect==='ACTIVATE_EVOCATION')&&card.schoolId!=='technomancy'){expect(m).toMatchObject({kind:'SUCCUBUS'});}
   }
   }
   const cross = createLibrary().flatMap(d => d.cards).find(c => c.name === 'Cross and Delight')!;

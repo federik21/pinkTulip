@@ -8,7 +8,7 @@ export const SPELL_TARGET_LABELS:Record<SpellTarget,string>={SELF:'Self',ROOM:'R
 export const SPELL_TARGET_DESCRIPTIONS:Record<SpellTarget,string>={SELF:'only your mage',ROOM:'Room',MAGE:'one mage',EVOCATION:'one evocation',MODEL:'one mage or evocation'};
 export const ownerColor=(id:string)=>MAGE_COLORS[id]??'#d4cedd';
 export const mageStyle=(id:string)=>({'--mage-color':ownerColor(id)} as CSSProperties);
-export const ownerName=(game:GameState,id:string)=>id===BLACK_ROSE_ID?'Pink Tulip':game.players.find(p=>p.id===id)?.name??'Unknown mage';
+export const ownerName=(game:GameState,id:string)=>id===BLACK_ROSE_ID?'White Lotus':game.players.find(p=>p.id===id)?.name??'Unknown mage';
 export const roomStatus=(room:GameState['board']['rooms'][number])=>room.reconstructed?(room.specialUsed?'USED':'READY'):room.instability>=room.instabilityLimit?'Full · pending Cleanup':`${room.instability}/${room.instabilityLimit} instability`;
 
 // Clamp cumulative widths, not each segment independently, so a bar never overflows.

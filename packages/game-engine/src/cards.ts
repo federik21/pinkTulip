@@ -1,4 +1,4 @@
-import { Card, EventCard, LibraryDeck, Moment, MomentEffect, Quest, SpellType, TriggerCondition } from './types';
+import { Card, EvocationKind, EventCard, LibraryDeck, Moment, MomentEffect, Quest, SpellType, TriggerCondition, UpgradeName } from './types';
 
 const peakOfAgonyMoments=():Moment[]=>[
  {effect:'DAMAGE',amount:2},
@@ -20,10 +20,15 @@ export const moment = {
  blackRoseConvert: (amount: number): Moment => ({ effect: 'BLACK_ROSE_CONVERT', amount }),
  instability: (amount: number): Moment => ({ effect: 'INSTABILITY', amount }),
  pain: (amount: number): Moment => ({ effect: 'PAIN', amount }),
- summon: (kind: 'SUCCUBUS', position: 'CASTER' | 'TARGET' = 'CASTER'): Moment => ({ effect: 'SUMMON', kind, position }),
- activateEvocation: (kind: 'SUCCUBUS'): Moment => ({ effect: 'ACTIVATE_EVOCATION', kind }),
+ summon: (kind: EvocationKind, position: 'CASTER' | 'TARGET' = 'CASTER'): Moment => ({ effect: 'SUMMON', kind, position }),
+ activateEvocation: (kind: EvocationKind): Moment => ({ effect: 'ACTIVATE_EVOCATION', kind }),
+ assignUpgrade: (upgrade: UpgradeName | 'RANDOM', to?: 'SUMMONED'): Moment => ({ effect: 'ASSIGN_UPGRADE', upgrade, ...(to ? { to } : {}) }),
+ activateTarget: (): Moment => ({ effect: 'ACTIVATE_TARGET' }),
  // Modifiers: wrap any moment, e.g. `moment.ifTargetDefeated(moment.nearTarget(moment.damage(1), 1))`.
  ifTargetDefeated: (step: Moment): Moment => ({ ...step, when: 'TARGET_DEFEATED' }),
+ ifUpgraded: (step: Moment): Moment => ({ ...step, when: 'UPGRADE_ASSIGNED' }),
+ ifRemoved: (step: Moment): Moment => ({ ...step, when: 'EVOCATION_REMOVED' }),
+ inTargetRoom: (step: Moment): Moment => ({ ...step, scope: 'TARGET_ROOM' }),
  nearTarget: (step: Moment, range: number): Moment => ({ ...step, area: { range } }),
 };
 
@@ -60,6 +65,7 @@ function describeTrigger(condition:TriggerCondition):string {
    ? condition.relation==='SELF'?'When you are defeated':`When ${subject('mage')} is defeated`
    : `When ${subject('mage')} defeats a mage`;
   case 'VP_CHANGED':return `When ${subject('model')} gains or loses victory points`;
+  case 'EVOCATION_LOST':return `When ${subject('evocation')} is defeated or removed`;
  }
 }
 
@@ -165,9 +171,44 @@ export function createAgonyDeck(prefix: string, schoolId?: string): Card[] {
 }
 
 
+export function createTechnomancyDeck(prefix: string, schoolId?: string): Card[] {
+ const m = moment;
+ const patterns: Omit<Card, 'id' | 'kind'>[] = [
+  { name: 'Protean Genesis', spellType: 'CONTINGENCY', range: 2, target: 'ROOM', moments: [m.instability(1), m.summon('CADAVER', 'TARGET'), m.activateEvocation('CADAVER')],
+   rulesText: 'Place 1 instability in the target room, summon a Cadaver there and activate it.' },
+  { name: 'Living Liquid', spellType: 'COMBAT', range: 2, target: 'EVOCATION', moments: [m.assignUpgrade('REGENERATING_ICHOR'), { ...m.ifUpgraded(m.heal(2)), scope: 'CASTER' }],
+   rulesText: 'Assign Regenerating ichor to the target evocation (even an enemy). If you do, heal 2 on your mage.' },
+  { name: 'Acid Blood', spellType: 'COMBAT', range: 2, target: 'EVOCATION', moments: [m.assignUpgrade('CORROSIVE_PLASMA'), m.ifUpgraded(m.inTargetRoom(m.damage(1)))],
+   rulesText: 'Assign Corrosive plasma to the target evocation. If you do, inflict 1 damage on every model in the target\u2019s room.' },
+  { name: 'Kinetic Infusion', spellType: 'CONTINGENCY', range: 2, target: 'EVOCATION', moments: [m.assignUpgrade('TENDON_IMPLANT'), m.ifUpgraded(m.instability(1))],
+   rulesText: 'Assign Tendon implant to the target evocation. If you do, place 1 instability cube in the target\u2019s room.' },
+  { name: 'Vigorous Infusion', spellType: 'CONTINGENCY', range: 2, target: 'EVOCATION', moments: [m.assignUpgrade('MUSCULAR_IMPLANT'), m.activateTarget()],
+   rulesText: 'Assign Muscular implant to the target evocation. It activates under your control.' },
+  { name: 'Indoctrination', spellType: 'CONTINGENCY', range: 2, target: 'EVOCATION', moments: [m.assignUpgrade('CEREBRAL_IMPLANT'), m.activateTarget()],
+   rulesText: 'Assign Cerebral implant to the target evocation. It activates under your control.' },
+  { name: 'Nefarious Evolution', spellType: 'CONTINGENCY', range: 2, target: 'EVOCATION', moments: [{ effect: 'REMOVE_EVOCATION', archetype: 'UNDEAD' }, { effect: 'SUMMON', kind: 'COLOSSUS', position: 'REMOVED', when: 'EVOCATION_REMOVED' }],
+   rulesText: 'You may remove one of your undead evocations in the target\u2019s room. If you do, summon a Colossus in that room.' },
+  { name: 'Mutant Energies', spellType: 'CONTINGENCY', range: 2, target: 'EVOCATION', moments: [{ effect: 'REMOVE_EVOCATION' }, m.ifRemoved({ effect: 'REMOVED_BLAST' })],
+   rulesText: 'You may remove one of your evocations in the target\u2019s room. If you do, inflict damage equal to its attack on every mage in that room and up to 1 room away.' },
+  { name: 'Craft', spellType: 'CONTINGENCY', range: 1, target: 'ROOM', moments: [m.summon('CADAVER', 'TARGET'), m.assignUpgrade('RANDOM', 'SUMMONED')],
+   rulesText: 'Summon a Cadaver in the target room, then assign it a random upgrade.' },
+  { name: 'Mechanical Archive', spellType: 'CONTINGENCY', range: 0, target: 'SELF', moments: [{ effect: 'LOOK_LIBRARY', cards: 4 }],
+   rulesText: 'Look at 4 cards from a single library school. Draw 1 and discard the rest to that school\u2019s discard pile.' },
+  { name: 'Draco\u2019s Skin', spellType: 'TRAP', range: Number.POSITIVE_INFINITY, target: 'SELF', moments: [],
+   rulesText: 'When one of your evocations is defeated or removed, summon that model again where it stood and assign Reinforced dermis to it.',
+   trigger: { event: 'EVOCATION_LOST', relation: 'SELF', relationTo: 'EVENT_MODEL', scope: 'ANY' },
+   triggerEffects: [{ effect: 'SUMMON', kind: 'EVENT_MODEL', position: 'EVENT', target: 'OWNER' }, { effect: 'ASSIGN_UPGRADE', upgrade: 'REINFORCED_DERMIS', to: 'SUMMONED', target: 'OWNER' }] },
+  { name: 'Necrotic Pheromones', spellType: 'TRAP', range: 2, target: 'EVOCATION', moments: [m.activateTarget()], triggerSight: 2, targetFrom: 'EVENT_MODEL',
+   rulesText: 'When another mage enters a room at range 2 and in line of sight, choose an evocation at range 2 from that mage. It activates under your control.',
+   trigger: { event: 'ENTER_ROOM', relation: 'ENEMY', scope: 'ANY' } },
+ ];
+ return Array.from({ length: 36 }, (_, i) => ({ ...patterns[i % patterns.length], id: `${prefix}-${i + 1}`, kind: 'SPELL', ...(schoolId ? {schoolId} : {}) }));
+}
+
 export function createLibrary(): LibraryDeck[] {
  return [
   { id: 'agony', name: 'Agony', cards: shuffle(createAgonyDeck('agony', 'agony')), discard: [] },
+  { id: 'technomancy', name: 'Technomancy', cards: shuffle(createTechnomancyDeck('technomancy', 'technomancy')), discard: [] },
  ];
 }
 

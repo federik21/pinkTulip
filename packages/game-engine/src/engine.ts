@@ -1,4 +1,4 @@
-import { Activation, ActiveSpell, Board, Card, DamageOrigin, DecisionAnswer, DecisionDetails, Evocation, EvocationKind, FeedbackTarget, GameAction, GameFeedbackEvent, GameState, Hex, Moment, Player, PlayerId, Room, RoomId, RoomColor, RoomEffect, TriggerCondition, TriggerEvent, TriggeredInstruction, TurnRecapCard } from './types';
+import { Activation, ActiveSpell, Board, Card, DamageOrigin, DecisionAnswer, DecisionDetails, Evocation, EvocationKind, FeedbackTarget, GameAction, GameFeedbackEvent, GameState, Hex, Moment, Player, PlayerId, Room, RoomId, RoomColor, RoomEffect, TriggerCondition, TriggerEvent, TriggeredInstruction, TurnRecapCard, UpgradeName } from './types';
 import { createEvents, createLibrary, createPowerfulDeck, createQuests, getSpellType, hasMoment, shuffle } from './cards';
 
 export class GameRuleError extends Error {}
@@ -22,21 +22,41 @@ export function getRoomRewards(capacity:number):Room['rewards'] {
 }
 export const MAGE_COLORS: Record<string,string> = {p1:'#fb7185',p2:'#60a5fa',p3:'#fbbf24',p4:'#34d399'};
 export const MAGE_COLOR_NAMES: Record<string,string> = {p1:'Rose',p2:'Blue',p3:'Amber',p4:'Green'};
-export const EVOCATION_MODEL_LIMITS:Readonly<Record<EvocationKind,number>> = {SUCCUBUS:3,CADAVER:6};
+export const EVOCATION_MODEL_LIMITS:Readonly<Record<EvocationKind,number>> = {SUCCUBUS:3,CADAVER:6,COLOSSUS:3};
+export const UPGRADE_NAMES:readonly UpgradeName[]=['CEREBRAL_IMPLANT','CORROSIVE_PLASMA','MUSCULAR_IMPLANT','REGENERATING_ICHOR','REINFORCED_DERMIS','TENDON_IMPLANT'];
+export const UPGRADE_COPIES=3;
+export const UPGRADE_LABELS:Readonly<Record<UpgradeName,string>>={CEREBRAL_IMPLANT:'Cerebral implant',CORROSIVE_PLASMA:'Corrosive plasma',MUSCULAR_IMPLANT:'Muscular implant',REGENERATING_ICHOR:'Regenerating ichor',REINFORCED_DERMIS:'Reinforced dermis',TENDON_IMPLANT:'Tendon implant'};
+export const UPGRADE_RULES:Readonly<Record<UpgradeName,string>>={
+ CEREBRAL_IMPLANT:'Each time this model inflicts damage, its controller gains 1 VP.',
+ CORROSIVE_PLASMA:'Its attack targets the room: every model in it not of the controller’s color suffers the damage.',
+ MUSCULAR_IMPLANT:'+1 attack.',
+ REGENERATING_ICHOR:'When this model suffers damage, ignore 1 of it.',
+ REINFORCED_DERMIS:'+2 health.',
+ TENDON_IMPLANT:'+1 movement, and at the end of the Black Rose phase it may move up to its movement.',
+};
 export const getEvocationKind = (e:Evocation):EvocationKind => e.kind??(e.archetype==='DEMON'?'SUCCUBUS':'CADAVER');
 // Derive the shared remaining counters from live models: destruction, replay and
 // undo automatically return miniatures, without a second mutable inventory.
 export function getEvocationSupply(s:Pick<GameState,'evocations'>):Record<EvocationKind,number> {
  const supply={...EVOCATION_MODEL_LIMITS};
  for(const e of s.evocations)supply[getEvocationKind(e)]--;
- return {SUCCUBUS:Math.max(0,supply.SUCCUBUS),CADAVER:Math.max(0,supply.CADAVER)};
+ return {SUCCUBUS:Math.max(0,supply.SUCCUBUS),CADAVER:Math.max(0,supply.CADAVER),COLOSSUS:Math.max(0,supply.COLOSSUS)};
 }
-export const evocationAttack = (e:Evocation) => e.attack+(getEvocationKind(e)==='SUCCUBUS'&&e.passive==='WOUNDED_FURY'?e.damageCubes:0);
+// Upgrade cards are finite too: three copies each, derived from attached upgrades.
+export function getUpgradeSupply(s:Pick<GameState,'evocations'>):Record<UpgradeName,number> {
+ const supply=Object.fromEntries(UPGRADE_NAMES.map(u=>[u,UPGRADE_COPIES])) as Record<UpgradeName,number>;
+ for(const e of s.evocations)if(e.upgrade)supply[e.upgrade]=Math.max(0,supply[e.upgrade]-1);
+ return supply;
+}
+const upgradeHealth=(kind:EvocationKind,upgrade?:UpgradeName)=>(upgrade==='REINFORCED_DERMIS'?2:0)+(kind==='CADAVER'&&upgrade?1:0);
+export const evocationMovement = (e:Evocation) => e.movement+(e.upgrade==='TENDON_IMPLANT'?1:0);
+export const evocationAttack = (e:Evocation) => e.attack+(getEvocationKind(e)==='SUCCUBUS'&&e.passive==='WOUNDED_FURY'?e.damageCubes:0)+(e.upgrade==='MUSCULAR_IMPLANT'?1:0);
 // Cadaver's effect is blank for now; Succubus retains Wounded Fury and Soul Tithe.
 type EvocationTemplate = Pick<Evocation,'name'|'archetype'|'movement'|'attack'|'health'|'ability'|'passive'>;
 export const EVOCATION_TYPES = {
  CADAVER:{name:'Cadaver',archetype:'UNDEAD',movement:2,attack:2,health:2},
  SUCCUBUS:{name:'Succubus',archetype:'DEMON',movement:2,attack:1,health:3,ability:'SOUL_TITHE',passive:'WOUNDED_FURY'},
+ COLOSSUS:{name:'Colossus',archetype:'UNDEAD',movement:2,attack:3,health:4,ability:'ENTRY_SHOCK'},
 } as const satisfies Record<EvocationKind,EvocationTemplate>;
 export type EvocationType = keyof typeof EVOCATION_TYPES;
 // Both the owner's three-model cap and the shared miniature supply must allow it.
@@ -44,6 +64,7 @@ export function summonEvocation(s:GameState,p:Player,type:EvocationType,position
  const owned=s.evocations.filter(e=>e.playerId===p.id);
  if(owned.length>=3){s.log.push(`${p.name} already controls 3 evocations; no ${EVOCATION_TYPES[type].name} summoned.`);return;}
  if(getEvocationSupply(s)[type]===0){s.log.push(`No ${EVOCATION_TYPES[type].name} models remain in the shared supply; no model summoned.`);return;}
+ if(type==='COLOSSUS'&&owned.some(e=>getEvocationKind(e)==='COLOSSUS')){s.log.push(`${p.name} already controls a big evocation; no Colossus summoned.`);return;}
  const number=[1,2,3].find(n=>!owned.some(e=>e.number===n))!;
  const template:EvocationTemplate=EVOCATION_TYPES[type];
  const evocation:Evocation={id:resolutionId(s),playerId:p.id,number,kind:type,name:template.name,archetype:template.archetype,movement:template.movement,attack:template.attack,health:template.health,position:{...position},damageCubes:0,damageByPlayer:{},activated:false};
@@ -71,7 +92,8 @@ export function spellCanTargetModel(card:Card,casterId:string,ownerId:string,kin
  // Support, Protection and ongoing cards do not bypass the printed Self target.
  if(kind==='MAGE' && casterId===ownerId)return false;
  if(card.target==='ROOM' || (card.target!=='MODEL' && card.target!==kind))return false;
- return casterId!==ownerId || hasMoment(card,'HEAL') || hasMoment(card,'CONVERT') || getSpellType(card)==='PROTECTION' || (card.ongoing && getSpellType(card)==='CONTINGENCY')===true;
+ return casterId!==ownerId || hasMoment(card,'HEAL') || hasMoment(card,'CONVERT') || getSpellType(card)==='PROTECTION' || (card.ongoing && getSpellType(card)==='CONTINGENCY')===true
+  || card.moments.some(m=>m.effect==='ASSIGN_UPGRADE'||m.effect==='ACTIVATE_TARGET'||m.effect==='REMOVE_EVOCATION');
 }
 export function canUseSpellDummy(card:Card):boolean {
  return card.target==='MODEL' || card.target==='MAGE' || card.target==='EVOCATION';
@@ -319,8 +341,8 @@ function drawQuest(s:GameState) {
 // stored in GameState; a root action remains a single clone/commit boundary.
 type ModelSnapshot = { id:string; playerId:string; kind:'MAGE'|'EVOCATION'; generation:number };
 // Local to a single effect, so a nested spell cannot replace its summoned model.
-type EffectResolution = { summoned?:ModelSnapshot; activationIsExplicit:boolean };
-type SpellEvent = { event:TriggerEvent; model?:ModelSnapshot; actor?:ModelSnapshot; roomId?:string; target?:FeedbackTarget; damageOrigin?:DamageOrigin; afterResolution?:()=>void };
+type EffectResolution = { summoned?:ModelSnapshot; activationIsExplicit:boolean; upgraded?:boolean; removed?:{position:Hex;attack:number;roomId?:string}; eventPosition?:Hex; eventKind?:EvocationKind };
+type SpellEvent = { event:TriggerEvent; model?:ModelSnapshot; actor?:ModelSnapshot; roomId?:string; target?:FeedbackTarget; damageOrigin?:DamageOrigin; position?:Hex; kind?:EvocationKind; afterResolution?:()=>void };
 type PendingMageDefeat = { ref:ModelSnapshot; roomId?:string; target:FeedbackTarget; source?:Player };
 type ReplayEntropy={ids:string[];random:number[]};
 type InstructionContext = { generations:Map<string,number>; bindings:Map<string,ModelSnapshot>; defeats:Map<string,PendingMageDefeat>; resolutions:number; interruptId?:string; answers:DecisionAnswer[]; cursor:number; momentDepth:number; events:SpellEvent[]; entropy:ReplayEntropy; idCursor:number; randomCursor:number };
@@ -425,6 +447,10 @@ function matchesTrigger(s:GameState,active:ActiveSpell,condition:TriggerConditio
    const room=event.roomId?s.board.rooms.find(r=>r.id===event.roomId):undefined;
    if(!room || room.startingFor || !room.tiles.some(h=>isWithinSpellRange(owner.wizard.position,h,active.card.range)))return false;
   }
+  if(active.card.triggerSight!==undefined) {
+   const seen=event.model?.kind==='MAGE'?liveModel(s,event.model)?.model.position:undefined;
+   if(!seen||!isWithinSpellRange(owner.wizard.position,seen,active.card.triggerSight))return false;
+  }
   return true;
  }
  if(condition.scope==='BOUND_ROOM')return !!active.roomId && active.roomId===event.roomId;
@@ -463,11 +489,18 @@ function resolveInstructionBody(s:GameState,owner:Player,instruction:TriggeredIn
  } else if(instruction.effect==='PAIN') {
   damage(s,owner,instruction.amount);
  } else if(instruction.effect==='SUMMON') {
-  const position = instruction.position === 'TARGET' ? target?.model.position??room?.tiles[0] : owner.wizard.position;
-  if(!position)return;
-  summonForEffect(s,owner,instruction.kind,position,effect);
+  const kind=instruction.kind==='EVENT_MODEL'?effect?.eventKind:instruction.kind;
+  const position=instruction.position==='EVENT'?effect?.eventPosition:instruction.position==='TARGET'?target?.model.position??room?.tiles[0]:owner.wizard.position;
+  if(!position||!kind)return;
+  summonForEffect(s,owner,kind,position,effect);
  } else if(instruction.effect==='ACTIVATE_EVOCATION') {
   activateEffectSummon(s,owner,instruction.kind,effect);
+ } else if(instruction.effect==='ASSIGN_UPGRADE') {
+  const evocation=instruction.to==='SUMMONED'?liveModel(s,effect?.summoned)?.evocation:target?.evocation;
+  const done=assignUpgrade(s,evocation,instruction.upgrade);
+  if(effect)effect.upgraded=done;
+ } else if(instruction.effect==='ACTIVATE_TARGET'||instruction.effect==='REMOVE_EVOCATION'||instruction.effect==='REMOVED_BLAST'||instruction.effect==='LOOK_LIBRARY') {
+  // Spell moments only; triggered instructions never use these.
  } else if(room && (instruction.effect==='DAMAGE' || instruction.effect==='HEAL')) {
   const refs=[...s.players.filter(p=>inRoom(p,room)).map(p=>snapshot(s,p.id)!),...s.evocations.filter(e=>room.tiles.some(h=>hexKey(h)===hexKey(e.position))).map(e=>snapshot(s,e.id)!)];
   for(const model of refs)resolveInstruction(s,owner,instruction,model,undefined,actor,effect,damageOrigin);
@@ -509,6 +542,11 @@ function reactiveTargets(s:GameState,active:ActiveSpell,event:SpellEvent):Feedba
  const owner=getPlayer(s,active.playerId),card=active.card;
  if(card.target==='ROOM')return s.board.rooms.filter(r=>!r.startingFor && (!card.triggerTarget || card.triggerTarget==='EVENT_ROOM' && r.id===event.roomId) && r.tiles.some(h=>isWithinSpellRange(owner.wizard.position,h,card.range))).map(roomFeedbackTarget);
  if(card.triggerTarget==='EVENT_ROOM')return [];
+ if(card.targetFrom==='EVENT_MODEL') {
+  const from=liveModel(s,event.model)?.model.position;
+  if(!from)return [];
+  return s.evocations.filter(e=>isWithinSpellRange(from,e.position,card.range)&&!roomAt(s,e.position)?.startingFor&&spellCanTargetModel(card,owner.id,e.playerId,'EVOCATION')).map(e=>modelFeedbackTarget(s,snapshot(s,e.id))!);
+ }
  const forced=card.triggerTarget==='EVENT_ACTOR'?event.actor:event.model;
  const refs=card.triggerTarget?(forced?[forced]:[]):[...s.players.filter(p=>p.wizard.alive).map(p=>snapshot(s,p.id)!),...s.evocations.map(e=>snapshot(s,e.id)!)];
  return refs.filter(ref=>{
@@ -581,7 +619,7 @@ function resolveEvent(s:GameState,event:SpellEvent) {
      const refs=selectedRef?[selectedRef]:selectedRoom?[...s.players.filter(p=>inRoom(p,selectedRoom)).map(p=>snapshot(s,p.id)!),...s.evocations.filter(e=>selectedRoom.tiles.some(h=>hexKey(h)===hexKey(e.position))).map(e=>snapshot(s,e.id)!)]:[];
      resolveEffectMoments(s,owner,active.card,selectedRoom??room,refs,ownerRef!);
     } else {
-   const effect:EffectResolution={activationIsExplicit:instructions.some(step=>step.effect==='ACTIVATE_EVOCATION')};
+   const effect:EffectResolution={activationIsExplicit:instructions.some(step=>step.effect==='ACTIVATE_EVOCATION'),eventPosition:event.position,eventKind:event.kind};
   for(const [index,instruction] of instructions.entries()) {
    s.log.push(`Moment ${index+1}/${instructions.length} · ${active.card.name}: ${describeInstruction(instruction)}`);
     let ref:ModelSnapshot|undefined,roomId:string|undefined;
@@ -612,8 +650,13 @@ function describeInstruction(instruction:TriggeredInstruction):string {
   case 'BLACK_ROSE_CONVERT':return `Convert the last ${instruction.amount} damage cubes received from other mages on ${target} to Pink Tulip black${instruction.scope==='CASTER'?'':' (ignored on friendly models)'}.`;
   case 'INSTABILITY':return `Place up to ${instruction.amount} instability in ${target}.`;
   case 'PAIN':return `The Pink Tulip inflicts ${instruction.amount} ${instruction.amount===1?'damage cube':'damage cubes'} on the resolving mage.`;
-  case 'SUMMON':return `Summon a ${instruction.kind} ${instruction.position === 'TARGET' ? 'in the target’s room' : 'at the owner’s position'} and activate it.`;
-  case 'ACTIVATE_EVOCATION':return `Activate the summoned ${instruction.kind}: move and attack in either order, or use only one, without spending another action or token.`;
+  case 'SUMMON':return `Summon ${instruction.kind==='EVENT_MODEL'?'the lost model':`a ${EVOCATION_TYPES[instruction.kind].name}`} ${instruction.position==='TARGET'?'in the target’s room':instruction.position==='EVENT'?'where it stood':instruction.position==='REMOVED'?'in the same room':'at the owner’s position'}${instruction.kind==='SUCCUBUS'?' and activate it':''}.`;
+  case 'ACTIVATE_EVOCATION':return `Activate the summoned ${EVOCATION_TYPES[instruction.kind].name}: move and attack in either order, or use only one, without spending another action or token.`;
+  case 'ACTIVATE_TARGET':return 'Activate the chosen evocation under your control: it takes your color, may attack its owner, and you and your evocations are immune to that damage.';
+  case 'ASSIGN_UPGRADE':return `Assign ${instruction.upgrade==='RANDOM'?'a random upgrade':UPGRADE_LABELS[instruction.upgrade]} to ${instruction.to==='SUMMONED'?'the summoned model':'the chosen evocation'}; the owner keeps one if it already has an upgrade.`;
+  case 'REMOVE_EVOCATION':return `You may remove one of your ${instruction.archetype==='UNDEAD'?'undead ':''}evocations in the target’s room.`;
+  case 'REMOVED_BLAST':return 'Inflict damage equal to the removed model’s attack on every mage in its room and up to 1 room away.';
+  case 'LOOK_LIBRARY':return `Look at ${instruction.cards} cards of one school, take 1 and discard the rest.`;
  }
 }
 function modelEvent(s:GameState,event:TriggerEvent,ref:ModelSnapshot,actor=ref,roomId?:string,damageOrigin?:DamageOrigin) {
@@ -627,12 +670,24 @@ function moveModel(s:GameState,ref:ModelSnapshot,destination:Hex) {
  if(target.mage&&s.activation?.playerId===target.mage.id&&!isInStartingRoom(s,target.mage))delete s.activation.mustExitCell;
  const to=roomAt(s,destination)?.id;
  if(to && from!==to)modelEvent(s,'ENTER_ROOM',ref,ref,to);
+ // Entry shock: only a mage that walks into the room is hurt, never when the Colossus itself moves.
+ if(to && from!==to && target.mage) {
+  for(const e of s.evocations.filter(x=>x.ability==='ENTRY_SHOCK'&&x.playerId!==target.mage!.id&&areInSameRoom(s,x.position,destination))) {
+   resolveInstruction(s,getPlayer(s,e.playerId),{effect:'DAMAGE',amount:3,target:'EVENT_MODEL'},snapshot(s,target.mage.id),undefined,snapshot(s,e.id),undefined,'EVOCATION');
+  }
+ }
 }
 
 // Thrown from deep inside resolution when a mage must answer; applyAction turns it
 // into a pendingDecision and replays the whole root action once answered.
 class DecisionNeeded extends Error {
  constructor(readonly decision:DecisionDetails,readonly answers:DecisionAnswer[]) {super('Decision needed');}
+}
+
+function askChoice(s:GameState,playerId:PlayerId,keyBase:string,prompt:string,options:Array<{id:string;label:string}>,optional=false):string|undefined {
+ const ctx=context(s),key=`choice|${keyBase}|${ctx.cursor}`,given=ctx.answers[ctx.cursor];
+ if(given?.key===key){ctx.cursor++;return given.accept?given.targetId:undefined;}
+ throw new DecisionNeeded({kind:'CHOICE',playerId,key,prompt,optional,options},ctx.answers.slice(0,ctx.cursor));
 }
 
 function askSoulTithe(s:GameState,e:Evocation,target:Player,amount:number,source?:Player) {
@@ -696,6 +751,7 @@ function damage(s: GameState, target: Player, amount: number, source?: Player, a
  }
  s.log.push(`${target.name} suffers ${inflicted} ${source ? 'damage' : 'black damage'}.`);
  appendFeedback(s,{kind:'DAMAGE',target:feedbackTarget,sourceId:source?.id??BLACK_ROSE_ID,amount:inflicted});
+ if(source && eventActor)cerebralImplant(s,source,eventActor);
  if(source && eventActor)modelEvent(s,'DAMAGE_DEALT',eventActor,eventActor,undefined,damageOrigin);
  emitEvent(s,{event:'DAMAGE_TAKEN',model:ref,actor:eventActor,roomId,target:feedbackTarget});
  if(target.wizard.damageCubes<target.wizard.health)return;
@@ -768,6 +824,7 @@ function settleMageDefeat(s:GameState,pending:PendingMageDefeat) {
 function damageEvocation(s:GameState,e:Evocation,amount:number,source?:Player,actor=source?snapshot(s,source.id):undefined,damageOrigin:DamageOrigin='NEUTRAL') {
  if(e.playerId===source?.id || !s.evocations.includes(e))return;
  if(context(s).momentDepth===0){atMomentEnd(s,()=>damageEvocation(s,e,amount,source,actor,damageOrigin));return;}
+ if(e.upgrade==='REGENERATING_ICHOR'&&amount>0){amount--;s.log.push(`${e.name} #${e.number??1} ignores 1 damage (Regenerating ichor).`);}
  const inflicted=Math.min(amount,Math.max(0,e.health-e.damageCubes));
  if(inflicted<=0)return;
  const ref=snapshot(s,e.id)!,roomId=roomAt(s,e.position)?.id;
@@ -778,6 +835,7 @@ function damageEvocation(s:GameState,e:Evocation,amount:number,source?:Player,ac
  if(source&&cubes)e.damageByPlayer[source.id]=(e.damageByPlayer[source.id]??0)+cubes;
  s.log.push(source?`${e.name} suffers ${inflicted} damage; ${source.name} places ${cubes} damage cubes.`:`${e.name} suffers ${inflicted} black damage.`);
  appendFeedback(s,{kind:'DAMAGE',target:feedbackTarget,sourceId:source?.id??BLACK_ROSE_ID,amount:inflicted});
+ if(source && actor)cerebralImplant(s,source,actor);
  if(source && actor)modelEvent(s,'DAMAGE_DEALT',actor,actor,undefined,damageOrigin);
  if(e.damageCubes<e.health){emitEvent(s,{event:'DAMAGE_TAKEN',model:ref,actor,roomId,target:feedbackTarget});return;}
  invalidateModel(s,ref);
@@ -787,6 +845,55 @@ function damageEvocation(s:GameState,e:Evocation,amount:number,source?:Player,ac
  s.evocations=s.evocations.filter(model=>model.id!==e.id);
  s.log.push(`${e.name} is destroyed; its damage cubes return to their owners.`);
  emitEvent(s,{event:'DAMAGE_TAKEN',model:ref,actor,roomId,target:feedbackTarget});
+ emitEvent(s,{event:'EVOCATION_LOST',model:ref,roomId,target:feedbackTarget,position:{...e.position},kind:getEvocationKind(e)});
+}
+
+// Each time an upgraded evocation inflicts damage, its controller gains 1 VP.
+function cerebralImplant(s:GameState,source:Player,actor:ModelSnapshot) {
+ if(actor.kind!=='EVOCATION')return;
+ const model=liveModel(s,actor)?.evocation;
+ if(model?.upgrade!=='CEREBRAL_IMPLANT')return;
+ awardVictoryPoints(s,source.id,1);
+ s.log.push(`${source.name}: +1 VP from ${model.name} #${model.number??1} (Cerebral implant).`);
+}
+
+// Remove a model from play without damage; its cubes return and EVOCATION_LOST fires.
+function removeEvocation(s:GameState,e:Evocation,verb:'removed'|'destroyed') {
+ if(!s.evocations.includes(e))return;
+ const ref=snapshot(s,e.id)!,roomId=roomAt(s,e.position)?.id,target=modelFeedbackTarget(s,ref);
+ invalidateModel(s,ref);
+ for(const owner of s.players) {
+  const n=e.damageByPlayer[owner.id]??0;owner.cubes.available+=n;owner.cubes.onEvocations-=n;
+ }
+ s.evocations=s.evocations.filter(model=>model.id!==e.id);
+ s.log.push(`${e.name} #${e.number??1} is ${verb}; its damage cubes return to their owners.`);
+ emitEvent(s,{event:'EVOCATION_LOST',model:ref,roomId,...(target?{target}:{}),position:{...e.position},kind:getEvocationKind(e)});
+}
+
+// The evocation's owner decides which upgrade stays when a second one arrives.
+// Returns whether the requested upgrade is now attached.
+function assignUpgrade(s:GameState,e:Evocation|undefined,wanted:UpgradeName|'RANDOM'):boolean {
+ if(!e||!s.evocations.includes(e))return false;
+ const supply=getUpgradeSupply(s);
+ let upgrade:UpgradeName|undefined;
+ if(wanted==='RANDOM') {
+  const pool=UPGRADE_NAMES.filter(u=>supply[u]>0);
+  if(pool.length)upgrade=pool[Math.floor(resolutionRandom(s)*pool.length)];
+ } else if(supply[wanted]>0)upgrade=wanted;
+ if(!upgrade){s.log.push('No upgrade card of that kind remains in the deck; nothing is assigned.');return false;}
+ const old=e.upgrade;
+ if(old===upgrade)return true;
+ if(old) {
+  const keep=askChoice(s,e.playerId,`upgrade|${e.id}|${old}|${upgrade}`,`${e.name} #${e.number??1} already has ${UPGRADE_LABELS[old]}. Keep one upgrade; the other returns to the deck.`,
+   [{id:upgrade,label:`${UPGRADE_LABELS[upgrade]} — ${UPGRADE_RULES[upgrade]}`},{id:old,label:`${UPGRADE_LABELS[old]} — ${UPGRADE_RULES[old]}`}])!;
+  if(keep===old){s.log.push(`${getPlayer(s,e.playerId).name} keeps ${UPGRADE_LABELS[old]} on ${e.name} #${e.number??1}; ${UPGRADE_LABELS[upgrade]} returns to the deck.`);return false;}
+ }
+ const kind=getEvocationKind(e);
+ e.health+=upgradeHealth(kind,upgrade)-upgradeHealth(kind,old);
+ e.upgrade=upgrade;
+ s.log.push(`${e.name} #${e.number??1} gains ${UPGRADE_LABELS[upgrade]}: ${UPGRADE_RULES[upgrade]}`);
+ if(e.damageCubes>=e.health)removeEvocation(s,e,'destroyed');
+ return true;
 }
 
 function modelTarget(s:GameState,id:string) {
@@ -961,8 +1068,9 @@ function startBlackRose(s: GameState) {
 
 const heldQuests = (p:Player) => p.quest?[p.quest,...p.additionalQuests]:[...p.additionalQuests];
 
-function beginStudyIfQuestsFit(s:GameState) {
+function beginStudyIfQuestsFit(s:GameState,tendonDone=false) {
  if(s.players.some(p=>heldQuests(p).length>p.questLimit))return;
+ if(!tendonDone&&startTendonMoves(s))return;
  for(const p of s.players) {
   let drawn=0;
   while(drawn<2 && p.personalDeck.length+p.discard.length>0) {p.hand.push(drawOne(s,p.personalDeck,p.discard));drawn++;}
@@ -1252,6 +1360,7 @@ function startEvocationPhase(s:GameState) {
 
 function finishEvocation(s:GameState) {
  const active=s.evocationActivation!;s.evocationActivation=null;
+ if(active.tendon){s.currentPlayerId=null;if(!nextTendonMove(s))beginStudyIfQuestsFit(s,true);return;}
  if(active.resume) {
   s.currentPlayerId=active.resume.currentPlayerId;
   s.evocationActivation=active.resume.evocationActivation;
@@ -1271,10 +1380,30 @@ function finishEvocation(s:GameState) {
 }
 
 function requireEvocation(s:GameState,id:string) {
- assert(s.phase==='ACTION'||s.phase==='EVOCATION','Evocation activation unavailable in this phase');
+ assert(s.phase==='ACTION'||s.phase==='EVOCATION'||(s.phase==='BLACK_ROSE'&&!!s.evocationActivation?.tendon),'Evocation activation unavailable in this phase');
  const active=s.evocationActivation;assert(active&&active.playerId===id&&s.currentPlayerId===id,'No active evocation for this player');
- const e=s.evocations.find(e=>e.id===active!.evocationId);assert(e&&e.playerId===id,'Evocation unavailable');
+ const e=s.evocations.find(e=>e.id===active!.evocationId);assert(e&&(e.playerId===id||e.playerId===active!.borrowedFrom),'Evocation unavailable');
  return {active:active!,e:e!};
+}
+
+// Tendon implants: at the end of the Black Rose phase each such model may move.
+function nextTendonMove(s:GameState):boolean {
+ const queue=s.tendonQueue??[];
+ while(queue.length) {
+  const e=s.evocations.find(model=>model.id===queue.shift());
+  if(!e)continue;
+  s.tendonQueue=queue;
+  s.evocationActivation={evocationId:e.id,playerId:e.playerId,movesRemaining:evocationMovement(e),returnToAction:false,attackUsed:true,tendon:true};
+  s.currentPlayerId=e.playerId;
+  s.log.push(`${getPlayer(s,e.playerId).name}: ${e.name} #${e.number??1} may move up to ${evocationMovement(e)} (Tendon implant).`);
+  return true;
+ }
+ delete s.tendonQueue;
+ return false;
+}
+function startTendonMoves(s:GameState):boolean {
+ s.tendonQueue=s.players.flatMap(p=>s.evocations.filter(e=>e.playerId===p.id&&e.upgrade==='TENDON_IMPLANT'&&evocationMovement(e)>0).map(e=>e.id));
+ return nextTendonMove(s);
 }
 
 function afterAction(s: GameState) {
@@ -1287,25 +1416,49 @@ function afterAction(s: GameState) {
  if(!canPlayerAct(s,p) && !rewardReady) finishActivation(s);
 }
 
-function summonForEffect(s:GameState,owner:Player,kind:'SUCCUBUS',position:Hex,effect?:EffectResolution) {
+function summonForEffect(s:GameState,owner:Player,kind:EvocationKind,position:Hex,effect?:EffectResolution) {
  const evocation=summonEvocation(s,owner,kind,position);
  if(effect)effect.summoned=evocation?snapshot(s,evocation.id):undefined;
  if(!evocation)return;
  evocation.activated=!effect?.activationIsExplicit;
  s.log.push(effect?.activationIsExplicit?`${owner.name} summons ${evocation.name}.`:`${owner.name} summons and activates ${evocation.name}.`);
 }
-function activateEffectSummon(s:GameState,owner:Player,kind:'SUCCUBUS',effect?:EffectResolution) {
+function activateEffectSummon(s:GameState,owner:Player,kind:EvocationKind,effect?:EffectResolution) {
  const evocation=liveModel(s,effect?.summoned)?.evocation;
  // A failed summon or a destroyed model must never activate a different servant.
  if(!evocation||evocation.playerId!==owner.id||evocation.name!==EVOCATION_TYPES[kind].name)return;
- assert(s.phase==='ACTION'||s.phase==='EVOCATION','Resolve the summoned activation during the Action or Evocation phase');
- const resume=s.currentPlayerId!==owner.id||!!s.evocationActivation||s.phase==='EVOCATION'
+ beginSpellActivation(s,owner,evocation);
+}
+// A spell grants `controller` one activation of any evocation, outside the normal token
+// economy. A model owned by another mage takes the controller's color for it.
+function beginSpellActivation(s:GameState,controller:Player,evocation:Evocation) {
+ assert(s.phase==='ACTION'||s.phase==='EVOCATION','Resolve the spell activation during the Action or Evocation phase');
+ const resume=s.currentPlayerId!==controller.id||!!s.evocationActivation||s.phase==='EVOCATION'
   ? {currentPlayerId:s.currentPlayerId,evocationActivation:s.evocationActivation}:undefined;
- evocation.activated=true;
- s.evocationActivation={evocationId:evocation.id,playerId:owner.id,movesRemaining:evocation.movement,returnToAction:s.phase==='ACTION',...(resume?{resume}:{})};
- s.currentPlayerId=owner.id;
- s.log.push(`${owner.name} activates ${evocation.name} #${evocation.number??1} from the spell (no extra action or token): move ${evocation.movement}, attack ${evocationAttack(evocation)}.`);
+ const borrowed=evocation.playerId!==controller.id;
+ if(!borrowed)evocation.activated=true;
+ s.evocationActivation={evocationId:evocation.id,playerId:controller.id,movesRemaining:evocationMovement(evocation),returnToAction:s.phase==='ACTION',...(borrowed?{borrowedFrom:evocation.playerId}:{}),...(resume?{resume}:{})};
+ s.currentPlayerId=controller.id;
+ s.log.push(`${controller.name} activates ${borrowed?`${getPlayer(s,evocation.playerId).name}'s `:''}${evocation.name} #${evocation.number??1} from the spell (no extra action or token): move ${evocationMovement(evocation)}, attack ${evocationAttack(evocation)}${borrowed?'; it fights for the controller':''}.`);
  modelEvent(s,'EVOCATION_ACTIVATED',snapshot(s,evocation.id)!);
+}
+const inRoomPosition=(room:Room,position:Hex)=>room.tiles.some(h=>hexKey(h)===hexKey(position));
+function roomOccupants(s:GameState,room:Room) {
+ return [...s.players.filter(p=>p.wizard.alive&&inRoomPosition(room,p.wizard.position)).map(p=>snapshot(s,p.id)!),...s.evocations.filter(e=>inRoomPosition(room,e.position)).map(e=>snapshot(s,e.id)!)];
+}
+// Mechanical Archive: choose a school, look at its top cards, keep one, discard the rest.
+function lookLibrary(s:GameState,p:Player,count:number) {
+ const decks=s.library.filter(d=>d.cards.length+d.discard.length>0);
+ if(!decks.length){s.log.push('No library school has cards to look at.');return;}
+ const deckId=decks.length===1?decks[0].id:askChoice(s,p.id,`archive-school|${p.id}`,'Mechanical Archive: choose a school to look at.',decks.map(d=>({id:d.id,label:`${d.name} (${d.cards.length+d.discard.length} cards)`})))!;
+ const deck=decks.find(d=>d.id===deckId)!;
+ const seen:Card[]=[];
+ for(let i=0;i<count;i++){const card=drawFromDiscard(s,deck.cards,deck.discard);if(!card)break;seen.push(card);}
+ const pickId=seen.length===1?seen[0].id:askChoice(s,p.id,`archive-card|${p.id}`,`Mechanical Archive: take one of these ${deck.name} spells; the rest are discarded.`,seen.map(c=>({id:c.id,label:c.name})))!;
+ const pick=seen.find(c=>c.id===pickId)!;
+ p.hand.push(pick);
+ deck.discard.push(...seen.filter(c=>c!==pick));
+ s.log.push(`${p.name} looks at ${seen.length} ${deck.name} spells, takes one and discards ${seen.length-1}.`);
 }
 function resolveEffectMoments(s:GameState,caster:Player,spell:Card,room:Room|undefined,refs:ModelSnapshot[],actor:ModelSnapshot,damageOrigin:DamageOrigin='SPELL') {
  const effect:EffectResolution={activationIsExplicit:spell.moments.some(step=>step.effect==='ACTIVATE_EVOCATION')};
@@ -1320,6 +1473,10 @@ function resolveEffectMoments(s:GameState,caster:Player,spell:Card,room:Room|und
    s.log.push(`${label}skipped; ${chosen?'the target was not defeated':'there is no target'}.`);
    return;
   }
+  if((step.when==='UPGRADE_ASSIGNED'&&!effect.upgraded)||(step.when==='EVOCATION_REMOVED'&&!effect.removed)) {
+   s.log.push(`${label}skipped; ${step.when==='UPGRADE_ASSIGNED'?'no upgrade was assigned':'no evocation was removed'}.`);
+   return;
+  }
   s.log.push(`${label}${describeInstruction({...step,target:spell.target==='SELF'?'OWNER':spell.target==='ROOM'?'BOUND_ROOM':'BOUND_MODEL'})}`);
   let stepRefs=refs;
   const area=step.area;
@@ -1332,6 +1489,7 @@ function resolveEffectMoments(s:GameState,caster:Player,spell:Card,room:Room|und
 }
 function resolveMomentBody(s:GameState,caster:Player,spell:Card,step:Moment,room:Room|undefined,refs:ModelSnapshot[],actor:ModelSnapshot,effect:EffectResolution,damageOrigin:DamageOrigin) {
  if(step.scope==='CASTER')refs=[actor];
+ if(step.scope==='TARGET_ROOM')refs=room?roomOccupants(s,room):[];
  if(step.scope==='CASTER_ROOM') {
   const origin=room??roomAt(s,caster.wizard.position);
   refs=origin?[...s.players.filter(p=>inRoom(p,origin)).map(p=>snapshot(s,p.id)!),...s.evocations.filter(e=>origin.tiles.some(h=>hexKey(h)===hexKey(e.position))).map(e=>snapshot(s,e.id)!)]:[];
@@ -1342,13 +1500,49 @@ function resolveMomentBody(s:GameState,caster:Player,spell:Card,step:Moment,room
  }
  if(step.effect==='SUMMON') {
   const target = refs[0] ? liveModel(s, refs[0]) : undefined;
-  const position = step.position === 'TARGET' ? target?.model.position??room?.tiles[0] : caster.wizard.position;
-  if(!position)return;
-  summonForEffect(s,caster,step.kind,position,effect);
+  const kind=step.kind==='EVENT_MODEL'?effect.eventKind:step.kind;
+  const position = step.position === 'TARGET' ? target?.model.position??room?.tiles[0] : step.position==='REMOVED' ? effect.removed?.position : step.position==='EVENT' ? effect.eventPosition : caster.wizard.position;
+  if(!position||!kind)return;
+  summonForEffect(s,caster,kind,position,effect);
   return;
  }
  if(step.effect==='ACTIVATE_EVOCATION') {
   activateEffectSummon(s,caster,step.kind,effect);
+  return;
+ }
+ if(step.effect==='ASSIGN_UPGRADE') {
+  const e=step.to==='SUMMONED'?liveModel(s,effect.summoned)?.evocation:liveModel(s,refs[0])?.evocation;
+  effect.upgraded=assignUpgrade(s,e,step.upgrade);
+  return;
+ }
+ if(step.effect==='ACTIVATE_TARGET') {
+  const e=liveModel(s,refs[0])?.evocation;
+  if(e)beginSpellActivation(s,caster,e);
+  return;
+ }
+ if(step.effect==='REMOVE_EVOCATION') {
+  // The chosen evocation anchors the room; dummies and defeated anchors remove nothing.
+  const anchor=liveModel(s,refs[0])?.evocation,origin=anchor?roomAt(s,anchor.position):undefined;
+  if(!origin)return;
+  const options=s.evocations.filter(e=>e.playerId===caster.id&&(!step.archetype||e.archetype===step.archetype)&&inRoomPosition(origin,e.position));
+  if(!options.length){s.log.push(`${caster.name} has no eligible evocation to remove in ${origin.name}.`);return;}
+  const chosenId=askChoice(s,caster.id,`remove|${caster.id}|${spell.id}`,`${spell.name}: remove one of your evocations in ${origin.name}?`,options.map(e=>({id:e.id,label:`${e.name} #${e.number??1}${e.upgrade?` (${UPGRADE_LABELS[e.upgrade]})`:''}`})),true);
+  const e=options.find(model=>model.id===chosenId);
+  if(!e)return;
+  effect.removed={position:{...e.position},attack:evocationAttack(e),roomId:origin.id};
+  removeEvocation(s,e,'removed');
+  return;
+ }
+ if(step.effect==='REMOVED_BLAST') {
+  const removed=effect.removed,origin=removed?.roomId?s.board.rooms.find(r=>r.id===removed.roomId):undefined;
+  if(!removed||!origin||removed.attack<=0)return;
+  const near=s.board.rooms.filter(r=>r.id===origin.id||r.tiles.some(h=>origin.tiles.some(g=>hexDistance(h,g)<=1)));
+  for(const mage of s.players.filter(p=>p.wizard.alive&&near.some(r=>inRoomPosition(r,p.wizard.position))))
+   resolveInstruction(s,caster,{effect:'DAMAGE',amount:removed.attack,target:'BOUND_MODEL'},snapshot(s,mage.id),undefined,actor,effect,damageOrigin);
+  return;
+ }
+ if(step.effect==='LOOK_LIBRARY') {
+  lookLibrary(s,caster,step.cards);
   return;
  }
  if(step.amount<=0)return;
@@ -1462,6 +1656,15 @@ export function applyAction(state: GameState, action: GameAction): GameState {
   } else assert(!action.targetId,'Declining does not select a target');
   const base=structuredClone(state);delete base.pendingDecision;
   return runWithDecisions(base,pending.resume.action,[...pending.resume.answers,{key:pending.key,accept:!!action.activeSpellId,activeSpellId:action.activeSpellId,targetId}],pending.resume.entropy);
+ }
+ if(action.type==='RESPOND_CHOICE') {
+  if(pending?.kind!=='CHOICE'||!pending.resume)throw new GameRuleError('No choice is waiting');
+  assert(pending.playerId===action.playerId,'This decision belongs to another mage');
+  assert(pending.key===action.key,'Stale choice');
+  if(action.choiceId===undefined)assert(pending.optional,'Choose one of the options');
+  else assert(pending.options.some(o=>o.id===action.choiceId),'Choose one of the listed options');
+  const base=structuredClone(state);delete base.pendingDecision;
+  return runWithDecisions(base,pending.resume.action,[...pending.resume.answers,{key:pending.key,accept:action.choiceId!==undefined,targetId:action.choiceId}],pending.resume.entropy);
  }
  // The paused action's mage decides first; the owner may still adjust their own switches.
  if(pending)assert(action.type==='SET_EVOCATION_AUTO',`Waiting for ${state.players.find(p=>p.id===pending.playerId)?.name??'a mage'} to decide`);
@@ -1636,8 +1839,8 @@ function runAction(state: GameState, action: GameAction, answers: DecisionAnswer
    } else {
     requirePhase(s,'EVOCATION');assert(s.currentPlayerId===p.id,'Not your turn');assert(!e!.activated,'This evocation already activated this phase');e!.activated=true;
    }
-   s.evocationActivation={evocationId:e!.id,playerId:p.id,movesRemaining:e!.movement,returnToAction:s.phase==='ACTION'};
-  s.log.push(`${p.name} activates ${e!.name}: move ${e!.movement}, attack ${evocationAttack(e!)}.`);
+   s.evocationActivation={evocationId:e!.id,playerId:p.id,movesRemaining:evocationMovement(e!),returnToAction:s.phase==='ACTION'};
+  s.log.push(`${p.name} activates ${e!.name}: move ${evocationMovement(e!)}, attack ${evocationAttack(e!)}.`);
   modelEvent(s,'EVOCATION_ACTIVATED',snapshot(s,e!.id)!);break;
   }
   case 'EVOCATION_STEP': {
@@ -1663,7 +1866,9 @@ function runAction(state: GameState, action: GameAction, answers: DecisionAnswer
   assert(areInSameRoom(s,e.position,target.position),'Target must be in the same room');
   const actor=snapshot(s,e.id)!,ref=snapshot(s,action.targetId)!,roomId=roomAt(s,target.position)?.id;
   active.attackUsed=true;
-  resolveInstruction(s,p,{effect:'DAMAGE',amount:evocationAttack(e),target:'EVENT_MODEL'},ref,undefined,actor,undefined,'EVOCATION');
+  // Corrosive plasma attacks the room: every model there not of the controller's color suffers it.
+  const victims=e.upgrade==='CORROSIVE_PLASMA'?roomOccupants(s,roomAt(s,target.position)!).filter(v=>v.playerId!==p.id):[ref];
+  for(const victim of victims)resolveInstruction(s,p,{effect:'DAMAGE',amount:evocationAttack(e),target:'EVENT_MODEL'},victim,undefined,actor,undefined,'EVOCATION');
   modelEvent(s,'EVOCATION_ATTACK',ref,actor,roomId);
   if(s.evocationActivation===active&&active.movesRemaining===0)finishEvocation(s);
   break;
@@ -1764,7 +1969,7 @@ function runAction(state: GameState, action: GameAction, answers: DecisionAnswer
    active!.cleanupDestination=action.destination;
    break;
   }
-  case 'RESPOND_REACTIVE_SPELL': case 'RESPOND_SOUL_TITHE': throw new GameRuleError('No decision is waiting');
+  case 'RESPOND_REACTIVE_SPELL': case 'RESPOND_SOUL_TITHE': case 'RESPOND_CHOICE': throw new GameRuleError('No decision is waiting');
   case 'SET_EVOCATION_AUTO': {
    const e=s.evocations.find(model=>model.id===action.evocationId);
    if(!e||e.playerId!==p.id)throw new GameRuleError('Choose one of your own evocations');

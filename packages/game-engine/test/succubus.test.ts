@@ -146,7 +146,7 @@ describe('Progressable quests',()=>{
  });
  it('uses the Agony deck as the active library deck',()=>{
   const library=createLibrary();
-  expect(library.map(d=>[d.id,d.name])).toEqual([['agony','Agony']]);
+  expect(library.map(d=>[d.id,d.name])).toEqual([['agony','Agony'],['technomancy','Technomancy']]);
   expect(library[0].cards.every(c=>c.schoolId==='agony')).toBe(true);
  });
 });

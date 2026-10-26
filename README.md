@@ -241,6 +241,14 @@ Room activation is unavailable in starting rooms and for a reconstructed special
 - Used models cannot activate again in this phase. When no unused surviving models remain, resolve **Cleanup**. With no evocations, this phase immediately proceeds to Cleanup.
 - Each living model has a stable owner-local number **1–3**. Destroying one frees its number without renumbering survivors. Its board circle and detail card share its mage's tint. Use **View evocations** in a mage's details to open that owner's retinue in the **Evocations** tab; opponents' details are read-only and can also be shown/hidden there. Own-model controls do not depend on opening a mage card.
 
+### Technomancy school
+
+- A second library school (12 spells x 3 copies). Its spells assign **upgrades** (six cards x 3 copies: Cerebral implant, Corrosive plasma, Muscular implant, Regenerating ichor, Reinforced dermis, Tendon implant) to evocations, at most one per model. A Cadaver gains +1 health while upgraded; Reinforced dermis adds +2 health. If a model already has one, its owner keeps one and the other returns to the deck; nothing is assigned when no copy is left.
+- Spells can activate another mage's evocation under the caster's control: the controller's colour applies, it may attack the owner, and the controller and its evocations are immune to that damage.
+- The **Colossus** (undead, move 2, attack 3, health 4, three models, larger icon) joins the shared supply. Entry shock: it inflicts 3 damage on each other mage that enters its room (not its owner, not other summons, and not when the Colossus itself moves).
+- Tendon implant models may move their speed at the end of the Black Rose phase (optional, before Study; bots skip it).
+- Pick-one decisions (upgrade replacement, removed evocation, library look) use the `CHOICE` pending decision and `RESPOND_CHOICE`.
+
 ### Rooms and Cleanup
 
 Regular rooms have **6 colors**, with the creator's selected **1, 2 or 3 rooms of every color**. Automatic sizing is resolved at `START_GAME`: **two mages → 1/color → 11 total rooms; three → 2/color → 17; four → 3/color → 23**. Each total includes the **central chamber and all four protected starting cells**, including unused seats. The smallest board relocates cells to its smaller perimeter; each mage is placed in their actual cell on the generated board. Explicit host overrides use the chosen size regardless of roster. **Only the regular rooms receive unique randomly assigned names.** The center is always **Pink Tulip Chamber**; starting rooms have the fixed color-based names **Rose Mage cell** (p1), **Blue Mage cell** (p2), **Amber Mage cell** (p3), and **Green Mage cell** (p4). Names are shared with all players and stay fixed for that battle. The board, target choices, logs, and evocation locations use room names rather than coordinates; internal room IDs and axial coordinates remain targeting details.

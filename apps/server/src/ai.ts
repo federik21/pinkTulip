@@ -37,6 +37,8 @@ function steps(card: Card, reactive = false): Moment[] {
 function cardValue(card: Card): number {
  return steps(card, true).reduce((value, m) => value + (
   m.effect === 'SUMMON' ? 6 : m.effect === 'ACTIVATE_EVOCATION' ? 2 :
+  m.effect === 'ASSIGN_UPGRADE' ? 4 : m.effect === 'ACTIVATE_TARGET' ? 3 :
+  m.effect === 'REMOVE_EVOCATION' || m.effect === 'REMOVED_BLAST' ? 0 : m.effect === 'LOOK_LIBRARY' ? 5 :
   m.effect === 'PAIN' ? -2 * m.amount : m.effect === 'DAMAGE' ? 3 * m.amount :
   m.effect === 'INSTABILITY' ? 4 * m.amount : m.amount
  ), 0) + (card.ongoing ? 6 : 0) + (card.trigger ? 4 : 0) + Math.min(card.range, 4);
@@ -59,11 +61,24 @@ function targetValue(s: GameState, p: Player, card: Card, target: FeedbackTarget
   const affected = m.scope === 'CASTER' ? all.filter(t => t.id === p.id) : m.scope === 'CASTER_ROOM' ? all.filter(t => room ? at(room, t.position) : areInSameRoom(s, p.wizard.position, t.position)) : selected;
   if (m.effect === 'PAIN') { value -= m.amount * 2; continue; }
   if (m.effect === 'SUMMON') {
-   if (getEvocationSupply(s).SUCCUBUS > 0 && s.evocations.filter(e => e.playerId === p.id).length < 3) value += 7;
+   if (m.kind !== 'EVENT_MODEL' && getEvocationSupply(s)[m.kind] > 0 && s.evocations.filter(e => e.playerId === p.id).length < 3) value += 7;
+   continue;
+  }
+  if (m.effect === 'ASSIGN_UPGRADE') {
+   // Only upgrade friendly models, except when the printed spell grants a bonus anyway.
+   value += selected.some(t => t.playerId === p.id) ? 3 : -1;
+   continue;
+  }
+  if (m.effect === 'ACTIVATE_TARGET') {
+   value += selected.some(t => t.playerId !== p.id) ? 2 : 1;
+   continue;
+  }
+  if (m.effect === 'REMOVE_EVOCATION' || m.effect === 'REMOVED_BLAST' || m.effect === 'LOOK_LIBRARY') {
+   if (m.effect === 'LOOK_LIBRARY') value += 2;
    continue;
   }
   if (m.effect === 'ACTIVATE_EVOCATION') {
-   if (getEvocationSupply(s).SUCCUBUS > 0 && s.evocations.filter(e => e.playerId === p.id).length < 3) value += 1;
+   if (getEvocationSupply(s)[m.kind] > 0 && s.evocations.filter(e => e.playerId === p.id).length < 3) value += 1;
    continue;
   }
   if (m.effect === 'INSTABILITY') {
@@ -174,6 +189,10 @@ function* decisions(s: GameState, p: Player): Generator<GameAction> {
   const accept = d.evocationWounds + 1 < d.evocationHealth || p.wizard.damageCubes + d.amount >= p.wizard.health;
   yield { type: 'RESPOND_SOUL_TITHE', playerId: p.id, accept };
   yield { type: 'RESPOND_SOUL_TITHE', playerId: p.id, accept: !accept };
+ } else if (d.kind === 'CHOICE') {
+  // Bots decline optional removals and otherwise take the first (best-listed) option.
+  if (d.optional) yield { type: 'RESPOND_CHOICE', playerId: p.id, key: d.key };
+  for (const option of d.options) yield { type: 'RESPOND_CHOICE', playerId: p.id, key: d.key, choiceId: option.id };
  } else if (d.kind === 'REACTIVE_SPELL') {
   const choices = d.options.flatMap(option => option.targets.map(target => ({
    activeSpellId: option.activeSpellId, targetId: target.id, score: targetValue(s, p, option.card, target, true),
@@ -254,6 +273,11 @@ function* candidates(s: GameState): Generator<GameAction> {
   // only for direct engine callers / an already-ready lobby with a BOT host.
   const host = s.players.find(p => p.id === s.hostId);
   if (host && bot(host) && canStartGame(s)) yield { type: 'START_GAME', playerId: host.id };
+  return;
+ }
+ if (s.phase === 'BLACK_ROSE' && s.evocationActivation?.tendon) {
+  const owner = s.players.find(p => p.id === s.evocationActivation!.playerId);
+  if (owner && bot(owner)) yield { type: 'END_EVOCATION', playerId: owner.id };
   return;
  }
  if (s.phase === 'BLACK_ROSE' && s.blackRoseResolved) {

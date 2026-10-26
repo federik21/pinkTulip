@@ -197,4 +197,4 @@ aside .log-panel{position:sticky;top:20px}aside .log{max-height:70vh}
  .info-popup-content{padding:18px}
  .players-panel{order:initial}
  .players-panel .player.mage-disclosure{display:block;width:100%;padding:0}
-}
+}.evocation-portrait.big-portrait{font-size:1.6em;width:auto;min-width:2em;height:auto}.hex .evocation-marker.big-evocation .evocation-token-disc{stroke-width:2.2}

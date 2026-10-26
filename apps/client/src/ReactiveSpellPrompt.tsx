@@ -46,7 +46,7 @@ function RevealDecision({decision,disabled,send}:{decision:Extract<PendingDecisi
 
 export function ReactiveSpellPrompt({game,viewerId,connected,pending,send}:{game:GameState;viewerId:string;connected:boolean;pending:boolean;send:(action:GameAction)=>void}) {
  const decision=game.pendingDecision;
- if(!decision||decision.kind==='SOUL_TITHE')return null;
+ if(!decision||decision.kind==='SOUL_TITHE'||decision.kind==='CHOICE')return null;
  if(decision.kind==='REACTIVE_SPELL'&&decision.playerId===viewerId)return <RevealDecision key={decision.key} decision={decision} disabled={!connected||pending} send={send}/>;
  return <div className="notice" role="status">Waiting for {game.players.find(p=>p.id===decision.playerId)?.name??'another mage'} to resolve an interrupt decision…</div>;
 }
