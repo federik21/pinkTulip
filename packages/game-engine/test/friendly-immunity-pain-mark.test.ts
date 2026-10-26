@@ -92,7 +92,7 @@ describe('Pain Mark only reacts to the bound mage’s own physical or spell dama
  });
 });
 
-describe('friendly damage and damage conversion have no exceptions',()=>{
+describe('friendly damage and ordinary damage conversion remain blocked',()=>{
  it('still converts recent foreign cubes on an enemy mage and returns their physical supply',()=>{
   const s=fixture(),mage=s.players[2].wizard;mage.damageCubes=4;mage.blackDamage=1;mage.damageByPlayer={p1:2,p3:1};mage.damageOrder=['p1','p3','black-rose','p1'];
   s.players[0].cubes.available-=2;s.players[0].cubes.onWizard+=2;s.players[2].cubes.available--;s.players[2].cubes.onWizard++;

@@ -102,7 +102,7 @@ describe('Agony forced-target card contracts',()=>{
    triggerEffects:[{effect:'DAMAGE',amount:2,target:'EVENT_MODEL'},{effect:'SUMMON',kind:'SUCCUBUS',position:'TARGET',target:'EVENT_MODEL'}]});
   expect(cards.find(c=>c.name==='Liquefy the Pain')).toMatchObject({spellType:'TRAP',target:'ROOM',range:Infinity,moments:[],
    trigger:{event:'MAGE_DEFEATED',relation:'SELF',relationTo:'EVENT_MODEL',scope:'ANY'},triggerTarget:'EVENT_ROOM',
-   triggerEffects:[{effect:'SUMMON',kind:'SUCCUBUS',position:'TARGET',target:'EVENT_ROOM'}]});
+    triggerEffects:[{effect:'SUMMON',kind:'SUCCUBUS',position:'TARGET',target:'EVENT_ROOM'},{effect:'ACTIVATE_EVOCATION',kind:'SUCCUBUS',target:'EVENT_ROOM'}]});
  });
 });
 
@@ -249,9 +249,9 @@ describe('Liquefy the Pain follows its own defeated mage and original room',()=>
   expect(result.players[1].wizard.position).not.toEqual(offAxis);expect(result.players[1].wizard.damageCubes).toBe(0);
   expect(result.players[0]).toMatchObject({victoryPoints:5,kills:1,trophies:['p2']});
   expect(result.feedbackEvents!.map(e=>e.kind)).toEqual(['DAMAGE','SPELL_TRIGGERED','MAGE_DEFEATED']);
-  expect(triggers(result)[0]).toMatchObject({roomId:'room-1,1',target:{kind:'ROOM',id:'room-1,1'},effects:[expect.stringContaining('Summon')]});
+  expect(triggers(result)[0]).toMatchObject({roomId:'room-1,1',target:{kind:'ROOM',id:'room-1,1'},effects:[expect.stringContaining('Summon'),expect.stringContaining('Activate')]});
   expect(result.feedbackEvents![2]).toMatchObject({target:{id:'p2',roomId:'room-1,1'},respawnRoomId:s.players[1].wizard.startingRoomId});
-  const summon=result.log.findIndex(line=>line.includes('summons and activates Succubus'));
+  const summon=result.log.findIndex(line=>line.includes('summons Succubus'));
   expect(summon).toBeGreaterThan(-1);
   for(const text of ['is defeated and returns','gains 4 VP','damage cubes returned']) {
    expect(result.log.findIndex(line=>line.includes(text))).toBeGreaterThan(summon);

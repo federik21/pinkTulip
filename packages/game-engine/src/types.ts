@@ -24,6 +24,8 @@ export type Moment = (
  | { effect: 'DAMAGE'; amount: number; splash?: MomentSplash }
  | { effect: 'HEAL'; amount: number }
  | { effect: 'CONVERT'; amount: number }
+ // An explicit CASTER scope converts that mage's foreign wounds to neutral
+ // black damage; it does not enable normal conversion or friendly damage.
  | { effect: 'BLACK_ROSE_CONVERT'; amount: number }
  | { effect: 'INSTABILITY'; amount: number }
  | { effect: 'PAIN'; amount: number }
@@ -32,7 +34,8 @@ export type Moment = (
 ) & { scope?: 'CASTER' | 'CASTER_ROOM' };
 export type MomentEffect = Moment['effect'];
 export type TriggeredInstruction = Moment & { target: 'BOUND_MODEL' | 'BOUND_ROOM' | 'EVENT_MODEL' | 'EVENT_ACTOR' | 'EVENT_ROOM' | 'OWNER' };
-export type Card = { id: string; name: string; kind: 'SPELL'; moments: Moment[]; range: number; target: SpellTarget; schoolId?: string; powerful?: boolean; spellType?: SpellType; rulesText?: string; trigger?: TriggerCondition; triggerTarget?: 'EVENT_MODEL' | 'EVENT_ACTOR' | 'EVENT_ROOM'; triggerEffects?: TriggeredInstruction[]; ongoing?: { trigger: TriggerCondition; effects: TriggeredInstruction[] } };
+// triggerText is optional display copy only; trigger conditions govern matching.
+export type Card = { id: string; name: string; kind: 'SPELL'; moments: Moment[]; range: number; target: SpellTarget; schoolId?: string; powerful?: boolean; spellType?: SpellType; triggerText?: string; rulesText?: string; trigger?: TriggerCondition; triggerTarget?: 'EVENT_MODEL' | 'EVENT_ACTOR' | 'EVENT_ROOM'; triggerEffects?: TriggeredInstruction[]; ongoing?: { trigger: TriggerCondition; effects: TriggeredInstruction[] } };
 export type ActiveSpell = { id: string; playerId: string; card: Card; targetPlayerId?: string; targetEvocationId?: string; roomId?: string; cleanupDestination?: 'HAND' | 'MEMORIES' };
 export type RoomColor = 'crimson' | 'azure' | 'emerald' | 'amber' | 'violet' | 'grey';
 export type RoomEffect = 'ROOM_DAMAGE' | 'DRAW_DISCARD' | 'INSTABILITY' | 'DRAW_QUEST' | 'DRAW_GRIMOIRE' | 'SUMMON_CADAVER' | 'DRAW_POWERFUL';
@@ -76,9 +79,14 @@ export type EvocationActivation = {
  evocationId: string; playerId: PlayerId; movesRemaining: number; returnToAction: boolean;
  // Omitted in older snapshots means the attack has not been used yet.
  attackUsed?: boolean;
+ // A spell may grant control outside its owner's turn, even during another
+ // evocation activation. Preserve only public control state, not game snapshots.
+ resume?: { currentPlayerId: PlayerId | null; evocationActivation: EvocationActivation | null };
 };
 export type Player = {
  id: PlayerId; name: string; connected: boolean; ready: boolean;
+ // Server-controlled seat; omitted on older saves and human players.
+ isBot?: boolean;
  startingSchoolId?: string | null;
  wizard: Wizard; personalDeck: Card[]; hand: Card[]; discard: Card[]; prepared: PreparedCards;
  cubes: { available: number; onWizard: number; onBoard: number; onEvocations: number }; actionTokens: number; victoryPoints: number;
@@ -122,6 +130,8 @@ export type GameState = {
 };
 export type GameAction =
  // Transport commands: intercepted by the server, never resolved by the engine.
+ | { type: 'ADD_BOT'; playerId: PlayerId }
+ | { type: 'REMOVE_BOT'; playerId: PlayerId; botId: PlayerId }
  | { type: 'UNDO_ACTION'; playerId: PlayerId }
  | { type: 'REDO_ACTION'; playerId: PlayerId }
  | { type: 'SELECT_STARTING_SCHOOL'; playerId: PlayerId; schoolId: string }

@@ -534,8 +534,8 @@ describe('token-free spells, starting rooms and colored chamber effects',()=>{
   g=applyAction(g,{type:'EXPLORE',playerId:'p1'});g=applyAction(g,{type:'EXPLORE_STEP',playerId:'p1',destination:{q:2,r:-2}});
   expect(()=>applyAction(g,{type:'EXPLORE_STEP',playerId:'p1',destination:{q:3,r:-2}})).toThrow(/reenter/);
  });
- it('discards a held Cantrip card to exit one step without a token, routing it directly to Cantrip',()=>{
-  let g=actionGame();const card=g.library[0].cards.pop()!;g.players[0].hand.push(card);g.players[0].actionTokens=0;
+ it('discards a ready prepared school card to exit one step without a token, routing it directly to its school',()=>{
+  let g=actionGame();const card=g.library[0].cards.pop()!;g.players[0].prepared.rapid={card,used:false};g.players[0].actionTokens=0;
   expect(()=>applyAction(g,{type:'DISCARD_EXIT',playerId:'p1',cardId:card.id,destination:{q:0,r:0}})).toThrow(/adjacent/);
   g=applyAction(g,{type:'DISCARD_EXIT',playerId:'p1',cardId:card.id,destination:{q:2,r:-2}});
   expect(g.library[0].discard.map(c=>c.id)).toContain(card.id);expect(g.players[0].discard.map(c=>c.id)).not.toContain(card.id);
@@ -544,7 +544,7 @@ describe('token-free spells, starting rooms and colored chamber effects',()=>{
  });
  it('lets a mage discard a card to move one step from any room, once per turn, for one action and no token',()=>{
   let g=actionGame();const first=g.library[0].cards.pop()!,second=g.library[0].cards.pop()!;
-  g.players[0].hand.push(first,second);g.players[0].actionTokens=0;
+  g.players[0].prepared.slot1={card:first,used:false};g.players[0].prepared.rapid={card:second,used:false};g.players[0].actionTokens=0;
   const inner=g.board.rooms.find(r=>!r.startingFor&&r.tiles.some(t=>g.board.rooms.some(o=>!o.startingFor&&o!==r&&o.tiles.some(n=>hexDistance(t,n)===1))))!;
   const from=inner.tiles.find(t=>g.board.rooms.some(o=>!o.startingFor&&o!==inner&&o.tiles.some(n=>hexDistance(t,n)===1)))!;
   const to=g.board.rooms.filter(o=>!o.startingFor&&o!==inner).flatMap(o=>o.tiles).find(n=>hexDistance(from,n)===1)!;

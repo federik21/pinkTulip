@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Card, GameAction, GameState, PendingDecision, getSpellType } from '@brw/game-engine';
 import { SPELL_TYPE_LABELS } from './presentation';
+import { SpellDescription } from './SpellDescription';
 
 function Modal({title,children,onCancel}:{title:string;children:React.ReactNode;onCancel?:()=>void}) {
  const ref=useRef<HTMLDialogElement>(null);
@@ -17,7 +18,7 @@ function Modal({title,children,onCancel}:{title:string;children:React.ReactNode;
 export function ActivationConfirmation({card,disabled,onConfirm,onCancel}:{card:Card;disabled:boolean;onConfirm:()=>void;onCancel:()=>void}) {
  return <Modal title={`Activate ${card.name}?`} onCancel={onCancel}>
   <p>{SPELL_TYPE_LABELS[getSpellType(card)]} · Place this spell face down and mark it Active. No room or target is chosen.</p>
-  {card.rulesText&&<p>{card.rulesText}</p>}
+  <SpellDescription card={card}/>
     {card.triggerTarget&&<p className="hint">The triggering event fixes this spell's target when you reveal it.</p>}
   <p className="hint">Costs 1 turn action. When its condition occurs, you may reveal and resolve it, or keep it hidden for later.</p>
   <div className="button-row"><button type="button" className="primary" autoFocus disabled={disabled} onClick={onConfirm}>Confirm activation</button><button type="button" disabled={disabled} onClick={onCancel}>Cancel</button></div>
@@ -33,7 +34,7 @@ function RevealDecision({decision,disabled,send}:{decision:Extract<PendingDecisi
  return <Modal title="Reveal an active spell?">
   <p>The current moment has finished. You may reveal a matching Trap or Protection, or keep all of them hidden for a later trigger.</p>
   <label>Spell to resolve next<select aria-label="Spell to reveal" value={spellId} disabled={disabled} onChange={event=>{setSpellId(event.target.value);setTargetId('');}}>{decision.options.map(o=><option key={o.activeSpellId} value={o.activeSpellId}>{o.card.name}</option>)}</select></label>
-  {option.card.rulesText&&<p>{option.card.rulesText}</p>}
+  <SpellDescription card={option.card}/>
     {option.card.triggerTarget?<p className="forced-trigger-target" role="status">Target fixed by trigger: <strong>{option.targets[0]?.name}</strong></p>:
      <label>Target<select aria-label="Triggered spell target" value={targetId} disabled={disabled} onChange={event=>setTargetId(event.target.value)}><option value="">Choose a target</option>{option.targets.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label>}
     <div className="button-row"><button type="button" className="primary" disabled={disabled||!resolvedTargetId} onClick={()=>respond(true)}>Reveal and resolve</button><button type="button" disabled={disabled} onClick={()=>respond(false)}>Keep all hidden</button></div>

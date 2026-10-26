@@ -3,9 +3,10 @@ import { addPlayerToLobby, createGame, GameRuleError, GameState, PlayerId, MAX_M
 import { ActionHistory } from './action-history';
 import { publicState } from './public-state';
 import { isSavable, saveFileFromEnv, SessionStore } from './session-store';
+import { BotRunner, canFitBotRoster, configureBot } from './bot-room';
 
 type Client = { ws: WebSocket; playerId: PlayerId | null; roomId: string | null };
-type Room = { id: string; game: GameState; clients: Set<Client>; history: ActionHistory };
+type Room = { id: string; game: GameState; clients: Set<Client>; history: ActionHistory; bots?: BotRunner };
 const rooms = new Map<string,Room>();
 const clients = new Set<Client>();
 // Saving is opt-in: set SAVE_FILE (the server's npm scripts do) to keep running battles across restarts and empty rooms.
@@ -24,7 +25,11 @@ function roomList() {
   :{id:r.id,players:r.game.players.length,capacity:MAX_MAGES,status:r.game.phase==='LOBBY'?'waiting':'playing'});
 }
 function broadcastRoomList() { for(const c of clients)send(c,{type:'ROOM_LIST',rooms:roomList()}); }
-function broadcast(room: Room) { for(const c of room.clients)send(c,{type:'STATE',state:publicState(room.game,c.playerId,room.history)}); }
+function broadcast(room: Room) {
+ for(const c of room.clients)send(c,{type:'STATE',state:publicState(room.game,c.playerId,room.history)});
+ room.bots ??= new BotRunner(room,()=>rooms.get(room.id)===room&&room.clients.size>0,()=>{broadcast(room);broadcastRoomList();store?.schedule();});
+ room.bots.wake();
+}
 
 function joinRoom(c: Client, roomId: string, name: string, create: boolean) {
  if(c.roomId) throw new GameRuleError('Already in a room. Reload to join another.');
@@ -37,10 +42,11 @@ function joinRoom(c: Client, roomId: string, name: string, create: boolean) {
  if(!room)throw new GameRuleError('Room not found. Create it first.');
  // Resuming a saved or interrupted battle: prefer the open seat that carries the joining mage's name.
  const wanted=name.trim().toLowerCase();
- let seat=room.game.players.find(p=>!p.connected&&wanted&&p.name.toLowerCase()===wanted)??room.game.players.find(p=>!p.connected);
+ let seat=room.game.players.find(p=>!p.isBot&&!p.connected&&wanted&&p.name.toLowerCase()===wanted)??room.game.players.find(p=>!p.isBot&&!p.connected);
  if(!seat) {
   if(room.game.players.length>=MAX_MAGES)throw new GameRuleError('Room full (4 mages)');
   if(room.game.phase!=='LOBBY')throw new GameRuleError('Cannot join a battle already in progress; only disconnected mages may reconnect');
+  if(room.game.players.some(p=>p.isBot)&&!canFitBotRoster(room.game))throw new GameRuleError('Not enough library spells for another mage with AI in this room');
   room.game=addPlayerToLobby(room.game);
   seat=room.game.players.find(p=>!p.connected)!;
  }
@@ -85,7 +91,10 @@ wss.on('connection',ws=>{
    if(!msg.action || typeof msg.action.type!=='string')throw new GameRuleError('Missing action');
    if(msg.action.playerId!==c.playerId)throw new GameRuleError('You cannot act for another player');
    if(room.game.phase!=='LOBBY' && !room.game.players.every(p=>p.connected))throw new GameRuleError('Game paused: waiting for the other mages to reconnect');
-   room.game=room.history.apply(room.game,msg.action,c.playerId);broadcast(room);broadcastRoomList();store?.schedule();
+  if(msg.action.type==='ADD_BOT'||msg.action.type==='REMOVE_BOT') {
+   room.game=configureBot(room.game,msg.action);room.history.clear();
+  } else room.game=room.history.apply(room.game,msg.action,c.playerId);
+  broadcast(room);broadcastRoomList();store?.schedule();
    if(requestId)send(c,{type:'ACTION_APPLIED',requestId});
   } catch(error) { send(c,{type:'ERROR',requestId,message:error instanceof Error?error.message:'Invalid action'}); }
  });
@@ -93,13 +102,14 @@ wss.on('connection',ws=>{
   clients.delete(c);
   if(!c.roomId)return;
   const room=rooms.get(c.roomId);if(!room)return;
+  room.bots?.stop();
   room.history.clear();
   room.clients.delete(c);
   const p=room.game.players.find(p=>p.id===c.playerId);
   if(p) {
    if(room.game.phase==='LOBBY') {
     room.game.players=room.game.players.filter(player=>player.id!==p.id);
-    if(room.game.hostId===p.id && room.game.players.length)room.game.hostId=room.game.players[0].id;
+    if(room.game.hostId===p.id)room.game.hostId=room.game.players.find(player=>!player.isBot)?.id??room.game.hostId;
     room.game.log.push(`${p.name} left the lobby.`);
    } else {
     p.connected=false;room.game.log.push(`${p.name} disconnected. Waiting for reconnection.`);

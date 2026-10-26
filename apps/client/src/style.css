@@ -58,7 +58,8 @@
 .spell-type[data-spell-type="CONTINGENCY"]{color:#86d9c0}
 .spell-type[data-spell-type="TRAP"]{color:#e6bc7c}
 .spell-type[data-spell-type="PROTECTION"]{color:#a8cfff}
-.spell-rules{font-size:10px;line-height:1.6;color:#ded3e1;margin-bottom:12px}
+.spell-trigger{display:block;font-size:11px;font-weight:700;line-height:1.6;color:var(--gold);margin:0 0 8px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+.spell-rules{display:block;font-size:10px;line-height:1.6;color:#ded3e1;margin-bottom:12px}
 .schools{grid-template-columns:repeat(auto-fit,minmax(min(150px,100%),1fr))}
 .schools button[data-school-id="enchantment"] .school-rune{color:#c4b5fd}
 .active-spells-panel h2{margin:8px 0 14px;font-size:27px}
@@ -75,8 +76,7 @@
 .school-icon[data-school-id="enchantment"]{color:#c4b5fd}
 .school-icon[data-school-id="forgotten"]{color:#dbb2f4}
 .school-icon[data-school-id="unaligned"]{color:var(--muted)}
-.spell-status{font-size:10px;font-weight:700;letter-spacing:.5px;color:#9dd9b7;margin-bottom:7px}
-.spell-status[data-spell-status="SPENT"]{color:var(--muted)}
+.spell-status{font-size:10px;font-weight:700;letter-spacing:.5px;color:var(--muted);margin-bottom:7px}
 .starting-school-choice{padding:16px;border:1px solid var(--border);border-radius:8px;background:#18121f;margin:18px 0}
 .starting-school-choice .action-setting select{margin-bottom:10px}
 .starting-school-choice .hint{margin-bottom:0}

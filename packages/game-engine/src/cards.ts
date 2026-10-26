@@ -1,11 +1,16 @@
-import { Card, EventCard, LibraryDeck, Moment, MomentEffect, Quest, SpellType } from './types';
+import { Card, EventCard, LibraryDeck, Moment, MomentEffect, Quest, SpellType, TriggerCondition } from './types';
 
 const peakOfAgonyMoments=():Moment[]=>[
- {effect:'DAMAGE',amount:2,scope:'CASTER_ROOM'},
+ {effect:'DAMAGE',amount:2},
  {effect:'BLACK_ROSE_CONVERT',amount:2,scope:'CASTER'},
+ {effect:'PAIN',amount:2},
 ];
-const peakOfAgonyRules='First, inflict 2 damage on enemy models in your room. The second moment selects your mage, but has no effect: friendly models never take your damage or damage conversion, including conversion to Pink Tulip black.';
+const peakOfAgonyRules='';
 const painMarkRules='Ongoing: inflict 2 damage on the bound model whenever it deals damage with its own mage physical attack or spell. Evocation attacks, room effects and quest rewards do not trigger Pain Mark.';
+const liquefyThePainEffects=():NonNullable<Card['triggerEffects']>=>[
+ {effect:'SUMMON',kind:'SUCCUBUS',position:'TARGET',target:'EVENT_ROOM'},
+ {effect:'ACTIVATE_EVOCATION',kind:'SUCCUBUS',target:'EVENT_ROOM'},
+];
 
 // Constructors for each Moment variant, e.g. `moments: [moment.damage(1), moment.damage(1)]`.
 export const moment = {
@@ -25,6 +30,45 @@ export const hasMoment = (card: Pick<Card, 'moments'>, effect: MomentEffect): bo
 
 export function getSpellType(card:Card):SpellType {
  return card.spellType ?? (card.moments.some(m => m.effect !== 'HEAL' && 'amount' in m && m.amount > 0) ? 'COMBAT' : 'CONTINGENCY');
+}
+
+// Generic fallback copy deliberately avoids inventing a binding, range or effect.
+function describeTrigger(condition:TriggerCondition):string {
+ const subject=(kind:'model'|'mage'|'evocation')=>condition.relation==='SELF'
+  ? kind==='mage'?'your mage':`one of your ${kind}s`
+  : condition.relation==='ENEMY'
+   ? kind==='mage'?'another mage':`an enemy ${kind}`
+   : `${kind==='evocation'?'an':'a'} ${kind}`;
+ switch(condition.event) {
+  case 'ENTER_ROOM':return `When ${subject('model')} enters a room`;
+  case 'DAMAGE_TAKEN':return condition.relationTo==='EVENT_MODEL'
+   ? `When ${subject('model')} takes damage`
+   : condition.relation==='ANY'?'When a model takes damage':`When a model takes damage from ${subject('model')}`;
+  case 'DAMAGE_DEALT':return `When ${subject('model')} deals damage`;
+  case 'SPELL_CAST':return `When ${subject('mage')} casts a spell`;
+  case 'ROOM_ACTIVATED':return `When ${subject('mage')} activates a room`;
+  case 'EVOCATION_ACTIVATED':return `When ${subject('evocation')} activates`;
+  case 'MAGE_ATTACK':return condition.relationTo==='EVENT_MODEL'&&condition.relation!=='ANY'
+   ? `When a mage attacks ${subject('model')}`:`When ${subject('mage')} attacks`;
+  case 'EVOCATION_ATTACK':return condition.relationTo==='EVENT_MODEL'&&condition.relation!=='ANY'
+   ? `When an evocation attacks ${subject('model')}`:`When ${subject('evocation')} attacks`;
+  case 'QUEST_SOLVED':return `When ${subject('mage')} solves a quest`;
+  case 'MAGE_DEFEATED':return condition.relationTo==='EVENT_MODEL'||condition.relation==='ANY'
+   ? condition.relation==='SELF'?'When you are defeated':`When ${subject('mage')} is defeated`
+   : `When ${subject('mage')} defeats a mage`;
+  case 'VP_CHANGED':return `When ${subject('model')} gains or loses victory points`;
+ }
+}
+
+// Keep legacy rules intact on the card; only the returned reactive body omits
+// its leading trigger clause. Ongoing and other nonreactive prose is untouched.
+export function getSpellDescription(card:Card):{triggerText?:string;rulesText?:string} {
+ const type=getSpellType(card);
+ if(type!=='TRAP'&&type!=='PROTECTION')return {rulesText:card.rulesText};
+ const clause=card.rulesText?.match(/^\s*((?:When|Whenever)\s+[^,\s][^,]*),\s*([\s\S]*)$/i);
+ const triggerText=card.triggerText?.trim()||clause?.[1].trim()||(card.trigger?describeTrigger(card.trigger):undefined);
+ const rulesText=clause?clause[2].trim()||undefined:card.rulesText;
+ return {triggerText,rulesText};
 }
 
 // Saved games written before moments existed carry flat damage/instability/heal/convert
@@ -47,13 +91,19 @@ export function upgradeLegacyCards(value: unknown): void {
  if(node.kind==='SPELL'&&node.name==='Peak of Agony'&&(node.schoolId==='agony'||String(node.id).startsWith('agony-'))&&Array.isArray(node.moments)) {
   const steps=node.moments as Moment[];
   if(steps.length===2&&steps[0].effect==='DAMAGE'&&steps[0].amount===2&&(!steps[0].scope||steps[0].scope==='CASTER_ROOM')&&steps[1].effect==='BLACK_ROSE_CONVERT'&&steps[1].amount===2&&(!steps[1].scope||steps[1].scope==='CASTER')) {
-   node.moments=peakOfAgonyMoments();node.rulesText=peakOfAgonyRules;
+   node.moments=peakOfAgonyMoments();node.target='ROOM';node.range=2;
   }
  }
  if(node.kind==='SPELL'&&node.name==='Pain Mark'&&(node.schoolId==='agony'||String(node.id).startsWith('agony-'))) {
   const ongoing=node.ongoing as Card['ongoing'];
   if(ongoing?.trigger.event==='DAMAGE_DEALT'&&!ongoing.trigger.damageOrigins) {
    ongoing.trigger.damageOrigins=['MAGE_PHYSICAL','SPELL'];node.rulesText=painMarkRules;
+  }
+ }
+ if(node.kind==='SPELL'&&node.name==='Liquefy the Pain'&&(node.schoolId==='agony'||String(node.id).startsWith('agony-'))&&Array.isArray(node.moments)&&node.moments.length===0) {
+  const effects=node.triggerEffects as Card['triggerEffects'];
+  if(effects?.length===1&&effects[0].effect==='SUMMON'&&effects[0].kind==='SUCCUBUS'&&effects[0].position==='TARGET'&&effects[0].target==='EVENT_ROOM') {
+   node.triggerEffects=liquefyThePainEffects();
   }
  }
  // Old saved/custom instructions cannot restore the removed friendly-fire opt-in.
@@ -110,27 +160,35 @@ export function createTransmutationDeck(): Card[] {
 export function createEnchantmentDeck(): Card[] {
  const patterns: Omit<Card, 'id' | 'kind' | 'schoolId'>[] = [
   { name:'Threshold Snare', spellType:'TRAP', target:'ROOM', moments: [], range:2,
+  triggerText:'When an enemy enters a room within range 2',
   rulesText:'When an enemy enters a room within range 2, reveal and deal 2 damage to that model.',
    trigger:{event:'ENTER_ROOM',relation:'ENEMY',scope:'BOUND_ROOM'}, triggerEffects:[{effect:'DAMAGE',amount:2,target:'EVENT_MODEL'}] },
   { name:'Spell Leech', spellType:'TRAP', target:'ROOM', moments: [], range:2,
+  triggerText:'When an enemy casts in a room within range 2',
   rulesText:'When an enemy casts in a room within range 2, reveal and deal 2 damage to that caster before its printed effects resolve.',
    trigger:{event:'SPELL_CAST',relation:'ENEMY',scope:'BOUND_ROOM'}, triggerEffects:[{effect:'DAMAGE',amount:2,target:'EVENT_ACTOR'}] },
   { name:'Thorn Retort', spellType:'PROTECTION', target:'SELF', moments: [], range:0,
+  triggerText:'When damage is dealt to you',
   rulesText:'When damage is dealt to you, reveal and heal 1 wound before dealing 1 damage back to the attacker.',
    trigger:{event:'DAMAGE_TAKEN',relation:'ENEMY',scope:'BOUND_MODEL'}, triggerEffects:[{effect:'HEAL',amount:1,target:'BOUND_MODEL'},{effect:'DAMAGE',amount:1,target:'EVENT_ACTOR'}] },
   { name:'Mending Ward', spellType:'PROTECTION', target:'MAGE', moments: [], range:2,
+  triggerText:'When a mage within range 2 takes damage',
   rulesText:'When a mage within range 2 takes damage, reveal and heal that mage 2 wounds. Defeated models cannot be healed.',
    trigger:{event:'DAMAGE_TAKEN',relation:'ANY',scope:'BOUND_MODEL'}, triggerEffects:[{effect:'HEAL',amount:2,target:'BOUND_MODEL'}] },
   { name:"Servant's Safeguard", spellType:'PROTECTION', target:'EVOCATION', moments: [], range:3,
+  triggerText:'When an evocation within range 3 takes damage',
   rulesText:'When an evocation within range 3 takes damage, reveal and heal it 2 wounds. Destroyed models cannot be healed.',
    trigger:{event:'DAMAGE_TAKEN',relation:'ANY',scope:'BOUND_MODEL'}, triggerEffects:[{effect:'HEAL',amount:2,target:'BOUND_MODEL'}] },
   { name:'Hearth Ward', spellType:'PROTECTION', target:'ROOM', moments: [], range:2,
+  triggerText:'When an enemy activates a room within range 2',
   rulesText:'When an enemy activates a room within range 2, reveal and heal your mage 2 wounds before the room reward.',
    trigger:{event:'ROOM_ACTIVATED',relation:'ENEMY',scope:'BOUND_ROOM'}, triggerEffects:[{effect:'HEAL',amount:2,target:'OWNER'}] },
   { name:'Tripwire', spellType:'TRAP', target:'ROOM', moments: [], range:2,
+  triggerText:'When an enemy evocation activates in a room within range 2 or in a room of the same color',
   rulesText:'When an enemy evocation activates in a room within range 2 or in a room of the same color, reveal and deal 1 damage to it.',
    trigger:{event:'EVOCATION_ACTIVATED',relation:'ENEMY',scope:'BOUND_COLOR'}, triggerEffects:[{effect:'DAMAGE',amount:1,target:'EVENT_MODEL'}] },
   { name:'Cinder Seal', spellType:'TRAP', target:'ROOM', moments: [], range:2,
+  triggerText:'When an enemy activates a room within range 2 or in the same color',
   rulesText:'When an enemy activates a room within range 2 or in the same color, reveal and place 2 instability in that activated room before its reward.',
    trigger:{event:'ROOM_ACTIVATED',relation:'ENEMY',scope:'BOUND_COLOR'}, triggerEffects:[{effect:'INSTABILITY',amount:2,target:'EVENT_ROOM'}] },
   { name:"Pilgrim's Mark", spellType:'CONTINGENCY', target:'SELF', moments: [], range:0,
@@ -155,23 +213,23 @@ export function createAgonyDeck(prefix: string, schoolId?: string): Card[] {
   { name: 'Grim Torment', moments: [moment.damage(3), moment.pain(1)], range: 2, target: 'MODEL' },
   { name: 'Cross and Delight', moments: [moment.summon('SUCCUBUS'), moment.pain(1), moment.activateEvocation('SUCCUBUS')], range: 1, target: 'ROOM' },
   { name: 'Torment', spellType: 'TRAP', moments: [moment.damage(2), moment.summon('SUCCUBUS', 'TARGET')], range: Number.POSITIVE_INFINITY, target: 'MODEL',
-   rulesText: 'When an enemy model deals damage, you may reveal this trap at the end of the current moment. Inflict 2 damage on that model, then summon a Succubus in its room. The target is fixed by the trigger.',
+    triggerText: 'When an enemy model deals damage',
    trigger:{event:'DAMAGE_DEALT',relation:'ENEMY',scope:'ANY'}, triggerTarget:'EVENT_ACTOR',
    triggerEffects:[{effect:'DAMAGE',amount:2,target:'EVENT_ACTOR'},{effect:'SUMMON',kind:'SUCCUBUS',position:'TARGET',target:'EVENT_ACTOR'}] },
   { name: 'Visceral Fire', moments: [moment.damage(2, { range: 1, when: 'AFTER_DEFEAT' })], range: 2, target: 'MAGE',
    rulesText: 'Target a mage within range 2. If that mage is defeated, each other mage within range 1 of it suffers 2 damage.' },
-  { name: 'Peak of Agony', moments: peakOfAgonyMoments(), range: 0, target: 'SELF', rulesText: peakOfAgonyRules },
+  { name: 'Peak of Agony', moments: peakOfAgonyMoments(), range: 2, target: 'ROOM' },
   { name: 'Pain Mark', moments: [], range: 1, target: 'MODEL',
     rulesText: painMarkRules,
     ongoing: { trigger: { event: 'DAMAGE_DEALT', relation: 'ANY', scope: 'BOUND_MODEL', damageOrigins:['MAGE_PHYSICAL','SPELL'] }, effects: [{ effect: 'DAMAGE', amount: 2, target: 'EVENT_ACTOR' }] } },
   { name: 'Master of Pleasure', spellType: 'TRAP', moments: [], range: Number.POSITIVE_INFINITY, target: 'MAGE',
-    rulesText: 'When another mage solves a quest, you may reveal and inflict 2 damage on that mage, then summon a Succubus in their room. The target is fixed by the trigger.',
+    triggerText: 'When another mage solves a quest',
     trigger:{event:'QUEST_SOLVED',relation:'ENEMY',scope:'ANY'}, triggerTarget:'EVENT_MODEL',
     triggerEffects:[{effect:'DAMAGE',amount:2,target:'EVENT_MODEL'},{effect:'SUMMON',kind:'SUCCUBUS',position:'TARGET',target:'EVENT_MODEL'}] },
   { name: 'Liquefy the Pain', spellType: 'TRAP', moments: [], range: Number.POSITIVE_INFINITY, target: 'ROOM',
-    rulesText: 'When your mage is defeated, you may reveal and summon a Succubus in the room where they were defeated, during the defeat trigger window before scoring or returning to their cell. The room is fixed by the trigger.',
+    triggerText: 'When you are defeated',
     trigger:{event:'MAGE_DEFEATED',relation:'SELF',relationTo:'EVENT_MODEL',scope:'ANY'}, triggerTarget:'EVENT_ROOM',
-    triggerEffects:[{effect:'SUMMON',kind:'SUCCUBUS',position:'TARGET',target:'EVENT_ROOM'}] },
+    triggerEffects:liquefyThePainEffects() },
   { name: 'Submission', moments: [moment.damage(1), moment.convert(1), moment.pain(1)], range: Number.POSITIVE_INFINITY, target: 'MODEL' },
   { name: 'Ineluctable Pain', spellType: 'CONTINGENCY', moments: [], range: 2, target: 'MODEL',
    rulesText: 'Whenever a model gains or loses victory points, it suffers 2 damage.',

@@ -31,7 +31,7 @@ export class SessionStore {
 
  constructor(readonly file: string, private readonly snapshot: () => Omit<SavedRoom, 'savedAt'>[], private readonly delayMs = 250) {}
 
- /** Saved battles from disk. Every mage is marked disconnected: nobody is connected after a restart. */
+ /** Human seats reconnect after a restart; AI seats remain server-controlled. */
  load(): SavedRoom[] {
   let raw: string;
   try { raw = readFileSync(this.file, 'utf8'); } catch (error) {
@@ -45,7 +45,7 @@ export class SessionStore {
    if (rooms.length !== parsed.rooms.length) console.error(`Session store: skipped ${parsed.rooms.length - rooms.length} invalid saved room(s).`);
    for (const room of rooms) {
     upgradeLegacyCards(room.game);
-    for (const player of room.game.players) player.connected = false;
+    for (const player of room.game.players) player.connected = player.isBot === true;
    }
    return rooms;
   } catch (error) {

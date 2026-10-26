@@ -48,28 +48,50 @@ for(const viewport of [{width:1440,height:1000},{width:390,height:844}])test.des
  });
  test('a tokenless mage can spend the required action by discarding a card to leave',async({page})=>{
   const s=fixture();s.activation!.actionsUsed=1;s.players[0].actionTokens=0;s.players[0].wizard.position={...s.board.rooms.find(r=>r.startingFor==='p1')!.tiles[0]};
-  const card=take(s,'Grim Torment');s.players[0].hand.push(card);
+    const preparedready=take(s,'Grim Torment');s.players[0].prepared.slot1={card:preparedready,used:false};
   const dest=s.board.rooms.find(r=>!r.startingFor&&r.tiles.some(h=>areAdjacent(s.players[0].wizard.position,h)))!;
   const wire=await mount(page,s);await selectControlTab(page,'Physical actions');
-  await page.getByRole('combobox',{name:'Card to discard to move'}).selectOption(card.id);await closeControls(page);
+    await page.getByRole('combobox',{name:'Card to discard to move'}).selectOption(preparedready.id);await closeControls(page);
   await page.locator(`.hex[data-room-id="${dest.id}"]`).click();
-  await expect.poll(()=>wire.actions.length).toBe(1);expect(wire.actions[0]).toMatchObject({type:'DISCARD_EXIT',cardId:card.id});
+    await expect.poll(()=>wire.actions.length).toBe(1);expect(wire.actions[0]).toMatchObject({type:'DISCARD_EXIT',cardId:preparedready.id});
   expect(isInStartingRoom(wire.state,wire.state.players[0])).toBe(false);expect(wire.state.players[0].actionTokens).toBe(0);expect(wire.errors).toEqual([]);
  });
- test('Peak explains friendly immunity, only hits enemies and logs both moments in Chronicle',async({page})=>{
+ test('Peak targets a room at range 2, converts caster wounds, resolves Pain and logs all three moments',async({page})=>{
   const s=fixture(),card=take(s,'Peak of Agony');s.players[0].prepared.rapid={used:false,card};
+  s.players[1].wizard.position={q:2,r:0};
   s.players[0].wizard.damageCubes=2;s.players[0].wizard.damageByPlayer={p2:2};s.players[0].wizard.damageOrder=['p2','p2'];s.players[1].cubes.available-=2;s.players[1].cubes.onWizard=2;
-  const own=summonEvocation(s,s.players[0],'CADAVER',{q:0,r:0})!;
+  const own=summonEvocation(s,s.players[0],'CADAVER',{q:2,r:0})!,enemy=summonEvocation(s,s.players[1],'CADAVER',{q:2,r:0})!;
   const wire=await mount(page,s);await selectSpells(page);const spell=page.locator('.prepared .spell').filter({has:page.locator('strong',{hasText:'Peak of Agony'})});
-  await expect(spell.locator('.spell-effects')).toContainText('enemy models in your room');await expect(spell.locator('.spell-effects')).toContainText('your mage · ignored on friendly models');
-  await spell.click();await page.getByRole('button',{name:'Cast Peak of Agony on yourself',exact:true}).click();
-  await expect.poll(()=>wire.actions.length).toBe(1);expect(wire.state.players[0].wizard).toMatchObject({damageCubes:2,blackDamage:0,damageByPlayer:{p2:2}});
+  await expect(spell.locator('.spell-effects > span')).toHaveText([/Inflict 2 · enemy models in target room/,/Pink Tulip convert 2 · your mage · last damage from other mages/,/Pain 2/]);
+  await expect(spell).toContainText('Range 2');await spell.click();
+  await page.locator('.hex[data-room-id="room-1,1"]').click();await expect(page.getByRole('button',{name:'Cast Peak of Agony here',exact:true})).toBeDisabled();
+  await page.locator('.hex[data-room-id="room-2,0"]').click();await page.getByRole('button',{name:'Cast Peak of Agony here',exact:true}).click();
+  await expect.poll(()=>wire.actions.length).toBe(1);expect(wire.actions[0]).toMatchObject({type:'CAST_SPELL',roomId:'room-2,0'});
+  expect(wire.state.players[0].wizard).toMatchObject({damageCubes:4,blackDamage:4,damageByPlayer:{}});
   expect(wire.state.players[1].wizard.damageCubes).toBe(2);expect(wire.state.evocations.find(e=>e.id===own.id)!.damageCubes).toBe(0);
+  expect(wire.state.evocations.some(e=>e.id===enemy.id)).toBe(false);expect(wire.state.players[1].cubes.available).toBe(25);
   const chronicle=await openChronicle(page);await expect(chronicle.getByRole('log')).toContainText('Rose Warden casts Peak of Agony');
-  await expect(chronicle.getByRole('log')).toContainText('Moment 1/2 · Peak of Agony: Deal 2 damage to enemy models');
-  await expect(chronicle.getByRole('log')).toContainText('Moment 2/2 · Peak of Agony: Convert the last 2 damage cubes received from other mages');
-  await expect(chronicle.getByRole('log')).toContainText('ignored on friendly models');
+  await expect(chronicle.getByRole('log')).toContainText('Moment 1/3 · Peak of Agony: Deal 2 damage to enemy models in the selected room');
+  await expect(chronicle.getByRole('log')).toContainText('Moment 2/3 · Peak of Agony: Convert the last 2 damage cubes received from other mages on the caster’s mage');
+  await expect(chronicle.getByRole('log')).toContainText('Moment 3/3 · Peak of Agony: The Pink Tulip inflicts 2 damage cubes');
   expect(wire.errors).toEqual([]);await page.screenshot({path:test.info().outputPath('peak-chronicle.png')});
+  const resolved=structuredClone(wire.state);await chronicle.getByRole('button',{name:'Close Chronicle',exact:true}).click();
+  await page.getByRole('button',{name:'Undo action',exact:true}).click();await expect.poll(()=>wire.actions.length).toBe(2);expect(wire.state).toEqual(s);
+  await page.getByRole('button',{name:'Redo action',exact:true}).click();await expect.poll(()=>wire.actions.length).toBe(3);expect(wire.state).toEqual(resolved);expect(wire.errors).toEqual([]);
+ });
+ test('Peak offers Soul Tithe for final Pain after converting wounds, never for friendly room damage',async({page})=>{
+  const s=fixture(),card=take(s,'Peak of Agony');s.players[0].prepared.rapid={used:false,card};s.players[1].wizard.position={q:2,r:0};
+  s.players[0].wizard.damageCubes=2;s.players[0].wizard.damageByPlayer={p2:2};s.players[0].wizard.damageOrder=['p2','p2'];s.players[1].cubes.available-=2;s.players[1].cubes.onWizard=2;
+  const own=summonEvocation(s,s.players[0],'SUCCUBUS',{q:0,r:0})!,wire=await mount(page,s);await selectSpells(page);
+  await page.locator('.prepared .spell').filter({has:page.locator('strong',{hasText:'Peak of Agony'})}).click();
+  await page.locator('.hex[data-room-id="room-2,0"]').click();await page.getByRole('button',{name:'Cast Peak of Agony here',exact:true}).click();
+  const prompt=page.getByRole('dialog',{name:/Let Succubus.*take a damage cube/});await expect(prompt).toBeVisible();
+  await prompt.getByRole('button',{name:'Take a cube',exact:true}).click();await expect(prompt).toBeHidden();
+  await expect.poll(()=>wire.actions.length).toBe(2);expect(wire.state.players[0].wizard).toMatchObject({damageCubes:3,blackDamage:3,damageByPlayer:{}});
+  expect(wire.state.players[1].wizard.damageCubes).toBe(2);expect(wire.state.evocations.find(e=>e.id===own.id)!.damageCubes).toBe(1);
+  const events=wire.state.feedbackEvents!,converted=events.findIndex(e=>e.kind==='CONVERT');
+  expect(events[converted]).toMatchObject({target:{id:'p1'},amount:2,total:2});expect(events.slice(converted+1).filter(e=>e.kind==='DAMAGE').map(e=>e.sourceId)).toEqual(['black-rose','black-rose']);
+  expect(wire.errors).toEqual([]);
  });
  test('Chronicle keeps face-down names hidden and adds card moments only on reveal',async({page})=>{
   const s=fixture(),card=take(s,'Torment');s.players[0].prepared.rapid={used:false,card};const wire=await mount(page,s);

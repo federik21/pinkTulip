@@ -268,7 +268,8 @@ function dummyCost(reply: Reply, card: Card, id: string, slot: Slot) {
   const additions = [`Rose Warden casts ${card.name} on a dummy (no model effects) for 1 action (no physical token).`];
   if (momentTotal(card, 'INSTABILITY')) additions.push(`Rose Warden places ${momentTotal(card, 'INSTABILITY')} instability in ${target.name} (${target.instability}/${target.instabilityLimit}).`);
   if (after.currentPlayerId !== before.currentPlayerId) {
-    additions.push(`${after.players.find(player => player.id === after.currentPlayerId)!.name} takes a turn: 2 actions total across physical actions, spell casts, and discard-to-move.`);
+    additions.push(`${before.players.find(player => player.id === before.currentPlayerId)!.name} ends their turn.`);
+    additions.push(`${after.players.find(player => player.id === after.currentPlayerId)!.name} starts their turn: 2 actions total across physical actions, spell casts, and discard-to-move.`);
   }
   expect(after.log).toEqual([...before.log, ...additions]);
   expect(after.log.join('\n')).not.toMatch(/activates a hidden spell|on a dummy \(no damage\)/);

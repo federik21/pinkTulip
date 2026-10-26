@@ -9,7 +9,10 @@ function fixture() {
  return g;
 }
 function prepare(g:GameState,slot:keyof Player['prepared']) {
- const card={...g.library[0].cards.shift()!,target:'ROOM' as const,moments:[],range:0};
+ const physical=g.library[0].cards.shift()!;
+ // Budget tests need a deterministic immediate spell, not randomized Agony
+ // Trap/ongoing metadata accidentally inherited from the physical draw.
+ const card={id:physical.id,schoolId:physical.schoolId,name:'Turn budget spell',kind:'SPELL' as const,spellType:'COMBAT' as const,target:'ROOM' as const,moments:[],range:0};
  g.players[0].prepared[slot]={card,used:false};return card;
 }
 const cast=(slot:'rapid'|'slot1'|'slot2'):GameAction=>({type:'CAST_SPELL',playerId:'p1',slot,roomId:'room-0,0'});

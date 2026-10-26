@@ -2,6 +2,7 @@ import React from 'react';
 import { ActiveSpell, GameAction, GameState, getSpellType } from '@brw/game-engine';
 import { SPELL_TYPE_LABELS, evocationNumber, mageStyle, ownerName } from './presentation';
 import { SpellTypeIcon } from './SpellTypeIcon';
+import { SpellDescription } from './SpellDescription';
 
 function binding(game:GameState,active:ActiveSpell) {
  if(active.targetPlayerId)return game.players.find(p=>p.id===active.targetPlayerId||p.wizard.id===active.targetPlayerId)?.name??'Unknown mage';
@@ -20,22 +21,6 @@ function coversRoom(game:GameState,active:ActiveSpell,roomId:string) {
  return !!color&&game.board.rooms.find(room=>room.id===roomId)?.color===color;
 }
 
-function condition(active:ActiveSpell) {
- if(active.card.rulesText)return active.card.rulesText;
- const enemy=active.card.trigger?.relation==='ENEMY'?'An enemy':'The bound model';
- const color=active.card.trigger?.scope==='BOUND_COLOR';
- switch(active.card.trigger?.event) {
-  case 'ENTER_ROOM':return `${enemy} enters the room`;
-  case 'DAMAGE_TAKEN':return 'The bound model takes damage';
-  case 'SPELL_CAST':return `${enemy} casts a spell`;
-  case 'ROOM_ACTIVATED':return `${enemy} activates ${color?'a room of that color':'the room'}`;
-  case 'EVOCATION_ACTIVATED':return `${enemy} evocation activates${color?' in a room of that color':''}`;
-  case 'MAGE_ATTACK':return `${enemy} mage attacks`;
-  case 'EVOCATION_ATTACK':return `${enemy} evocation attacks`;
-  default:return 'Awaiting its condition';
- }
-}
-
 export function TrapReminders({game,viewerId,roomId,targetPlayerId,compact=false}:{game:GameState;viewerId:string;roomId?:string;targetPlayerId?:string;compact?:boolean}) {
  // Select the owner before inspecting any binding or type. Foreign hidden
  // cards remain secret even if a malformed/test projection includes details.
@@ -51,7 +36,7 @@ export function TrapReminders({game,viewerId,roomId,targetPlayerId,compact=false
  return <section className={`trap-reminders${compact?' compact':''}`} role="region" aria-label="Your trap and protection reminders">
   <span className="eyebrow">Your active spells · private reminder</span><h2>Remember your active magic</h2>
   <div className="trap-reminder-list">{own.map(active=><article className="trap-reminder" data-active-spell-id={active.id} style={mageStyle(viewerId)} key={active.id}>
-  <strong><SpellTypeIcon type={getSpellType(active.card)}/>{active.card.name}</strong><small>{active.card.triggerTarget?'Trigger fixes target':'No target chosen'} · face down</small><small>{condition(active)} · Active</small>
+  <strong><SpellTypeIcon type={getSpellType(active.card)}/>{active.card.name}</strong><small>{active.card.triggerTarget?'Trigger fixes target':'No target chosen'} · face down</small><SpellDescription card={active.card}/>
   </article>)}</div>
  </section>;
 }
@@ -70,7 +55,7 @@ export function ActiveSpellsPanel({game,viewerId,send,disabled=false}:{game:Game
     <span className="spell-type" data-spell-type={own||known?type:undefined}>{(own||known)&&<SpellTypeIcon type={type}/>} {own||known?`${SPELL_TYPE_LABELS[type]} · Active`:'Face down · Active'}</span>
     <strong>{own?active.card.name:'Hidden active spell'}</strong>
     <small>{ownerName(game,active.playerId)}{own?active.card.triggerTarget?' · Trigger fixes target · face down':' · No target chosen · face down':''}</small>
-    <p>{own?active.card.rulesText:'Only its type is public. Its name, binding and trigger stay hidden until it reveals.'}</p>
+    {own?<SpellDescription card={active.card}/>:<p>Only its type is public. Its name, binding and trigger stay hidden until it reveals.</p>}
     {own&&send&&<label>At Cleanup<select aria-label={`Cleanup for ${active.card.name}`} value={active.cleanupDestination??'HAND'} disabled={disabled||!!game.pendingDecision} onChange={event=>send({type:'SET_ACTIVE_SPELL_CLEANUP',playerId:viewerId,activeSpellId:active.id,destination:event.target.value as 'HAND'|'MEMORIES'})}><option value="HAND">Return to Hand</option>{!active.card.powerful&&<option value="MEMORIES">Put in Memories</option>}</select></label>}
    </article>;
   })}

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ACTIONS_PER_TURN, getSpellType, canUseSpellDummy, spellCanTargetModel, upgradeLegacyCards, Card, Moment, GameAction, GameState, Player, Room, MAX_MAGES, MIN_MAGES, ROOM_COLORS, ROOM_EFFECT_LABELS, isInStartingRoom, isWithinSpellRange, mustLeaveCell, hexDistance, hexKey } from '@brw/game-engine';
+import { ACTIONS_PER_TURN, getSpellType, getDiscardMoveCards, canUseSpellDummy, spellCanTargetModel, upgradeLegacyCards, Card, GameAction, GameState, Player, Room, MAX_MAGES, MIN_MAGES, ROOM_COLORS, ROOM_EFFECT_LABELS, isInStartingRoom, isWithinSpellRange, mustLeaveCell, hexDistance, hexKey } from '@brw/game-engine';
 import { ActiveEvocationControls, EvocationSupply, EvocationsPanel, targetModels } from './EvocationsPanel';
 import { PhysicalActionsPanel, PhysicalBannerActions } from './PhysicalActionsPanel';
 import { useBoardZoom, ZoomControls } from './BoardZoom';
@@ -11,6 +11,7 @@ import { MageRoster } from './MageRoster';
 import { ActiveSpellsPanel, TrapReminders } from './ActiveSpellsPanel';
 import { QuestsPanel, QuickReference } from './MorePanels';
 import { SpellTypeIcon } from './SpellTypeIcon';
+import { SpellDescription } from './SpellDescription';
 import { SchoolIcon } from './SchoolIcon';
 import { LobbyPanel } from './LobbyPanel';
 import { InfoPopup } from './InfoPopup';
@@ -39,29 +40,14 @@ type Slot='slot1'|'slot2'|'slot3'|'rapid';
 const slotKeys:Slot[]=['slot1','slot2','slot3','rapid'];
 const randomName=()=>['Ember','Moon','Storm','Rune','Thorn'][Math.floor(Math.random()*5)]+['Warden','Seer','Mancer','Sage','Bloom'][Math.floor(Math.random()*5)];
 
-function MomentChip({moment,target}:{moment:Moment;target:Card['target']}) {
- switch(moment.effect) {
-  case 'DAMAGE':return <span>⚔ Inflict {moment.amount}{moment.scope==='CASTER_ROOM'?' · enemy models in your room':''}</span>;
-  case 'PAIN':return <span>✦ Pain {moment.amount}</span>;
-  case 'INSTABILITY':return <span>◆ {moment.amount} instability</span>;
-  case 'HEAL':return <span className="heal-effect">♥ {moment.amount} heal</span>;
-  case 'CONVERT':return <span className="convert-effect">↻ {moment.amount} convert · {target==='ROOM'?'room cubes':'damage cubes'}</span>;
-  case 'BLACK_ROSE_CONVERT':return <span className="convert-effect">✺ Pink Tulip convert {moment.amount}{moment.scope==='CASTER'?' · your mage · ignored on friendly models':''}</span>;
-  case 'SUMMON':return <span className="summon-effect">✧ Summon {moment.kind}</span>;
-  case 'ACTIVATE_EVOCATION':return <span className="summon-effect">↝ Activate Succubus · move / attack in either order</span>;
- }
-}
-
 function SpellCard({card,label,selected,disabled,onClick,used=false}:{card:Card;label?:string;selected?:boolean;disabled?:boolean;onClick?:()=>void;used?:boolean}) {
  const spellType=getSpellType(card);
  return <button type="button" className={`spell ${card.powerful?'powerful':''} ${selected?'chosen':''} ${used?'used':''}`} aria-pressed={onClick?!!selected:undefined} disabled={disabled} onClick={onClick}>
   <span className="eyebrow">{label??'Spell'} · {SPELL_TARGET_LABELS[card.target]}</span>
   <span className="spell-type" data-spell-type={spellType}><SpellTypeIcon type={spellType}/><span>{SPELL_TYPE_LABELS[spellType]}{card.ongoing?' · Ongoing':''}</span></span>
   <strong>{card.name}</strong><span className="spell-rune"><SchoolIcon schoolId={card.schoolId} powerful={card.powerful}/></span>
-  <span className="spell-effects">{card.moments.map((m,i)=><MomentChip key={i} moment={m} target={card.target}/>)}</span>
-
-  {card.rulesText&&<span className="spell-rules">{card.rulesText}</span>}
-  <span className="spell-status" data-spell-status={used?'SPENT':'READY'}>{used?'Spent':'Ready'}{card.powerful?' · Forgotten':''}</span>
+  <SpellDescription card={card} showMoments/>
+  {used&&<span className="spell-status" data-spell-status="SPENT">Spent</span>}
   <span className="hint">Range {card.range===Number.POSITIVE_INFINITY?'∞ · ignores line of sight':card.range} · {SPELL_TARGET_DESCRIPTIONS[card.target]} · 1 action to {['TRAP','PROTECTION'].includes(spellType)?'activate':'cast'}{card.powerful?' · Remove after use':''}</span>
  </button>;
 }
@@ -225,6 +211,7 @@ function App() {
  const turnActionsUsed=active?.actionsUsed??0;
  const showHistory=!!game.history&&(game.history.canUndo||game.history.canRedo);
  const cellExitRequired=mustLeaveCell(game,me);
+ const readyExitCard=!!exitCardId&&getDiscardMoveCards(me,active?.playerId===me.id?active:null).some(card=>card.id===exitCardId);
  const endTurnDisabled=pending||cellExitRequired||!!active?.physicalAction||!!active?.exploring||(turnActionsUsed<1&&!active?.spellsCast&&!active?.discardedExit);
  const openQuickControls=(tab:ControlTab)=>{
   quickOpener.current=document.activeElement instanceof HTMLElement?document.activeElement:null;
@@ -276,14 +263,14 @@ function App() {
  const dockedModes=!quickControls&&game.phase==='ACTION'?targetModes:null;
  const spellControls=<>
     {game.phase==='ACTION'&&<section className="phase-panel"><div className="section-heading"><div><span className="eyebrow">Your prepared grimoire · 1 action per cast</span><h2>{game.evocationActivation?.playerId===me.id?'Finish your evocation activation':myTurn?'Choose your next action':'Watch the other mage’s turn'}</h2></div><span className="badge">{myTurn?`${turnActionsRemaining} turn actions left`:me.passed?'Passed':'Waiting'}</span></div>
-    {inStart&&<div className="notice">Leave your starting room with Explore or a discarded card before casting or attacking.</div>}
+    {inStart&&<div className="notice">Leave your starting room with Explore or discard-to-move using any unused prepared spell before casting or attacking.</div>}
     {myTurn&&active?.physicalAction&&<div className="notice">Finish or skip your {active.physicalAction.kind==='EXPLORE'?'Explore':'Attack'} effects before casting spells.</div>}
       <div className="cards prepared">{slotKeys.map((key,i)=>{const c=me.prepared[key];return c&&<SpellCard key={key} card={c.card} used={c.used} label={key==='rapid'?'✧ Quick':`Spell ${i+1}`} selected={key===selectedSlot} disabled={pending||!myTurn||turnActionsRemaining===0||inStart||!!active?.physicalAction||!!active?.exploring||c.used||(key!=='rapid'&&(key!==nextSlot||!!active?.sequencedSpellUsed))} onClick={()=>{const hidden=['TRAP','PROTECTION'].includes(getSpellType(c.card));setSelectedSlot(old=>old===key?null:key);setSelectedRoom(!hidden&&selectedSlot!==key&&c.card.target==='SELF'?game.board.rooms.find(r=>r.tiles.some(h=>hexKey(h)===hexKey(me.wizard.position)))?.id??null:null);setSelectedModelId('');setDummy(false);setExitCardId('');if(quickControls)closeQuickControls();setToast(hidden?'Confirm activation. No room or target is chosen.':c.card.target==='SELF'?'Your mage is selected. Confirm the spell to cast on yourself.':'Choose a highlighted room, then an eligible target.');}}/>;})}</div>
     {spell&&<>
     <p className="hint">1 turn action per spell; no physical token. One numbered spell per turn. Finite range follows a straight hex line; infinite range ignores line of sight.</p>
     {activatingSpell&&<p className="notice">Activate face down without choosing a room or target. Only the spell type is public. You may reveal when its condition occurs, or keep it hidden. Unrevealed cards return to hand at Cleanup.</p>}
     {spell.ongoing&&!dummy&&<p className="notice">Ongoing: persists after mage defeat, follows the bound mage after respawn, and reacts automatically until Cleanup discards it.</p>}
-    {!activatingSpell&&<p className="spell-target-help hint">{spell.moments.some(m=>m.scope==='CASTER_ROOM')?'First inflict damage on enemy models in your room. Your mage and evocations never take friendly damage or damage conversion. The second moment selects your mage, so its Pink Tulip conversion is ignored.':<>Target: {SPELL_TARGET_DESCRIPTIONS[spell.target]}. Only Self spells can select your mage. Support can select friendly evocations. Damage never harms your mage or your evocations. Heal removes wounds from each selected model. Convert replaces other-colored {spell.target==='ROOM'?'instability cubes in the room':'damage cubes on an enemy model'} with your available cubes; it does not add damage or instability. Damage conversion is ignored on your own mage and evocations, including Pink Tulip conversion; other spell effects still resolve.</>}</p>}
+    {!activatingSpell&&<p className="spell-target-help hint">{spell.moments.some(m=>m.effect==='BLACK_ROSE_CONVERT'&&m.scope==='CASTER')?`Choose a room within range ${spell.range}. First damage enemy models there, never your mage or friendly evocations. Then convert your mage’s last damage cubes received from other mages to Pink Tulip black, returning those cubes without changing wounds. Finally resolve the printed Pain moment.`:<>Target: {SPELL_TARGET_DESCRIPTIONS[spell.target]}. Only Self spells can select your mage. Support can select friendly evocations. Damage never harms your mage or your evocations. Heal removes wounds from each selected model. Convert replaces other-colored {spell.target==='ROOM'?'instability cubes in the room':'damage cubes on an enemy model'} with your available cubes; it does not add damage or instability. Ordinary damage conversion is ignored on your own mage and evocations; other spell effects still resolve.</>}</p>}
      {quickControls&&targetModes}
     </>}
     </section>}
@@ -339,7 +326,7 @@ function App() {
       const contributions=Object.entries(r.cubesByPlayer).filter(([,n])=>n>0);
       const segments=cubeSegments(r.cubesByPlayer,r.instability,r.instabilityLimit);
       const evocationReachable=!!movingEvocation&&(game.evocationActivation?.movesRemaining??0)>0&&hexDistance(h,movingEvocation.position)===1&&!r.startingFor;
-      const mageReachable=myTurn&&(!!active?.exploring||!!exitCardId&&turnActionsRemaining>0&&!active?.physicalAction&&!active?.discardedExit)&&hexDistance(h,me.wizard.position)===1&&!r.startingFor;
+      const mageReachable=myTurn&&(!!active?.exploring||readyExitCard&&turnActionsRemaining>0&&!active?.physicalAction&&!active?.discardedExit)&&hexDistance(h,me.wizard.position)===1&&!r.startingFor;
       const reachable=evocationReachable||mageReachable;
       const targetable=myTurn&&turnActionsRemaining>0&&!!spell&&canTarget(r);
       const choose=()=>{
@@ -369,7 +356,7 @@ function App() {
     {!room.reconstructed&&<div className="contributions">{Object.entries(room.cubesByPlayer).filter(([,n])=>n>0).map(([id,n])=><span style={mageStyle(id)} key={id}>{emoji[id]??'✺'} {ownerName(game,id)}: {n}</span>)}</div>}
     {dockedModes}
     {!activatingSpell&&spell&&spell.target!=='ROOM'&&spell.target!=='SELF'&&!dummy&&<label className="action-setting">Spell target model<select aria-label="Spell target model" value={selectedModelId} onChange={e=>setSelectedModelId(e.target.value)}><option value="">First eligible model in this room</option>{spellModelsInRoom(room).map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label>}
-    {!activatingSpell&&spell?.target==='SELF'&&<p className="hint">{spell.moments.some(m=>m.scope==='CASTER_ROOM')?'First damage enemy models in your room; the next moment targets your mage but friendly damage conversion is ignored.':'This spell targets only your mage.'}</p>}
+    {!activatingSpell&&spell?.target==='SELF'&&<p className="hint">This spell targets only your mage.</p>}
     {spell&&!activatingSpell&&<button className="primary" disabled={pending||!myTurn||turnActionsRemaining===0||!canTarget(room)} onClick={cast}>Cast {spell.name} {spell.target==='SELF'?'on yourself':'here'}{dummy?' on dummy':''}</button>}
     </div>}
     {!room&&dockedModes&&quickMode&&<div className="quick-modes">{dockedModes}</div>}

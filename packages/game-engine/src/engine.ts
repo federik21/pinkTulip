@@ -457,7 +457,8 @@ function resolveInstructionBody(s:GameState,owner:Player,instruction:TriggeredIn
  } else if(instruction.effect==='CONVERT' && room) {
   if(!room.scored&&!room.reconstructed)convertCubes(s,owner,room.cubesByPlayer,'onBoard',instruction.amount,room.instability,roomFeedbackTarget(room));
  } else if(instruction.effect==='BLACK_ROSE_CONVERT' && target && target.mage) {
-  convertRecentDamageToBlackRose(s,owner,target.mage,instruction.amount,modelFeedbackTarget(s,ref)!);
+  const casterScoped=instruction.scope==='CASTER'&&ref?.id===actor?.id&&ref?.playerId===owner.id;
+  convertRecentDamageToBlackRose(s,owner,target.mage,instruction.amount,modelFeedbackTarget(s,ref)!,casterScoped);
  } else if(instruction.effect==='PAIN') {
   damage(s,owner,instruction.amount);
  } else if(instruction.effect==='SUMMON') {
@@ -611,12 +612,12 @@ function resolveEvent(s:GameState,event:SpellEvent) {
 }
 function describeInstruction(instruction:TriggeredInstruction):string {
  const targets:Record<TriggeredInstruction['target'],string>={BOUND_MODEL:'the bound model',BOUND_ROOM:'the bound room',EVENT_MODEL:'the triggering model',EVENT_ACTOR:'the acting model',EVENT_ROOM:'the triggering room',OWNER:'the owner’s mage'};
- const target=instruction.scope==='CASTER'?'the caster’s mage':instruction.scope==='CASTER_ROOM'?(instruction.effect==='DAMAGE'?'enemy models in the caster’s room':'every model in the caster’s room'):targets[instruction.target];
+ const target=instruction.scope==='CASTER'?'the caster’s mage':instruction.scope==='CASTER_ROOM'?(instruction.effect==='DAMAGE'?'enemy models in the caster’s room':'every model in the caster’s room'):instruction.effect==='DAMAGE'&&instruction.target==='BOUND_ROOM'?'enemy models in the selected room':targets[instruction.target];
  switch(instruction.effect) {
   case 'DAMAGE':return `Deal ${instruction.amount} damage to ${target}.`;
   case 'HEAL':return `Heal up to ${instruction.amount} ${instruction.amount===1?'wound':'wounds'} on ${target}.`;
   case 'CONVERT':return `Convert up to ${instruction.amount} ${instruction.amount===1?'cube':'cubes'} on ${target} to the owner’s color.`;
-  case 'BLACK_ROSE_CONVERT':return `Convert the last ${instruction.amount} damage cubes received from other mages on ${target} to Pink Tulip black (ignored on friendly models).`;
+  case 'BLACK_ROSE_CONVERT':return `Convert the last ${instruction.amount} damage cubes received from other mages on ${target} to Pink Tulip black${instruction.scope==='CASTER'?'':' (ignored on friendly models)'}.`;
   case 'INSTABILITY':return `Place up to ${instruction.amount} instability in ${target}.`;
   case 'PAIN':return `The Pink Tulip inflicts ${instruction.amount} ${instruction.amount===1?'damage cube':'damage cubes'} on the resolving mage.`;
   case 'SUMMON':return `Summon a ${instruction.kind} ${instruction.position === 'TARGET' ? 'in the target’s room' : 'at the owner’s position'} and activate it.`;
@@ -814,8 +815,8 @@ function removeDamageHistory(wizard: {damageOrder?:PlayerId[]}, amount: number) 
  wizard.damageOrder ??= [];
  wizard.damageOrder.splice(0,Math.min(amount,wizard.damageOrder.length));
 }
-function convertRecentDamageToBlackRose(s:GameState,caster:Player,target:Player,amount:number,targetFeedback:FeedbackTarget) {
- if(caster.id===target.id)return 0;
+function convertRecentDamageToBlackRose(s:GameState,caster:Player,target:Player,amount:number,targetFeedback:FeedbackTarget,casterScoped=false) {
+ if(caster.id===target.id&&!casterScoped)return 0;
  target.wizard.damageOrder ??= [];
  let remaining=Math.min(amount,target.wizard.damageOrder.length),converted=0;
  for(let index=target.wizard.damageOrder.length-1; index>=0 && remaining>0; index--) {
@@ -1111,13 +1112,32 @@ function validateExitDestination(s:GameState,p:Player,destination:Hex) {
  assert(!s.board.rooms.some(r=>r.startingFor && r.tiles.some(h=>hexKey(h)===hexKey(destination))),'Mages cannot enter or reenter starting rooms');
 }
 
+/** Slot readiness, independent of targeting/location so a cell exit is possible. */
+export function getReadyPreparedSlots(p:Player,activation:Activation|null=null):(keyof Player['prepared'])[] {
+ const next=slots.find(slot=>p.prepared[slot]&&!p.prepared[slot]!.used);
+ return [...(next&&!activation?.sequencedSpellUsed?[next]:[]),...(p.prepared.rapid&&!p.prepared.rapid.used?['rapid' as const]:[])];
+}
+
+export function getDiscardMoveCards(p:Player,_activation:Activation|null=null):Card[] {
+ // Discarding is not casting: any unspent preparation is eligible regardless
+ // of numbered order or this turn's numbered-cast quota.
+ return ([...slots,'rapid'] as const).flatMap(slot=>{
+  const prepared=p.prepared[slot];
+  return prepared&&!prepared.used&&!prepared.card.powerful?[prepared.card]:[];
+ });
+}
+
+function hasExitDestination(s:GameState,p:Player):boolean {
+ return s.board.tiles.some(h=>areAdjacent(p.wizard.position,h)&&!s.board.rooms.some(r=>r.startingFor&&r.tiles.some(t=>hexKey(t)===hexKey(h))));
+}
+
 export function mustLeaveCell(s:GameState,p:Player):boolean {
  const a=s.activation;
  if(s.phase!=='ACTION'||s.currentPlayerId!==p.id||a?.playerId!==p.id||!isInStartingRoom(s,p))return false;
  if(a.mustExitCell)return true;
  if(ACTIONS_PER_TURN-a.actionsUsed!==1)return false;
- const destination=s.board.tiles.some(h=>areAdjacent(p.wizard.position,h)&&!s.board.rooms.some(r=>r.startingFor&&r.tiles.some(t=>hexKey(t)===hexKey(h))));
- const discard=!a.discardedExit&&[...p.hand,...Object.values(p.prepared).flatMap(c=>c&&!c.used?[c.card]:[])].some(c=>!c.powerful);
+ const destination=hasExitDestination(s,p);
+ const discard=!a.discardedExit&&getDiscardMoveCards(p,a).length>0;
  return destination&&((p.actionTokens>0&&p.wizard.movement>0)||discard);
 }
 
@@ -1127,9 +1147,9 @@ export function canPlayerAct(s: GameState, p: Player): boolean {
  if(p.passed)return false;
  if((a?.actionsUsed??0)>=ACTIONS_PER_TURN)return false;
  if(p.actionTokens>0)return true;
- if(isInStartingRoom(s,p))return !a?.discardedExit && (p.hand.some(c=>!c.powerful) || Object.values(p.prepared).some(c=>c&&!c.used&&!c.card.powerful));
- const next=slots.find(slot=>p.prepared[slot] && !p.prepared[slot]!.used);
- const spells=[p.prepared.rapid,next&&!a?.sequencedSpellUsed?p.prepared[next]:null];
+ if(!a?.discardedExit&&getDiscardMoveCards(p,a).length>0&&hasExitDestination(s,p))return true;
+ if(isInStartingRoom(s,p))return false;
+ const spells=getReadyPreparedSlots(p,a).map(slot=>p.prepared[slot]);
  return spells.some(prepared=>{
   if(!prepared || prepared.used)return false;
   const card=prepared.card;
@@ -1150,7 +1170,7 @@ export function canPassActionPhase(s:GameState,p:Player):boolean {
 
 function startActivation(s: GameState, p: Player) {
  s.currentPlayerId=p.id; s.activation={playerId:p.id,actionsUsed:0,exploring:0,sequencedSpellUsed:false,spellsCast:0,discardedExit:false,roomEffectUsed:false,physicalAction:null};
- s.log.push(`${p.name} takes a turn: 2 actions total across physical actions, spell casts, and discard-to-move.`);
+ s.log.push(`${p.name} starts their turn: 2 actions total across physical actions, spell casts, and discard-to-move.`);
 }
 
 function cleanup(s: GameState) {
@@ -1203,6 +1223,7 @@ function scoreEndgame(s:GameState) {
 
 function finishActivation(s: GameState) {
  const id=s.currentPlayerId!;
+ s.log.push(`${getPlayer(s,id).name} ends their turn.`);
  s.activation=null;
  const start=s.players.findIndex(p=>p.id===id);
  for(let offset=1;offset<=s.players.length;offset++) {
@@ -1222,6 +1243,15 @@ function startEvocationPhase(s:GameState) {
 
 function finishEvocation(s:GameState) {
  const active=s.evocationActivation!;s.evocationActivation=null;
+ if(active.resume) {
+  s.currentPlayerId=active.resume.currentPlayerId;
+  s.evocationActivation=active.resume.evocationActivation;
+  if(s.evocationActivation) {
+   const resumed=s.evocationActivation;
+   if(!s.evocations.some(e=>e.id===resumed.evocationId)||(resumed.attackUsed&&resumed.movesRemaining===0))finishEvocation(s);
+  } else afterAction(s);
+  return;
+ }
  if(active.returnToAction){afterAction(s);return;}
  const start=s.players.findIndex(p=>p.id===active.playerId);
  for(let offset=1;offset<=s.players.length;offset++) {
@@ -1259,10 +1289,12 @@ function activateEffectSummon(s:GameState,owner:Player,kind:'SUCCUBUS',effect?:E
  const evocation=liveModel(s,effect?.summoned)?.evocation;
  // A failed summon or a destroyed model must never activate a different servant.
  if(!evocation||evocation.playerId!==owner.id||evocation.name!==EVOCATION_TYPES[kind].name)return;
- assert(s.phase==='ACTION'&&s.currentPlayerId===owner.id,'Resolve the summoned activation during its owner’s Action turn');
- assert(!s.evocationActivation,'Finish the active evocation first');
+ assert(s.phase==='ACTION'||s.phase==='EVOCATION','Resolve the summoned activation during the Action or Evocation phase');
+ const resume=s.currentPlayerId!==owner.id||!!s.evocationActivation||s.phase==='EVOCATION'
+  ? {currentPlayerId:s.currentPlayerId,evocationActivation:s.evocationActivation}:undefined;
  evocation.activated=true;
- s.evocationActivation={evocationId:evocation.id,playerId:owner.id,movesRemaining:evocation.movement,returnToAction:true};
+ s.evocationActivation={evocationId:evocation.id,playerId:owner.id,movesRemaining:evocation.movement,returnToAction:s.phase==='ACTION',...(resume?{resume}:{})};
+ s.currentPlayerId=owner.id;
  s.log.push(`${owner.name} activates ${evocation.name} #${evocation.number??1} from the spell (no extra action or token): move ${evocation.movement}, attack ${evocationAttack(evocation)}.`);
  modelEvent(s,'EVOCATION_ACTIVATED',snapshot(s,evocation.id)!);
 }
@@ -1672,14 +1704,11 @@ function runAction(state: GameState, action: GameAction, answers: DecisionAnswer
   const leavingStart=isInStartingRoom(s,p);
   assert(!a.discardedExit,'Already used a discard-to-move this turn');
   validateExitDestination(s,p,action.destination);
-  const handIndex=p.hand.findIndex(c=>c.id===action.cardId);
-  let card:Card;
-  if(handIndex>=0)card=p.hand.splice(handIndex,1)[0];
-  else {
-   const key=(['rapid',...slots] as const).find(key=>p.prepared[key] && !p.prepared[key]!.used && p.prepared[key]!.card.id===action.cardId);
-   assert(key,'Choose a held or unused prepared card');
-   const prepared=p.prepared[key!]!;card=prepared.card;prepared.used=true;
-  }
+  const key=([...slots,'rapid'] as const).find(key=>p.prepared[key]&&!p.prepared[key]!.used&&p.prepared[key]!.card.id===action.cardId);
+  assert(key,'Choose a prepared spell that has not been cast or activated');
+  const prepared=p.prepared[key!]!,card=prepared.card;
+  assert(!card.powerful,'Forgotten spells cannot be discarded to move');
+  prepared.used=true;
   discardCard(s,p,card);a.discardedExit=true;a.actionsUsed++;
   s.log.push(`${p.name} discards ${card.name} to ${leavingStart?'leave the starting room':'move'} by 1 space (1 action, no physical token).`);
   moveModel(s,snapshot(s,p.id)!,action.destination);
@@ -1737,7 +1766,7 @@ function runAction(state: GameState, action: GameAction, answers: DecisionAnswer
  }
  // Trigger destruction during activation or movement must release the lock and
  // follow the normal paid-action/free-phase handoff exactly once.
- if(s.evocationActivation && !s.evocations.some(e=>e.id===s.evocationActivation!.evocationId))finishEvocation(s);
+ while(s.evocationActivation && !s.evocations.some(e=>e.id===s.evocationActivation!.evocationId))finishEvocation(s);
  instructionContexts.delete(s);
  return s;
 }

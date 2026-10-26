@@ -32,9 +32,9 @@ function cubes(s:GameState) {
   expect(p.cubes.onWizard).toBe(s.players.reduce((n,t)=>n+(t.wizard.damageByPlayer[p.id]??0),0));
   expect(p.cubes.onEvocations).toBe(s.evocations.reduce((n,e)=>n+(e.damageByPlayer[p.id]??0),0));}
 }
-function peak(s:GameState) {
+function peak(s:GameState,roomId='room-0,0') {
  s.players[0].prepared.rapid={used:false,card:catalog(s,'Peak of Agony')};
- return applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',targetPlayerId:'p1'});
+ return applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId});
 }
 
 describe('one remaining turn action in the cell must be used to exit',()=>{
@@ -48,9 +48,9 @@ describe('one remaining turn action in the cell must be used to exit',()=>{
   s=use(s,'END_EXPLORE');s=use(s,'SKIP_PHYSICAL_EFFECTS');expect(s.currentPlayerId).toBe('p2');expect(isInStartingRoom(s,s.players[0])).toBe(false);
  });
  it('allows discard-to-move without a physical token, but not a pass instead',()=>{
-  const s=fixture(),p=inCell(s);p.actionTokens=0;p.hand.push(s.library[0].cards.shift()!);
+  const s=fixture(),p=inCell(s);p.actionTokens=0;const card=s.library[0].cards.shift()!;p.prepared.slot1={card,used:false};
   expect(()=>use(s,'END_ACTIVATION')).toThrow(/leave the cell/);expect(()=>use(s,'PASS_ROUND')).toThrow(/leave the cell/);
-  const after=applyAction(s,{type:'DISCARD_EXIT',playerId:'p1',cardId:p.hand[0].id,destination:destination(s)});
+  const after=applyAction(s,{type:'DISCARD_EXIT',playerId:'p1',cardId:card.id,destination:destination(s)});
   expect(isInStartingRoom(after,after.players[0])).toBe(false);expect(after.players[0].actionTokens).toBe(0);expect(after.currentPlayerId).toBe('p2');
  });
  it('enforces the same exit when using the legacy Explore command',()=>{
@@ -154,57 +154,86 @@ describe('Pink Tulip only counts unsolved quests when issuing replacements',()=>
  });
 });
 
-describe('Peak of Agony preserves its moments without bypassing friendly immunity',()=>{
- it('has explicit independent targets for both printed moments',()=>{
-  const card=catalog(fixture(),'Peak of Agony');expect(card.target).toBe('SELF');expect(card.moments).toEqual([
-  {effect:'DAMAGE',amount:2,scope:'CASTER_ROOM'},{effect:'BLACK_ROSE_CONVERT',amount:2,scope:'CASTER'}]);
+describe('Peak of Agony: range-2 room damage, caster conversion, then Pain 2',()=>{
+ it('prints three independently targeted moments in the required order',()=>{
+  const card=catalog(fixture(),'Peak of Agony');expect(card.target).toBe('ROOM');expect(card.range).toBe(2);
+  expect(card.moments).toEqual([{effect:'DAMAGE',amount:2},{effect:'BLACK_ROSE_CONVERT',amount:2,scope:'CASTER'},{effect:'PAIN',amount:2}]);
  });
- it.each([false,true])('upgrades an old canonical Peak once, without rewriting customized cards (scoped=%s)',scoped=>{
-  const s=fixture(),card=catalog(s,'Peak of Agony');card.moments=scoped?[{effect:'DAMAGE',amount:2,scope:'CASTER_ROOM',includeFriendly:true} as Moment,{effect:'BLACK_ROSE_CONVERT',amount:2,scope:'CASTER'}]:[moment.damage(2),moment.blackRoseConvert(2)];delete card.rulesText;
+ it.each(['flat','scoped','friendly'] as const)('upgrades the old %s Peak without overwriting other customized definitions',format=>{
+  const s=fixture(),card=catalog(s,'Peak of Agony');card.target='SELF';card.range=0;
+  card.moments=format==='flat'?[moment.damage(2),moment.blackRoseConvert(2)]:[{effect:'DAMAGE',amount:2,scope:'CASTER_ROOM',...(format==='friendly'?{includeFriendly:true}:{})} as Moment,{effect:'BLACK_ROSE_CONVERT',amount:2,scope:'CASTER'}];
   s.players[0].prepared.rapid={used:false,card};const restored:GameState=JSON.parse(JSON.stringify(s));upgradeLegacyCards(restored);
-  expect(restored.players[0].prepared.rapid!.card.moments).toEqual(catalog(fixture(),'Peak of Agony').moments);
+  expect(restored.players[0].prepared.rapid!.card).toEqual({...catalog(fixture(),'Peak of Agony'),id:card.id});
   const copy=structuredClone(restored);upgradeLegacyCards(restored);expect(restored).toEqual(copy);
-  card.moments=[moment.damage(3)];upgradeLegacyCards(card);expect(card.moments).toEqual([moment.damage(3)]);
+  card.moments=[moment.damage(3)];const custom=structuredClone(card);upgradeLegacyCards(card);expect(card).toEqual(custom);
  });
- it('damages only enemy mages and evocations in the room, never friendly models or models elsewhere',()=>{
-  const s=fixture();s.players[3].wizard.position={q:1,r:0};const own=summonEvocation(s,s.players[0],'CADAVER',{q:0,r:0})!,enemy=summonEvocation(s,s.players[1],'CADAVER',{q:0,r:0})!,outside=summonEvocation(s,s.players[2],'CADAVER',{q:1,r:0})!;
-  const after=peak(s);expect(after.players.map(p=>p.wizard.damageCubes)).toEqual([0,2,2,0]);
+ it('damages only enemies in the chosen room at range 2, not the caster’s room or friendly evocations',()=>{
+  const s=fixture();s.players[1].wizard.position={q:2,r:0};s.players[3].wizard.position={q:1,r:0};
+  const own=summonEvocation(s,s.players[0],'CADAVER',{q:2,r:0})!,enemy=summonEvocation(s,s.players[1],'CADAVER',{q:2,r:0})!,outside=summonEvocation(s,s.players[2],'CADAVER',{q:0,r:0})!;
+  const after=peak(s,'room-2,0');expect(after.players.map(p=>p.wizard.damageCubes)).toEqual([2,2,0,0]);
   expect(after.evocations.map(e=>e.id)).toEqual([own.id,outside.id]);
-  for(const id of ['p2','p3',enemy.id])expect(after.feedbackEvents!.some(e=>e.kind==='DAMAGE'&&e.target.id===id&&e.amount===2)).toBe(true);
-  for(const id of ['p1',own.id])expect(after.feedbackEvents!.some(e=>e.kind==='DAMAGE'&&e.target.id===id)).toBe(false);
-  expect(after.players[0].wizard.blackDamage).toBe(0);cubes(after);
+  expect(after.feedbackEvents!.filter(e=>e.kind==='DAMAGE'&&e.sourceId==='p1').map(e=>e.target.id)).toEqual(['p2',enemy.id]);
+  expect(after.players[0].wizard.blackDamage).toBe(2);cubes(after);
  });
- it('leaves all caster wounds and their ownership unchanged, including foreign cubes and black damage',()=>{
+ it('never deals friendly player damage even when the selected room contains the caster',()=>{
+  const s=fixture(),own=summonEvocation(s,s.players[0],'CADAVER',{q:0,r:0})!;const after=peak(s);
+  expect(after.players[0].wizard.damageByPlayer).toEqual({});expect(after.players[0].wizard.blackDamage).toBe(2);
+  expect(after.evocations.find(e=>e.id===own.id)!.damageCubes).toBe(0);cubes(after);
+ });
+ it('converts the newest two foreign cubes, skips self/black wounds and returns colored supply before Pain',()=>{
   const s=fixture();s.players[0].wizard.health=20;wound(s,0,['p2','p3','p2','black-rose','p1','p4']);wound(s,1,['p3']);
-  const after=peak(s),p=after.players[0];expect(p.wizard).toEqual(s.players[0].wizard);
-  expect(after.feedbackEvents!.filter(e=>e.kind==='CONVERT')).toEqual([]);
-  expect(after.players[1].wizard.blackDamage).toBe(0);expect(after.players[1].wizard.damageByPlayer).toEqual({p3:1,p1:2});cubes(after);
+  const after=peak(s),p=after.players[0];expect(p.wizard.damageCubes).toBe(8);expect(p.wizard.blackDamage).toBe(5);
+  expect(p.wizard.damageOrder).toEqual(['p2','p3','black-rose','black-rose','p1','black-rose','black-rose','black-rose']);
+  expect(p.wizard.damageByPlayer).toEqual({p2:1,p3:1,p1:1});expect(after.players[1].wizard.damageByPlayer).toEqual({p3:1,p1:2});
+  const events=after.feedbackEvents!,convert=events.findIndex(e=>e.kind==='CONVERT');expect(events[convert]).toMatchObject({target:{id:'p1'},amount:2,total:6});
+  expect(events.slice(convert+1).filter(e=>e.kind==='DAMAGE')).toMatchObject([{target:{id:'p1'},sourceId:'black-rose',amount:2}]);cubes(after);
  });
- it('retains friendly immunity on both Peak and ordinary room spells',()=>{
-  const s=fixture();wound(s,0,['p2','p1','black-rose']);const after=peak(s);expect(after.players[0].wizard.blackDamage).toBe(1);cubes(after);
-  const t=fixture();prepare(t,[moment.damage(2)],'ROOM');const own=summonEvocation(t,t.players[0],'CADAVER',{q:0,r:0})!;
-  const regular=applyAction(t,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:'room-0,0'});expect(regular.players[0].wizard.damageCubes).toBe(0);expect(regular.evocations.find(e=>e.id===own.id)!.damageCubes).toBe(0);
+ it.each([0,1])('converts only the %s available foreign cubes and still applies Pain 2',foreign=>{
+  const s=fixture();wound(s,0,[...Array<string>(foreign).fill('p2'),'p1','black-rose']);const after=peak(s);
+  expect(after.players[0].wizard.damageCubes).toBe(foreign+4);expect(after.players[0].wizard.blackDamage).toBe(foreign+3);
+  expect(after.players[0].wizard.damageByPlayer).toEqual({p1:1});cubes(after);
  });
- it('finishes enemy room damage before a reaction, then still skips friendly conversion after JSON replay',()=>{
+ it.each(['room-1,1','room-2,-1','room-3,-2'])('rejects off-axis, distant or protected target %s atomically',roomId=>{
+  const s=fixture(),card=catalog(s,'Peak of Agony');s.players[0].prepared.rapid={used:false,card};const before=structuredClone(s);
+  expect(()=>applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId})).toThrow(/range|Starting rooms/);expect(s).toEqual(before);
+ });
+ it('rejects a room farther than 2 along an axis and still accepts empty rooms',()=>{
+  const s=fixture();s.players[0].wizard.position={q:-1,r:0};const card=catalog(s,'Peak of Agony');s.players[0].prepared.rapid={used:false,card};
+  expect(()=>applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:'room-2,0'})).toThrow(/out of range/);
+  const after=applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:'room-1,0'});expect(after.players[0].wizard.blackDamage).toBe(2);cubes(after);
+ });
+ it('fully resolves room damage and its reactions before conversion, including after JSON replay',()=>{
   const s=fixture();wound(s,0,['p3','p4']);
   const ward:Card={id:s.library[0].cards.shift()!.id,name:'Reaction ward',kind:'SPELL',target:'SELF',range:0,spellType:'PROTECTION',moments:[moment.heal(1)],trigger:{event:'DAMAGE_TAKEN',relation:'ENEMY',scope:'BOUND_MODEL'}};
   s.readiedSpells!.push({id:'ward',playerId:'p2',card:ward});s.activeSpellOrder!.push('ward');const paused=peak(s);
   expect(paused.pendingDecision?.kind).toBe('REACTIVE_SPELL');const restored:GameState=JSON.parse(JSON.stringify(paused));upgradeLegacyCards(restored);
   const after=applyAction(restored,{type:'RESPOND_REACTIVE_SPELL',playerId:'p2',key:paused.pendingDecision!.key,activeSpellId:'ward',targetId:'p2'});
-  const events=after.feedbackEvents!,reaction=events.findIndex(e=>e.kind==='SPELL_TRIGGERED'),converted=events.findIndex(e=>e.kind==='CONVERT'&&e.target.id==='p1');
-  expect(events.slice(0,reaction).filter(e=>e.kind==='DAMAGE')).toHaveLength(3);expect(converted).toBe(-1);expect(after.players[0].wizard.blackDamage).toBe(0);expect(after.players[0].wizard).toEqual(s.players[0].wizard);cubes(after);
+  const events=after.feedbackEvents!,reaction=events.findIndex(e=>e.kind==='SPELL_TRIGGERED'),converted=events.findIndex(e=>e.kind==='CONVERT');
+  expect(events.slice(0,reaction).filter(e=>e.kind==='DAMAGE')).toHaveLength(3);expect(converted).toBeGreaterThan(reaction);
+  expect(after.players[0].wizard).toMatchObject({damageCubes:4,blackDamage:4,damageByPlayer:{}});cubes(after);
  });
- it('cannot defeat its own caster, even with only one health remaining',()=>{
-  const s=fixture();s.players[0].wizard.health=1;const after=peak(s);
-  expect(isInStartingRoom(after,after.players[0])).toBe(false);expect(after.players[0].wizard.damageCubes).toBe(0);
-  expect(after.feedbackEvents!.filter(e=>e.kind==='CONVERT'&&e.target.id==='p1')).toEqual([]);expect(after.players[1].wizard.damageCubes).toBe(2);cubes(after);
-  expect(after.players[0].trophies).not.toContain('p1');expect(after.blackRose.kills).toBe(0);
+ it('converts wounds from a first-moment Pain Mark reaction before older damage',()=>{
+  const s=fixture();s.players[1].wizard.position={q:2,r:0};wound(s,0,['p2','p4']);const card=catalog(s,'Pain Mark');
+  s.ongoingSpells!.push({id:'mark',playerId:'p3',targetPlayerId:'p1',card});s.activeSpellOrder!.push('mark');const after=peak(s,'room-2,0');
+  expect(after.players[0].wizard).toMatchObject({damageCubes:6,blackDamage:4,damageByPlayer:{p2:1,p4:1},damageOrder:['p2','p4','black-rose','black-rose','black-rose','black-rose']});cubes(after);
  });
- it('does not even prompt for Soul Tithe when friendly damage is skipped',()=>{
-  const s=fixture(),succubus=summonEvocation(s,s.players[0],'SUCCUBUS',{q:0,r:0})!;
-  const after=peak(s);expect(after.pendingDecision).toBeFalsy();
-  expect(after.players[0].wizard.damageCubes).toBe(0);
-  expect(after.evocations.find(e=>e.id===succubus.id)!.damageCubes).toBe(0);
-  cubes(after);
+ it.each([true,false])('offers Soul Tithe only for the final neutral Pain, after caster conversion (accept=%s)',accept=>{
+  const s=fixture(),succubus=summonEvocation(s,s.players[0],'SUCCUBUS',{q:0,r:0})!;wound(s,0,['p3','p4']);
+  const paused=peak(s);expect(paused.pendingDecision?.kind).toBe('SOUL_TITHE');const restored:GameState=JSON.parse(JSON.stringify(paused));upgradeLegacyCards(restored);
+  const after=applyAction(restored,{type:'RESPOND_SOUL_TITHE',playerId:'p1',accept});
+  expect(after.players[0].wizard.blackDamage).toBe(accept?3:4);expect(after.evocations.find(e=>e.id===succubus.id)!.damageCubes).toBe(accept?1:0);
+  expect(after.feedbackEvents!.find(e=>e.kind==='CONVERT')).toMatchObject({target:{id:'p1'},amount:2,total:2});cubes(after);
+ });
+ it('converts before a lethal final Pain and scores the resulting neutral damage correctly',()=>{
+  const s=fixture();s.players[0].wizard.health=4;wound(s,0,['p2','p2']);const after=peak(s);
+  expect(isInStartingRoom(after,after.players[0])).toBe(true);expect(after.players[0].wizard.damageCubes).toBe(0);expect(after.blackRose.kills).toBe(1);
+  expect(after.feedbackEvents!.find(e=>e.kind==='MAGE_DEFEATED'&&e.target.id==='p1')).toMatchObject({contributions:{'black-rose':4},sourceId:'black-rose'});
+  expect(after.players[0].trophies).not.toContain('p1');cubes(after);
+ });
+ it('does not convert a respawned life after a first-moment reaction defeats the caster',()=>{
+  const s=fixture();s.players[0].wizard.health=2;s.players[1].wizard.position={q:2,r:0};
+  const card=catalog(s,'Pain Mark');s.ongoingSpells!.push({id:'mark',playerId:'p3',targetPlayerId:'p1',card});s.activeSpellOrder!.push('mark');
+  const after=peak(s,'room-2,0');expect(after.feedbackEvents!.filter(e=>e.kind==='CONVERT')).toEqual([]);
+  expect(after.feedbackEvents!.findIndex(e=>e.kind==='MAGE_DEFEATED'&&e.sourceId==='p3')).toBeGreaterThanOrEqual(0);cubes(after);
  });
 });

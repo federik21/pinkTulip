@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { GameAction, GameState, Player, ROOM_EFFECT_LABELS, hexDistance, hexKey, isInStartingRoom, mustLeaveCell } from '@brw/game-engine';
+import { GameAction, GameState, Player, ROOM_EFFECT_LABELS, getDiscardMoveCards, hexDistance, hexKey, isInStartingRoom, mustLeaveCell } from '@brw/game-engine';
 import { targetModels } from './EvocationsPanel';
 
 type Props = {
@@ -46,7 +46,8 @@ export function PhysicalActionsPanel({game,me,enabled,pending,exitCardId,setExit
  const {currentRoom,inStart,targets,effectTargets,roomAvailable,targetValid,activateRoom}=physicalContext(game,me,effectTargetId);
  useEffect(()=>{setEffectTargetId('');setChoosingTarget(false);},[currentRoom?.id,active?.actionsUsed,game.currentPlayerId,game.round]);
  const canBegin=myTurn&&!pending&&!physical&&!active?.exploring&&(active?.actionsUsed??2)<2&&me.actionTokens>0;
- const exitCards=[...me.hand,...Object.values(me.prepared).flatMap(c=>c&&!c.used?[c.card]:[])].filter(c=>!c.powerful);
+ const exitCards=getDiscardMoveCards(me,active?.playerId===me.id?active:null);
+ useEffect(()=>{if(exitCardId&&!exitCards.some(c=>c.id===exitCardId))setExitCardId('');},[exitCardId,exitCards.map(c=>c.id).join('|')]);
  const mustMove=!!active?.mustExitCell&&inStart;
  const begin=(kind:'EXPLORE'|'ATTACK')=>{
   clearSpell();setExitCardId('');send({type:'BEGIN_PHYSICAL_ACTION',playerId:me.id,kind});
@@ -56,7 +57,7 @@ export function PhysicalActionsPanel({game,me,enabled,pending,exitCardId,setExit
     {mustLeaveCell(game,me)&&<p className="notice">Your last action must move your mage out of the cell. Explore or discard a card to move; you cannot finish Explore without leaving.</p>}
    {!physical?<>
     <div className="action-choices"><button className="primary" disabled={!canBegin} onClick={()=>begin('EXPLORE')}>Explore<small>1 token · movement + room effect</small></button><button disabled={!canBegin||inStart} onClick={()=>begin('ATTACK')}>Attack<small>1 token · attack + room effect</small></button></div>
-    <div className="notice"><b>{inStart?'Starting-room exit':'Discard to move'}</b><p>{inStart?'Explore out, or discard a held/unused prepared card to move one space for 1 turn action and no physical token. Starting rooms cannot be activated.':'Discard a held/unused prepared card to move one space for 1 turn action and no physical token. Once per turn; you cannot enter a starting room.'}</p><label className="action-setting">Card to discard to move<select aria-label="Card to discard to move" disabled={pending||!!active?.discardedExit||(active?.actionsUsed??2)>=2} value={exitCardId} onChange={e=>{setExitCardId(e.target.value);clearSpell();}}><option value="">Choose a card, then an adjacent hex</option>{exitCards.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label></div>
+    <div className="notice"><b>{inStart?'Starting-room exit':'Discard to move'}</b><p>{inStart?'Explore out, or discard an unused prepared spell to move one space for 1 turn action and no physical token. Starting rooms cannot be activated.':'Discard an unused prepared spell to move one space for 1 turn action and no physical token. Once per turn; you cannot enter a starting room.'} Any numbered or Quick slot is eligible, even a later numbered spell or after casting a numbered spell this turn. Cards held in hand, already cast or activated spells, and Forgotten spells cannot be discarded to move.</p><label className="action-setting">Card to discard to move<select aria-label="Card to discard to move" disabled={!myTurn||pending||exitCards.length===0||!!active?.discardedExit||(active?.actionsUsed??2)>=2} value={exitCardId} onChange={e=>{setExitCardId(e.target.value);clearSpell();}}><option value="">{exitCards.length?'Choose an unused prepared spell, then an adjacent hex':'No unused prepared spells to discard'}</option>{exitCards.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label></div>
    </>:<div className="physical-effects" data-physical-kind={physical.kind}>
     <p>Choose either effect first, once each. Resolving effects costs no extra token. You may skip anything remaining.</p>
     {physical.kind==='EXPLORE'?<>

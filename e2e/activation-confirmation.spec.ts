@@ -186,7 +186,35 @@ for(const viewport of [{width:1440,height:1000},{width:390,height:844}]) {
    expect(wire.state.evocations[0]).toMatchObject({kind:'SUCCUBUS',playerId:'p1',position:{q:1,r:1}});
    expect(wire.state.players[0].wizard.position).not.toEqual({q:1,r:1});expect(wire.state.players[1].victoryPoints).toBe(5);
    expect(wire.state.feedbackEvents!.map(e=>e.kind)).toEqual(['DAMAGE','SPELL_TRIGGERED','MAGE_DEFEATED']);
+  const controls=page.locator('.turn-banner .evocation-controls');await expect(controls).toBeVisible();
+  await expect(controls).toContainText('2 movement remaining');expect(wire.state.currentPlayerId).toBe('p1');
+  expect(wire.state.evocationActivation).toMatchObject({playerId:'p1',evocationId:wire.state.evocations[0].id});
+  const activation=structuredClone(wire.state.activation),tokens=wire.state.players.map(p=>p.actionTokens);
+  await page.locator('.hex[data-room-id="room-1,0"]').click();await expect(controls).toContainText('1 movement remaining');
+  await page.locator('.hex[data-room-id="room-0,0"]').click();await expect(controls).toContainText('0 movement remaining');
+  await controls.getByRole('button',{name:/^Succubus attack/}).click();await expect(controls).toHaveCount(0);
+  expect(wire.state.players[1].wizard.damageCubes).toBe(1);expect(wire.state.currentPlayerId).toBe('p2');
+  expect(wire.state.activation).toEqual(activation);expect(wire.state.evocationActivation).toBeNull();
+  expect(wire.state.players.map(p=>p.actionTokens)).toEqual(tokens);
    expect(wire.errors).toEqual([]);
+  });
+
+  for(const phase of ['ACTION','EVOCATION'] as const)test(`Liquefy resumes an interrupted ${phase} evocation after the free Succubus finishes`,async({page})=>{
+  const initial=fixture('Liquefy the Pain'),card=initial.players[0].prepared.slot1!.card;initial.players[0].prepared.slot1=null;initial.players[0].wizard.health=1;
+  initial.readiedSpells!.push({id:'liquefy',playerId:'p1',card});initial.activeSpellOrder!.push('liquefy');
+  initial.phase=phase;initial.currentPlayerId='p2';
+  if(phase==='EVOCATION')initial.activation=null;else initial.activation!.playerId='p2';
+  const dealer=summonEvocation(initial,initial.players[1],'CADAVER',{q:0,r:0})!,wire=await mount(page,initial);
+  wire.dispatch({type:'ACTIVATE_EVOCATION',playerId:'p2',evocationId:dealer.id});
+  wire.dispatch({type:'EVOCATION_ATTACK',playerId:'p2',targetId:'p1'});
+  const dialog=page.getByRole('dialog',{name:'Reveal an active spell?',exact:true});await expect(dialog).toBeVisible();
+  await dialog.getByRole('button',{name:'Reveal and resolve'}).click();await expect(dialog).toBeHidden();
+  const controls=page.locator('.turn-banner .evocation-controls');await expect(controls).toBeVisible();
+  const activation=structuredClone(wire.state.activation),tokens=wire.state.players.map(p=>p.actionTokens);
+  await controls.getByRole('button',{name:'Finish evocation',exact:true}).click();
+  await expect(controls).toHaveCount(0);expect(wire.state.phase).toBe(phase);expect(wire.state.currentPlayerId).toBe('p2');
+  expect(wire.state.evocationActivation).toMatchObject({evocationId:dealer.id,playerId:'p2',movesRemaining:2,attackUsed:true});
+  expect(wire.state.activation).toEqual(activation);expect(wire.state.players.map(p=>p.actionTokens)).toEqual(tokens);expect(wire.errors).toEqual([]);
   });
 
     test('Cross and Delight resolves Pain before free player-controlled Succubus activation',async({page})=>{
