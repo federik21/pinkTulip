@@ -121,9 +121,14 @@ export const ROOM_EFFECT_LABELS: Record<RoomEffect,string> = {
  ROOM_DAMAGE:'Deal 1 damage to every enemy in this room', DRAW_DISCARD:'Retrieve 1 random spell from your personal discard',
  INSTABILITY:'Place 1 instability in a room within distance 1', DRAW_QUEST:'Draw 1 additional quest',
  DRAW_GRIMOIRE:'Draw 1 grimoire spell', SUMMON_CADAVER:'Summon 1 Cadaver from the shared supply in this room (6 models total; maximum 3 evocations per mage)',
- DRAW_POWERFUL:'Gain 1 forgotten spell; prepare in a later Preparation phase, then remove from the game when cast',
+ DRAW_POWERFUL:'Discard 2 cards to gain 1 forgotten spell; prepare in a later Preparation phase, then remove from the game when cast',
+ FIRST_PLAYER:'Place 1 instability in this room and take the first-player token: you start the next phase and following rounds',
 };
-const effects: RoomEffect[] = ['ROOM_DAMAGE','DRAW_DISCARD','INSTABILITY','DRAW_QUEST','DRAW_GRIMOIRE','SUMMON_CADAVER'];
+const effects: RoomEffect[] = ['ROOM_DAMAGE','DRAW_DISCARD','INSTABILITY','DRAW_QUEST','FIRST_PLAYER','SUMMON_CADAVER'];
+/** Cards discarded from hand to activate the central chamber. */
+export const CENTRAL_ROOM_DISCARD_COST=2;
+/** Hand cards that may pay the central chamber's cost (Forgotten spells never can). */
+export const getCentralDiscardOptions=(p:Player):Card[]=>p.hand.filter(c=>!c.powerful);
 export const isInStartingRoom = (s:GameState,p:Player) => s.board.rooms.some(r=>!!r.startingFor && inRoom(p,r));
 const requirePhase = (s: GameState, phase: GameState['phase']) => assert(s.phase === phase, `Action unavailable in ${s.phase}`);
 const requireActivation = (s: GameState, id: string): Activation => {
@@ -167,7 +172,7 @@ export function createDemoBoard(roomsPerColor:1|2|3=3,random:()=>number=Math.ran
   // Each color retains its printed capacity/effect at every board size.
   const capacity=h.q===0 && h.r===0?10:index===4?4:index===5?6:5;
   return {
-  id: `room-${h.q},${h.r}`, name: h.q===0 && h.r===0 ? 'Pink Tulip Chamber' : names.pop()!,
+  id: `room-${h.q},${h.r}`, name: h.q===0 && h.r===0 ? 'BR Chamber' : names.pop()!,
   tiles: [h], instability: 0, instabilityLimit: capacity,
   rewards: getRoomRewards(capacity), cubesByPlayer: {}, reconstructed: false, scored: false,
   color:index<0?null:ROOM_COLORS[index], effect:index<0?(h.q===0&&h.r===0?'DRAW_POWERFUL':null):effects[index], specialUsed:false,
@@ -255,7 +260,7 @@ export function getContributionAwards(cubes:Record<PlayerId,number>,rewards:read
 }
 
 function awardVictoryPoints(s:GameState,id:PlayerId,points:number):string {
- if(id===BLACK_ROSE_ID){s.blackRose.victoryPoints+=points;return 'Pink Tulip';}
+ if(id===BLACK_ROSE_ID){s.blackRose.victoryPoints+=points;return 'BR';}
  const p=getPlayer(s,id);
  const before=p.victoryPoints; p.victoryPoints+=points;
  if(points!==0) {
@@ -620,6 +625,7 @@ function resolveEvent(s:GameState,event:SpellEvent) {
      resolveEffectMoments(s,owner,active.card,selectedRoom??room,refs,ownerRef!);
     } else {
    const effect:EffectResolution={activationIsExplicit:instructions.some(step=>step.effect==='ACTIVATE_EVOCATION'),eventPosition:event.position,eventKind:event.kind};
+  if(!ongoing)resolveCardInstability(s,owner,active.card,room,ownerRef!,effect);
   for(const [index,instruction] of instructions.entries()) {
    s.log.push(`Moment ${index+1}/${instructions.length} · ${active.card.name}: ${describeInstruction(instruction)}`);
     let ref:ModelSnapshot|undefined,roomId:string|undefined;
@@ -647,9 +653,9 @@ function describeInstruction(instruction:TriggeredInstruction):string {
   case 'DAMAGE':return `${instruction.when==='TARGET_DEFEATED'?'If the target is defeated: d':'D'}eal ${instruction.amount} damage to ${instruction.area?`each other mage within range ${instruction.area.range} of the target’s position`:target}.`;
   case 'HEAL':return `Heal up to ${instruction.amount} ${instruction.amount===1?'wound':'wounds'} on ${target}.`;
   case 'CONVERT':return `Convert up to ${instruction.amount} ${instruction.amount===1?'cube':'cubes'} on ${target} to the owner’s color.`;
-  case 'BLACK_ROSE_CONVERT':return `Convert the last ${instruction.amount} damage cubes received from other mages on ${target} to Pink Tulip black${instruction.scope==='CASTER'?'':' (ignored on friendly models)'}.`;
+  case 'BLACK_ROSE_CONVERT':return `Convert the last ${instruction.amount} damage cubes received from other mages on ${target} to BR black${instruction.scope==='CASTER'?'':' (ignored on friendly models)'}.`;
   case 'INSTABILITY':return `Place up to ${instruction.amount} instability in ${target}.`;
-  case 'PAIN':return `The Pink Tulip inflicts ${instruction.amount} ${instruction.amount===1?'damage cube':'damage cubes'} on the resolving mage.`;
+  case 'PAIN':return `BR inflicts ${instruction.amount} ${instruction.amount===1?'damage cube':'damage cubes'} on the resolving mage.`;
   case 'SUMMON':return `Summon ${instruction.kind==='EVENT_MODEL'?'the lost model':`a ${EVOCATION_TYPES[instruction.kind].name}`} ${instruction.position==='TARGET'?'in the target’s room':instruction.position==='EVENT'?'where it stood':instruction.position==='REMOVED'?'in the same room':'at the owner’s position'}${instruction.kind==='SUCCUBUS'?' and activate it':''}.`;
   case 'ACTIVATE_EVOCATION':return `Activate the summoned ${EVOCATION_TYPES[instruction.kind].name}: move and attack in either order, or use only one, without spending another action or token.`;
   case 'ACTIVATE_TARGET':return 'Activate the chosen evocation under your control: it takes your color, may attack its owner, and you and your evocations are immune to that damage.';
@@ -670,11 +676,16 @@ function moveModel(s:GameState,ref:ModelSnapshot,destination:Hex) {
  if(target.mage&&s.activation?.playerId===target.mage.id&&!isInStartingRoom(s,target.mage))delete s.activation.mustExitCell;
  const to=roomAt(s,destination)?.id;
  if(to && from!==to)modelEvent(s,'ENTER_ROOM',ref,ref,to);
- // Entry shock: only a mage that walks into the room is hurt, never when the Colossus itself moves.
- if(to && from!==to && target.mage) {
-  for(const e of s.evocations.filter(x=>x.ability==='ENTRY_SHOCK'&&x.playerId!==target.mage!.id&&areInSameRoom(s,x.position,destination))) {
-   resolveInstruction(s,getPlayer(s,e.playerId),{effect:'DAMAGE',amount:3,target:'EVENT_MODEL'},snapshot(s,target.mage.id),undefined,snapshot(s,e.id),undefined,'EVOCATION');
-  }
+ if(to && from!==to && target.mage)entryShock(s,target.mage.id);
+}
+// Colossus Entry shock: any mage that ends up in a room with an enemy Colossus (walked, discarded to exit,
+// respawned or relocated by an effect) takes 3. Never the owner, other summons, or the Colossus's own moves.
+// Re-read the mage's current position: reactions to the entry may already have moved or defeated it.
+function entryShock(s:GameState,mageId:string) {
+ const mage=s.players.find(p=>p.id===mageId);if(!mage||!mage.wizard.alive)return;
+ for(const e of s.evocations.filter(x=>x.ability==='ENTRY_SHOCK'&&x.playerId!==mage.id&&areInSameRoom(s,x.position,mage.wizard.position))) {
+  if(!s.evocations.includes(e))continue;
+  resolveInstruction(s,getPlayer(s,e.playerId),{effect:'DAMAGE',amount:3,target:'EVENT_MODEL'},snapshot(s,mage.id),undefined,snapshot(s,e.id),undefined,'EVOCATION');
  }
 }
 
@@ -695,7 +706,7 @@ function askSoulTithe(s:GameState,e:Evocation,target:Player,amount:number,source
  if(given?.key===key){ctx.cursor++;return given.accept;}
  throw new DecisionNeeded({kind:'SOUL_TITHE',playerId:target.id,key,evocationId:e.id,evocationName:`${e.name} #${e.number??1}`,
   evocationWounds:e.damageCubes,evocationHealth:e.health,targetId:target.id,targetName:target.name,
-  sourceName:source?.name??'Pink Tulip',amount},ctx.answers.slice(0,ctx.cursor));
+  sourceName:source?.name??'BR',amount},ctx.answers.slice(0,ctx.cursor));
 }
 
 // Each living Soul Tithe model of the damaged mage (in model-number order) may take one
@@ -808,7 +819,7 @@ function settleMageDefeat(s:GameState,pending:PendingMageDefeat) {
   completeQuest(s,source,'KILL');
  } else if(!source) {
   s.blackRose.kills++; awardVictoryPoints(s,target.id,2);
-  s.log.push(`${target.name} gains +2 VP for being defeated by Pink Tulip.`);
+  s.log.push(`${target.name} gains +2 VP for being defeated by BR.`);
  }
  appendFeedback(s,{kind:'MAGE_DEFEATED',target:feedbackTarget,sourceId:source?.id??BLACK_ROSE_ID,
   contributions,awards,returnedCubes,respawnRoomId:target.wizard.startingRoomId,...(bonusPlayerId?{bonusPlayerId}:{})});
@@ -936,7 +947,7 @@ function convertRecentDamageToBlackRose(s:GameState,caster:Player,target:Player,
   converted++;remaining--;
  }
  if(converted>0) {
-  s.log.push(`${target.name} converts ${converted} recent wound${converted===1?'':'s'} to Pink Tulip.`);
+  s.log.push(`${target.name} converts ${converted} recent wound${converted===1?'':'s'} to BR.`);
   appendFeedback(s,{kind:'CONVERT',target:targetFeedback,sourceId:BLACK_ROSE_ID,amount:converted,total:target.wizard.damageCubes});
  }
  return converted;
@@ -1017,7 +1028,7 @@ function placeInstability(s: GameState, room: Room, amount: number, source?: Pla
  room.instability+=actual;
  room.cubesByPlayer[owner]=(room.cubesByPlayer[owner]??0)+actual;
  if(source) { source.cubes.available-=actual; source.cubes.onBoard+=actual; completeQuest(s,source,'INSTABILITY',actual); }
- s.log.push(`${source?.name ?? 'Pink Tulip'} places ${actual} instability in ${room.name} (${room.instability}/${room.instabilityLimit}).`);
+ s.log.push(`${source?.name ?? 'BR'} places ${actual} instability in ${room.name} (${room.instability}/${room.instabilityLimit}).`);
  if(room.instability===room.instabilityLimit) {
   s.log.push(`${room.name} is full and cannot accept more instability; rebuilding, room VP and upgraded actions wait until Cleanup.`);
   if(source && room.cubesByPlayer[source.id]===room.instability) {
@@ -1058,7 +1069,7 @@ function startBlackRose(s: GameState) {
  const event=drawFromDiscard(s,s.eventDeck,s.eventDiscard);
  if(!event)throw new GameRuleError('No event cards are available');
  s.usedEvent=event; s.eventDiscard.push(event);
- s.log.push(`Round ${s.round} · Pink Tulip — ${event.name}.`);
+ s.log.push(`Round ${s.round} · BR — ${event.name}.`);
  if(event.kind==='BLACK_DAMAGE') for(const p of s.players) damage(s,p,event.amount);
  else {
   const candidates=shuffle(s.board.rooms.filter(r=>!r.startingFor && !r.reconstructed && r.instability<r.instabilityLimit),()=>resolutionRandom(s));
@@ -1093,7 +1104,7 @@ function finishBlackRose(s: GameState) {
   }
  }
  s.blackRoseResolved=true;
- if(s.players.some(p=>heldQuests(p).length>p.questLimit))s.log.push('Pink Tulip — waiting for quest-limit discards.');
+ if(s.players.some(p=>heldQuests(p).length>p.questLimit))s.log.push('BR — waiting for quest-limit discards.');
  beginStudyIfQuestsFit(s);
 }
 
@@ -1122,6 +1133,7 @@ function activateRoomBody(s:GameState,p:Player,targetRoomId?:string) {
  const room=s.board.rooms.find(r=>inRoom(p,r));
  assert(room?.effect && !room.startingFor,'No room effect in a starting room');
  assert(!targetRoomId || room!.effect==='INSTABILITY','Only Emerald instability takes a target room');
+ if(room!.effect==='DRAW_POWERFUL'&&s.powerfulDeck.length>0)assert(getCentralDiscardOptions(p).length>=CENTRAL_ROOM_DISCARD_COST,`Discard ${CENTRAL_ROOM_DISCARD_COST} cards from your hand to activate the central chamber`);
  const reward=room!.reconstructed?2:1;
  if(room!.reconstructed){assert(!room!.specialUsed,'Reconstructed room special already used this Action phase');room!.specialUsed=true;}
  const actor=snapshot(s,p.id)!,position={...p.wizard.position};
@@ -1162,7 +1174,27 @@ function activateRoomBody(s:GameState,p:Player,targetRoomId?:string) {
   }
    break;
   }
+  case 'FIRST_PLAYER': {
+   placeInstability(s,room!,1,p);
+   if(s.firstPlayerId!==p.id) {
+    s.firstPlayerId=p.id;
+    s.log.push(`${p.name} takes the first-player token and starts the next phase.`);
+   }
+   break;
+  }
   case 'DRAW_POWERFUL': {
+  // Pay first: choose cards in order, then discard both only once both are chosen.
+  const paid:Card[]=[];
+  for(let i=0;i<(s.powerfulDeck.length?CENTRAL_ROOM_DISCARD_COST:0);i++) {
+   const options=getCentralDiscardOptions(p).filter(c=>!paid.some(x=>x.id===c.id));
+   const id=askChoice(s,p.id,`central-discard|${p.id}|${i}`,`Central chamber: discard card ${i+1} of ${CENTRAL_ROOM_DISCARD_COST} to gain a forgotten spell.`,options.map(c=>({id:c.id,label:c.name})))!;
+   paid.push(options.find(c=>c.id===id)!);
+  }
+  for(const card of paid) {
+   p.hand.splice(p.hand.findIndex(c=>c.id===card.id),1);
+   discardCard(s,p,card);
+  }
+  if(paid.length)s.log.push(`${p.name} discards ${paid.map(c=>c.name).join(' and ')} to the central chamber.`);
   for(let i=0;i<reward;i++) {
    const card=s.powerfulDeck.shift();
   if(card)p.hand.push(card);else {s.log.push('The forgotten spell supply is exhausted.');break;}
@@ -1305,7 +1337,7 @@ function cleanup(s: GameState) {
   s.log.push(`Endgame triggered after Cleanup: ${s.round>=3?'round limit reached':'a competitor reached 30 VP'}.`);
   scoreEndgame(s);
   // Stable player seating order wins equal final scores; Pink Tulip follows mages.
-  const leaders=[...s.players,{id:BLACK_ROSE_ID,name:'Pink Tulip',victoryPoints:s.blackRose.victoryPoints}].sort((a,b)=>b.victoryPoints-a.victoryPoints);
+  const leaders=[...s.players,{id:BLACK_ROSE_ID,name:'BR',victoryPoints:s.blackRose.victoryPoints}].sort((a,b)=>b.victoryPoints-a.victoryPoints);
   s.phase='GAME_OVER';s.winner=leaders[0].id;
   s.log.push(`${leaders[0].name} wins with ${leaders[0].victoryPoints} VP!`);
  }
@@ -1350,11 +1382,17 @@ function finishActivation(s: GameState) {
  startEvocationPhase(s);
 }
 
+// Seat order starting at the first-player token holder (seat order when none).
+function seatOrder(s:GameState):Player[] {
+ const first=Math.max(0,s.players.findIndex(p=>p.id===s.firstPlayerId));
+ return [...s.players.slice(first),...s.players.slice(0,first)];
+}
+
 function startEvocationPhase(s:GameState) {
  s.phase='EVOCATION';s.activation=null;s.evocationActivation=null;
  for(const e of s.evocations)e.activated=false;
  s.log.push('EVOCATION — alternate models; every surviving evocation activates once.');
- const first=s.players.find(p=>s.evocations.some(e=>e.playerId===p.id&&!e.activated));
+ const first=seatOrder(s).find(p=>s.evocations.some(e=>e.playerId===p.id&&!e.activated));
  if(first)s.currentPlayerId=first.id;else cleanup(s);
 }
 
@@ -1465,6 +1503,7 @@ function resolveEffectMoments(s:GameState,caster:Player,spell:Card,room:Room|und
  // The chosen model and where it stands, remembered while it is still on the board.
  const chosen=spell.target==='ROOM'?undefined:refs[0];
  let origin=chosen?liveModel(s,chosen)?.model.position:room?.tiles[0];
+ resolveCardInstability(s,caster,spell,room,actor,effect,damageOrigin);
  for(const [index,step] of spell.moments.entries())atMomentEnd(s,()=>{
   const live=liveModel(s,chosen);
   if(live)origin={...live.model.position};
@@ -1485,6 +1524,16 @@ function resolveEffectMoments(s:GameState,caster:Player,spell:Card,room:Room|und
    stepRefs=origin?s.players.filter(p=>p.wizard.alive&&p.wizard.id!==chosen?.id&&hexDistance(origin!,p.wizard.position)<=area.range).map(p=>snapshot(s,p.id)!):[];
   }
   resolveMomentBody(s,caster,spell,step,room,stepRefs,actor,effect,damageOrigin);
+ });
+}
+// Optional extra effect of a card (Card.instability): a single moment placing 1
+// instability cube in the mage's current room. It fully resolves, with every
+// interrupt it causes, before the card's printed moments begin.
+function resolveCardInstability(s:GameState,caster:Player,spell:Card,room:Room|undefined,actor:ModelSnapshot,effect:EffectResolution,damageOrigin:DamageOrigin='SPELL') {
+ if(!spell.instability)return;
+ atMomentEnd(s,()=>{
+  s.log.push(`Instability · ${spell.name}: place 1 instability in the caster’s current room.`);
+  resolveMomentBody(s,caster,spell,{effect:'INSTABILITY',amount:1,scope:'CASTER_ROOM'},room,[],actor,effect,damageOrigin);
  });
 }
 function resolveMomentBody(s:GameState,caster:Player,spell:Card,step:Moment,room:Room|undefined,refs:ModelSnapshot[],actor:ModelSnapshot,effect:EffectResolution,damageOrigin:DamageOrigin) {
@@ -1548,7 +1597,8 @@ function resolveMomentBody(s:GameState,caster:Player,spell:Card,step:Moment,room
  if(step.amount<=0)return;
  // Instability always lands in the chosen room; conversion of a room spell converts that room's cubes.
  if(step.effect==='INSTABILITY' || (step.effect==='CONVERT' && spell.target==='ROOM')) {
-  if(room)resolveInstruction(s,caster,{...step,target:'BOUND_ROOM'},undefined,room.id,actor,effect,damageOrigin);
+  const placeIn=step.effect==='INSTABILITY'&&step.scope==='CASTER_ROOM'?roomAt(s,caster.wizard.position):room;
+  if(placeIn)resolveInstruction(s,caster,{...step,target:'BOUND_ROOM'},undefined,placeIn.id,actor,effect,damageOrigin);
   return;
  }
  for(const ref of refs)resolveInstruction(s,caster,{...step,target:'BOUND_MODEL'},ref,undefined,actor,effect,damageOrigin);
@@ -1768,7 +1818,7 @@ function runAction(state: GameState, action: GameAction, answers: DecisionAnswer
    break;
   }
   case 'DISCARD_QUESTS': {
-  requirePhase(s,'BLACK_ROSE');assert(s.blackRoseResolved,'Resolve Pink Tulip before discarding quests');
+  requirePhase(s,'BLACK_ROSE');assert(s.blackRoseResolved,'Resolve BR before discarding quests');
    const quests=heldQuests(p),overflow=quests.length-p.questLimit;
    assert(overflow>0,'No quests over the quest limit');
    assert(Array.isArray(action.questIds) && action.questIds.length===overflow && new Set(action.questIds).size===overflow,`Discard exactly ${overflow} different quests`);
@@ -1814,7 +1864,7 @@ function runAction(state: GameState, action: GameAction, answers: DecisionAnswer
     p.prepared.rapid={card,used:false};
    }
    p.preparationDone=true;
-  if(s.players.every(p=>p.preparationDone)) { s.phase='ACTION'; s.log.push('ACTION — up to 2 total actions per turn, including spell casts and discard-to-move; at most one numbered spell per turn.'); startActivation(s,s.players[0]); }
+  if(s.players.every(p=>p.preparationDone)) { s.phase='ACTION'; s.log.push('ACTION — up to 2 total actions per turn, including spell casts and discard-to-move; at most one numbered spell per turn.'); startActivation(s,seatOrder(s)[0]); }
    break;
   }
   case 'END_ACTIVATION': {
@@ -1862,12 +1912,13 @@ function runAction(state: GameState, action: GameAction, answers: DecisionAnswer
    const {active,e}=requireEvocation(s,p.id);assert(!active.attackUsed,'Evocation attack already used');
    const target=modelTarget(s,action.targetId);
    assert(target.playerId!==p.id,'Evocations cannot damage their mage or friendly evocations');
+   assert(target.evocation?.id!==e.id,'An evocation cannot attack itself');
    assert(!s.board.rooms.some(r=>r.startingFor&&r.tiles.some(h=>hexKey(h)===hexKey(target.position))),'Cannot target a model in its starting room');
   assert(areInSameRoom(s,e.position,target.position),'Target must be in the same room');
   const actor=snapshot(s,e.id)!,ref=snapshot(s,action.targetId)!,roomId=roomAt(s,target.position)?.id;
   active.attackUsed=true;
   // Corrosive plasma attacks the room: every model there not of the controller's color suffers it.
-  const victims=e.upgrade==='CORROSIVE_PLASMA'?roomOccupants(s,roomAt(s,target.position)!).filter(v=>v.playerId!==p.id):[ref];
+  const victims=e.upgrade==='CORROSIVE_PLASMA'?roomOccupants(s,roomAt(s,target.position)!).filter(v=>v.playerId!==p.id&&v.id!==e.id):[ref];
   for(const victim of victims)resolveInstruction(s,p,{effect:'DAMAGE',amount:evocationAttack(e),target:'EVENT_MODEL'},victim,undefined,actor,undefined,'EVOCATION');
   modelEvent(s,'EVOCATION_ATTACK',ref,actor,roomId);
   if(s.evocationActivation===active&&active.movesRemaining===0)finishEvocation(s);

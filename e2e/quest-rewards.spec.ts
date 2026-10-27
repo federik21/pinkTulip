@@ -50,7 +50,7 @@ for(const viewport of [{width:1440,height:1000},{width:390,height:844},{width:32
   await expect(panel).toContainText('Completed · unsolved');await expect(panel).toContainText('Heal 2');
   const solve=panel.getByRole('button',{name:`Solve ${quest.name} for free`,exact:true});
   await expect(solve).toBeEnabled();await solve.click();
-  await expect(dock(page).locator('.quest-notification')).toHaveCount(0);await expect(panel).toContainText('1 quests solved');
+  await expect(dock(page).locator('.quest-notification')).toHaveCount(0);await expect(panel).toContainText('1 quest completed');
   expect(wire.actions).toEqual([{type:'USE_QUEST_REWARD',playerId:'p1',questId:quest.id}]);
   expect(wire.state.activation).toEqual(initial.activation);expect(wire.state.players[0].actionTokens).toBe(initial.players[0].actionTokens);
   expect(wire.state.players[0].wizard.damageCubes).toBe(1);expect(wire.state.players[0].victoryPoints).toBe(quest.reward);

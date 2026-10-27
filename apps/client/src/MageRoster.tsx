@@ -44,6 +44,6 @@ export function MageRoster({game,viewerId,actingPlayerId,onViewRetinue}: Props) 
     </div>
    </details>;
   })}
-    <div className="black-rose-score" data-owner-id={BLACK_ROSE_ID} aria-label="White Lotus score"><div className="player-heading"><span>✺ White Lotus</span><b>{game.blackRose.victoryPoints}<small> VP</small></b></div><small>{game.blackRose.kills} kills · neutral competitor</small></div>
+    <div className="black-rose-score" data-owner-id={BLACK_ROSE_ID} aria-label="BR score"><div className="player-heading"><span>✺ BR</span><b>{game.blackRose.victoryPoints}<small> VP</small></b></div><small>{game.blackRose.kills} kills · neutral competitor</small></div>
  </section>;
 }

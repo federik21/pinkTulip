@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { GameAction, GameState, Player, ROOM_EFFECT_LABELS, getDiscardMoveCards, hexDistance, hexKey, isInStartingRoom, mustLeaveCell } from '@brw/game-engine';
+import { GameAction, GameState, Player, ROOM_EFFECT_LABELS, CENTRAL_ROOM_DISCARD_COST, getCentralDiscardOptions, getDiscardMoveCards, hexDistance, hexKey, isInStartingRoom, mustLeaveCell } from '@brw/game-engine';
 import { targetModels } from './EvocationsPanel';
 
 type Props = {
@@ -14,7 +14,7 @@ function physicalContext(game:GameState,me:Player,effectTargetId:string) {
  const inStart=isInStartingRoom(game,me);
  const targets=targetModels(game).filter(t=>t.playerId!==me.id&&hexDistance(me.wizard.position,t.position)===0&&!game.board.rooms.some(r=>r.startingFor&&r.tiles.some(h=>hexKey(h)===hexKey(t.position))));
  const effectTargets=game.board.rooms.filter(r=>!r.startingFor&&currentRoom&&Math.min(...currentRoom.tiles.flatMap(h=>r.tiles.map(t=>hexDistance(h,t))))<=1);
- const roomAvailable=!!currentRoom?.effect&&!inStart&&(!currentRoom.reconstructed||!currentRoom.specialUsed);
+ const roomAvailable=!!currentRoom?.effect&&!inStart&&(!currentRoom.reconstructed||!currentRoom.specialUsed)&&(currentRoom.effect!=='DRAW_POWERFUL'||!game.powerfulDeck.length||getCentralDiscardOptions(me).length>=CENTRAL_ROOM_DISCARD_COST);
  const targetValid=!effectTargetId||effectTargets.some(r=>r.id===effectTargetId);
  const activateRoom=(playerId:string):GameAction=>({type:'ACTIVATE_ROOM',playerId,...(currentRoom?.effect==='INSTABILITY'&&effectTargetId?{roomTargetId:effectTargetId}:{})});
  return {currentRoom,inStart,targets,effectTargets,roomAvailable,targetValid,activateRoom};

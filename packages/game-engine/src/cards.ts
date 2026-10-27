@@ -140,16 +140,16 @@ export const shuffle = <T>(items: T[], random:()=>number = Math.random): T[] => 
 export function createAgonyDeck(prefix: string, schoolId?: string): Card[] {
  const patterns: Omit<Card, 'id' | 'kind'>[] = [
   { name: 'Shared Torture', moments: [moment.damage(4), moment.convert(1), moment.pain(3)], range: 1, target: 'MODEL' },
-  { name: 'Grim Torment', moments: [moment.damage(3), moment.pain(1)], range: 2, target: 'MODEL' },
-  { name: 'Cross and Delight', moments: [moment.summon('SUCCUBUS'), moment.pain(1), moment.activateEvocation('SUCCUBUS')], range: 1, target: 'ROOM' },
+  { name: 'Grim Torment', instability:true, moments: [moment.damage(3), moment.pain(1)], range: 2, target: 'MODEL' },
+  { name: 'Cross and Delight', instability:true, moments: [moment.summon('SUCCUBUS'), moment.pain(1), moment.activateEvocation('SUCCUBUS')], range: 1, target: 'ROOM' },
   { name: 'Torment', spellType: 'TRAP', moments: [moment.damage(2), moment.summon('SUCCUBUS', 'TARGET')], range: Number.POSITIVE_INFINITY, target: 'MODEL',
     triggerText: 'When an enemy model deals damage',
    trigger:{event:'DAMAGE_DEALT',relation:'ENEMY',scope:'ANY'}, triggerTarget:'EVENT_ACTOR',
    triggerEffects:[{effect:'DAMAGE',amount:2,target:'EVENT_ACTOR'},{effect:'SUMMON',kind:'SUCCUBUS',position:'TARGET',target:'EVENT_ACTOR'}] },
-  { name: 'Visceral Fire', moments: [moment.damage(2), moment.ifTargetDefeated(moment.nearTarget(moment.damage(1), 1))], range: 2, target: 'MAGE',
+  { name: 'Visceral Fire', instability:true, moments: [moment.damage(2), moment.ifTargetDefeated(moment.nearTarget(moment.damage(1), 1))], range: 2, target: 'MAGE',
    rulesText: 'Target a mage within range 2 and deal 2 damage. If that mage is defeated, each other mage within range 1 of where it stood suffers 1 damage.' },
   { name: 'Peak of Agony', moments: peakOfAgonyMoments(), range: 2, target: 'ROOM' },
-  { name: 'Pain Mark', moments: [], range: 1, target: 'MODEL',
+  { name: 'Pain Mark', instability:true, moments: [], range: 1, target: 'MODEL',
     rulesText: painMarkRules,
     ongoing: { trigger: { event: 'DAMAGE_DEALT', relation: 'ANY', scope: 'BOUND_MODEL', damageOrigins:['MAGE_PHYSICAL','SPELL'] }, effects: [{ effect: 'DAMAGE', amount: 2, target: 'EVENT_ACTOR' }] } },
   { name: 'Master of Pleasure', spellType: 'TRAP', moments: [], range: Number.POSITIVE_INFINITY, target: 'MAGE',
@@ -162,7 +162,7 @@ export function createAgonyDeck(prefix: string, schoolId?: string): Card[] {
     trigger:{event:'MAGE_DEFEATED',relation:'SELF',relationTo:'EVENT_MODEL',scope:'ANY'}, triggerTarget:'EVENT_ROOM',
     triggerEffects:liquefyThePainEffects() },
   { name: 'Submission', moments: [moment.damage(1), moment.convert(1), moment.pain(1)], range: Number.POSITIVE_INFINITY, target: 'MODEL' },
-  { name: 'Ineluctable Pain', spellType: 'CONTINGENCY', moments: [], range: 2, target: 'MODEL',
+  { name: 'Ineluctable Pain', instability:true, spellType: 'CONTINGENCY', moments: [], range: 2, target: 'MODEL',
    rulesText: 'Whenever a model gains or loses victory points, it suffers 2 damage.',
    ongoing:{trigger:{event:'VP_CHANGED',relation:'ANY',scope:'BOUND_MODEL'},effects:[{effect:'DAMAGE',amount:2,target:'EVENT_MODEL'}]} },
   { name: 'Hearth of Ice', moments: [moment.damage(3), moment.convert(2), moment.pain(2)], range: 2, target: 'MODEL' },
@@ -182,23 +182,23 @@ export function createTechnomancyDeck(prefix: string, schoolId?: string): Card[]
    rulesText: 'Assign Corrosive plasma to the target evocation. If you do, inflict 1 damage on every model in the target\u2019s room.' },
   { name: 'Kinetic Infusion', spellType: 'CONTINGENCY', range: 2, target: 'EVOCATION', moments: [m.assignUpgrade('TENDON_IMPLANT'), m.ifUpgraded(m.instability(1))],
    rulesText: 'Assign Tendon implant to the target evocation. If you do, place 1 instability cube in the target\u2019s room.' },
-  { name: 'Vigorous Infusion', spellType: 'CONTINGENCY', range: 2, target: 'EVOCATION', moments: [m.assignUpgrade('MUSCULAR_IMPLANT'), m.activateTarget()],
+  { name: 'Vigorous Infusion', instability:true, spellType: 'CONTINGENCY', range: 2, target: 'EVOCATION', moments: [m.assignUpgrade('MUSCULAR_IMPLANT'), m.activateTarget()],
    rulesText: 'Assign Muscular implant to the target evocation. It activates under your control.' },
-  { name: 'Indoctrination', spellType: 'CONTINGENCY', range: 2, target: 'EVOCATION', moments: [m.assignUpgrade('CEREBRAL_IMPLANT'), m.activateTarget()],
+  { name: 'Indoctrination', instability:true, spellType: 'CONTINGENCY', range: 2, target: 'EVOCATION', moments: [m.assignUpgrade('CEREBRAL_IMPLANT'), m.activateTarget()],
    rulesText: 'Assign Cerebral implant to the target evocation. It activates under your control.' },
   { name: 'Nefarious Evolution', spellType: 'CONTINGENCY', range: 2, target: 'EVOCATION', moments: [{ effect: 'REMOVE_EVOCATION', archetype: 'UNDEAD' }, { effect: 'SUMMON', kind: 'COLOSSUS', position: 'REMOVED', when: 'EVOCATION_REMOVED' }],
    rulesText: 'You may remove one of your undead evocations in the target\u2019s room. If you do, summon a Colossus in that room.' },
-  { name: 'Mutant Energies', spellType: 'CONTINGENCY', range: 2, target: 'EVOCATION', moments: [{ effect: 'REMOVE_EVOCATION' }, m.ifRemoved({ effect: 'REMOVED_BLAST' })],
+  { name: 'Mutant Energies', instability:true, spellType: 'CONTINGENCY', range: 2, target: 'EVOCATION', moments: [{ effect: 'REMOVE_EVOCATION' }, m.ifRemoved({ effect: 'REMOVED_BLAST' })],
    rulesText: 'You may remove one of your evocations in the target\u2019s room. If you do, inflict damage equal to its attack on every mage in that room and up to 1 room away.' },
   { name: 'Craft', spellType: 'CONTINGENCY', range: 1, target: 'ROOM', moments: [m.summon('CADAVER', 'TARGET'), m.assignUpgrade('RANDOM', 'SUMMONED')],
    rulesText: 'Summon a Cadaver in the target room, then assign it a random upgrade.' },
-  { name: 'Mechanical Archive', spellType: 'CONTINGENCY', range: 0, target: 'SELF', moments: [{ effect: 'LOOK_LIBRARY', cards: 4 }],
+  { name: 'Mechanical Archive', instability:true, spellType: 'CONTINGENCY', range: 0, target: 'SELF', moments: [{ effect: 'LOOK_LIBRARY', cards: 4 }],
    rulesText: 'Look at 4 cards from a single library school. Draw 1 and discard the rest to that school\u2019s discard pile.' },
   { name: 'Draco\u2019s Skin', spellType: 'TRAP', range: Number.POSITIVE_INFINITY, target: 'SELF', moments: [],
    rulesText: 'When one of your evocations is defeated or removed, summon that model again where it stood and assign Reinforced dermis to it.',
    trigger: { event: 'EVOCATION_LOST', relation: 'SELF', relationTo: 'EVENT_MODEL', scope: 'ANY' },
    triggerEffects: [{ effect: 'SUMMON', kind: 'EVENT_MODEL', position: 'EVENT', target: 'OWNER' }, { effect: 'ASSIGN_UPGRADE', upgrade: 'REINFORCED_DERMIS', to: 'SUMMONED', target: 'OWNER' }] },
-  { name: 'Necrotic Pheromones', spellType: 'TRAP', range: 2, target: 'EVOCATION', moments: [m.activateTarget()], triggerSight: 2, targetFrom: 'EVENT_MODEL',
+  { name: 'Necrotic Pheromones', instability:true, spellType: 'TRAP', range: 2, target: 'EVOCATION', moments: [m.activateTarget()], triggerSight: 2, targetFrom: 'EVENT_MODEL',
    rulesText: 'When another mage enters a room at range 2 and in line of sight, choose an evocation at range 2 from that mage. It activates under your control.',
    trigger: { event: 'ENTER_ROOM', relation: 'ENEMY', scope: 'ANY' } },
  ];
@@ -224,8 +224,8 @@ export function createPowerfulDeck(): Card[] {
 
 export function createEvents(): EventCard[] {
  return shuffle(Array.from({ length: 12 }, (_, i) => i % 2 === 0
-  ? { id: `event-${i}`, name: 'The Lodge Trembles', description: 'Place 1–2 Pink Tulip instability in two random unfinished rooms.', kind: 'INSTABILITY' as const, amount: 1 + (i % 3 === 0 ? 1 : 0), rooms: 2 }
-  : { id: `event-${i}`, name: 'Thorns of the Pink Tulip', description: 'Every mage suffers black damage. No player receives kill credit.', kind: 'BLACK_DAMAGE' as const, amount: i % 3 === 0 ? 2 : 1, rooms: 0 }));
+  ? { id: `event-${i}`, name: 'The Lodge Trembles', description: 'Place 1–2 BR instability in two random unfinished rooms.', kind: 'INSTABILITY' as const, amount: 1 + (i % 3 === 0 ? 1 : 0), rooms: 2 }
+  : { id: `event-${i}`, name: 'Thorns of BR', description: 'Every mage suffers black damage. No player receives kill credit.', kind: 'BLACK_DAMAGE' as const, amount: i % 3 === 0 ? 2 : 1, rooms: 0 }));
 }
 
 export function createQuests(): Quest[] {

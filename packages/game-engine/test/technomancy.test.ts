@@ -49,6 +49,18 @@ describe('Technomancy school',()=>{
   const done=applyAction(hit,{type:'END_EVOCATION',playerId:'p1'});
   expect(done.evocationActivation).toBeNull();expect(done.currentPlayerId).toBe('p1');
  });
+ it('never lets a borrowed evocation attack itself',()=>{
+  const s=fixture(),theirs=summonEvocation(s,s.players[1],'CADAVER',{q:0,r:0})!;
+  arm(s,'Indoctrination');
+  const after=castOn(s,theirs.id);
+  expect(()=>applyAction(after,{type:'EVOCATION_ATTACK',playerId:'p1',targetId:theirs.id})).toThrow();
+  expect(after.evocations.find(e=>e.id===theirs.id)!.damageCubes).toBe(theirs.damageCubes);
+  // Its owner's other models remain legitimate enemies of the controller.
+  const sibling=summonEvocation(after,after.players[1],'CADAVER',{q:0,r:0})!;
+  const hit=applyAction(after,{type:'EVOCATION_ATTACK',playerId:'p1',targetId:sibling.id});
+  expect(hit.evocations.some(e=>e.id===sibling.id)).toBe(false);
+  expect(hit.evocations.find(e=>e.id===theirs.id)!.damageCubes).toBe(0);
+ });
  it('asks the evocation owner which upgrade to keep and honors the answer',()=>{
   const s=fixture(),e=summonEvocation(s,s.players[1],'CADAVER',{q:0,r:0})!;
   e.upgrade='TENDON_IMPLANT';e.health=3;

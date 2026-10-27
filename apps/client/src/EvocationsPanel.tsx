@@ -60,9 +60,10 @@ export function ActiveEvocationControls({game,playerId,enabled,pending,send}:Omi
  const active=game.evocationActivation;
  const acting=game.evocations.find(e=>e.id===active?.evocationId);
  if(!active||!acting||active.playerId!==playerId)return null;
- const targets=targetModels(game).filter(t=>t.playerId!==playerId&&areInSameRoom(game,t.position,acting.position)&&!game.board.rooms.some(r=>r.startingFor&&r.tiles.some(h=>hexKey(h)===hexKey(t.position))));
+ const targets=targetModels(game).filter(t=>t.playerId!==playerId&&t.id!==acting.id&&areInSameRoom(game,t.position,acting.position)&&!game.board.rooms.some(r=>r.startingFor&&r.tiles.some(h=>hexKey(h)===hexKey(t.position))));
  return <section className="evocation-controls" aria-label="Active evocation controls" style={mageStyle(acting.playerId)}>
-  <div className="evocation-control-heading"><h2><span className="evocation-portrait" aria-hidden="true">{portrait(acting)}</span>{acting.name} #{evocationNumber(game,acting)}</h2><p>{active.movesRemaining} movement remaining · {active.attackUsed?'Attack used':'One attack available'}.</p></div>
+  <div className="evocation-control-heading"><h2><span className="evocation-portrait" aria-hidden="true">{portrait(acting)}</span>{acting.name} #{evocationNumber(game,acting)}</h2><p>{active.movesRemaining} movement remaining · {active.attackUsed?'Attack used':'One attack available'}.</p>
+   {acting.upgrade&&<p className="hint" data-upgrade={acting.upgrade}><strong>{UPGRADE_LABELS[acting.upgrade]}</strong>: {UPGRADE_RULES[acting.upgrade]}</p>}</div>
   {!active.attackUsed&&targets.length>0&&<div className="evocation-attack-targets" role="group" aria-label="Evocation attack targets" tabIndex={0}>
    {targets.map(t=><button disabled={!enabled||pending} key={t.id} onClick={()=>send({type:'EVOCATION_ATTACK',playerId,targetId:t.id})}>{acting.name} attack {t.name}<small>{evocationAttack(acting)} damage</small></button>)}
   </div>}

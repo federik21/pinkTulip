@@ -416,8 +416,10 @@ const drawEffects: RoomEffect[] = ['DRAW_POWERFUL', 'DRAW_GRIMOIRE', 'DRAW_DISCA
 const drawModes = ['ACTIVATE_ROOM', 'EXPLORE', 'END_EXPLORE', 'EXPLORE_STEP', 'PUNCH_START', 'PUNCH_END'] as const;
 function drawFixture(effect: RoomEffect, empty: boolean) {
  const game = fixture();
- const room = game.board.rooms.find(r => r.effect === effect)!;
+ const room = game.board.rooms.find(r => r.effect === effect) ?? game.board.rooms.find(r => r.color === 'violet')!;
+ room.effect = effect;
  game.players.forEach(p => { p.wizard.position = { ...room.tiles[0] }; });
+ if (effect === 'DRAW_POWERFUL' && !empty) game.players[0].hand.push(...game.players[0].personalDeck.splice(0, 2));
  if (effect === 'DRAW_DISCARD' && !empty) game.players[0].discard.push(...game.players[0].personalDeck.splice(0, 2));
  if (empty) {
   game.players[0].personalDeck = []; game.players[0].discard = [];
@@ -459,10 +461,10 @@ describe('hidden information barriers', () => {
  }
 
  it('can undo movement after a draw, but cannot undo or replay the draw itself', () => {
-  const history = new ActionHistory(); let { game } = drawFixture('DRAW_POWERFUL', false);
+  const history = new ActionHistory(); let { game } = drawFixture('DRAW_DISCARD', false);
   game = apply(history, game, { type:'EXPLORE', playerId:'p1', activateRoomAtStart:true });
   const afterDraw = structuredClone(game), card = game.players[0].hand[0];
-  game = apply(history, game, { type:'EXPLORE_STEP', playerId:'p1', destination:{ q:1, r:0 } });
+  game = apply(history, game, { type:'EXPLORE_STEP', playerId:'p1', destination:adjacentDestination(game) });
   const afterMove = structuredClone(game);
   game = apply(history, game, undo); expect(game).toEqual(afterDraw);
   expect(game.players[0].hand[0]).toEqual(card);
