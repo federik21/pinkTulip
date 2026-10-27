@@ -59,6 +59,7 @@
 .spell-type[data-spell-type="TRAP"]{color:#e6bc7c}
 .spell-type[data-spell-type="PROTECTION"]{color:#a8cfff}
 .spell-trigger{display:block;font-size:11px;font-weight:700;line-height:1.6;color:var(--gold);margin:0 0 8px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+.spell-target{display:block;font-size:10px;line-height:1.5;color:#d9c4c3;margin:0 0 8px}
 .spell-rules{display:block;font-size:10px;line-height:1.6;color:#ded3e1;margin-bottom:12px}
 .schools{grid-template-columns:repeat(auto-fit,minmax(min(150px,100%),1fr))}
 .schools button[data-school-id="alchemy"] .school-rune{color:#c4b5fd}

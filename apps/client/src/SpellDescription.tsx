@@ -1,5 +1,6 @@
 import React from 'react';
 import { Card, Moment, getSpellDescription, getSpellType } from '@brw/game-engine';
+import { SPELL_TARGET_DESCRIPTIONS } from './presentation';
 
 function MomentChip({moment,target}:{moment:Moment;target:Card['target']}) {
  switch(moment.effect) {
@@ -22,13 +23,13 @@ function MomentChip({moment,target}:{moment:Moment;target:Card['target']}) {
 // Keep the condition above both printed moments and explanatory effect text.
 // Reactive effects come from the instructions that actually resolve on reveal.
 export function SpellDescription({card,showMoments=false}:{card:Card;showMoments?:boolean}) {
- const {triggerText,rulesText}=getSpellDescription(card);
+ const {triggerText}=getSpellDescription(card);
  const reactive=['TRAP','PROTECTION'].includes(getSpellType(card));
  const moments=reactive?(card.triggerEffects??card.moments):card.moments;
  return <>
   {triggerText&&<span className="spell-trigger">{triggerText}</span>}
-    {showMoments&&<span className="spell-effects">{card.instability&&<span>◆ Instability first · 1 cube in your room</span>}{moments.map((moment,index)=><MomentChip key={index} moment={moment} target={reactive&&'target' in moment?(moment.target==='BOUND_ROOM'||moment.target==='EVENT_ROOM'?'ROOM':'MODEL'):card.target}/>)}</span>}
-  {rulesText&&<span className="spell-rules">{rulesText}</span>}
+  <span className="spell-target">Target: {SPELL_TARGET_DESCRIPTIONS[card.target]}</span>
+  {showMoments&&<span className="spell-effects">{card.instability&&<span>◆ Instability first · 1 cube in your room</span>}{moments.map((moment,index)=><MomentChip key={index} moment={moment} target={reactive&&'target' in moment?(moment.target==='BOUND_ROOM'||moment.target==='EVENT_ROOM'?'ROOM':'MODEL'):card.target}/>)}</span>}
   {card.enhancement&&<span className="spell-enhancement">⚗ {card.enhancement.text}</span>}
  </>;
 }

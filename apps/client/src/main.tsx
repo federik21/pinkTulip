@@ -51,7 +51,7 @@ function SpellCard({card,label,selected,disabled,onClick,used=false}:{card:Card;
   {card.element&&<span className="spell-element" data-element={card.element} title={`${card.element} symbol`}>{ELEMENT_GLYPHS[card.element]} {card.element}</span>}
   <SpellDescription card={card} showMoments/>
   {used&&<span className="spell-status" data-spell-status="SPENT">Spent</span>}
-  <span className="hint">Range {card.range===Number.POSITIVE_INFINITY?'∞ · ignores line of sight':card.range} · {SPELL_TARGET_DESCRIPTIONS[card.target]} · 1 action to {['TRAP','PROTECTION'].includes(spellType)?'activate':'cast'}{card.powerful?' · Remove after use':''}</span>
+  <span className="hint">Range {card.range===Number.POSITIVE_INFINITY?'∞ · ignores line of sight':card.range} · {SPELL_TARGET_DESCRIPTIONS[card.target]}{card.powerful?' · Remove after use':''}</span>
  </button>;
 }
 

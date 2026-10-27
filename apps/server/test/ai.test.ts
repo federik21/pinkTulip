@@ -137,6 +137,20 @@ describe('blind setup and preparation', () => {
   expect(next(s)).toMatchObject({ type: 'SELECT_STARTING_SCHOOL', schoolId: 'agony' });
     expectCardsConserved(s);
  });
+ it('picks a random valid starting school when the bot must choose', () => {
+  const s = lobby(2, ['p2']);
+  const validSchools = [...s.library].map(deck => deck.id).sort();
+  const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0.99);
+
+  const action = chooseBotAction(s);
+
+  expect(action).toMatchObject({
+   type: 'SELECT_STARTING_SCHOOL',
+   playerId: 'p2',
+  });
+  expect(validSchools).toContain(action!.schoolId);
+  expect(randomSpy).toHaveBeenCalled();
+ });
  it('draws four blind entries using lengths across stocks (including discard refill)', () => {
   const s = lobby(2, ['p1']); s.phase = 'STUDY';
     const stock = s.library[0].cards.splice(0, 3); s.library.push({ id: 'z-school', name: 'Other', cards: stock, discard: [] });

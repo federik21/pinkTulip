@@ -269,10 +269,13 @@ function* candidates(s: GameState): Generator<GameAction> {
  if (s.phase === 'LOBBY') {
   for (const p of s.players.filter(bot)) {
    if (!p.startingSchoolId) {
-    for (const deck of [...s.library].sort((a, b) => compareId(a.id, b.id))) {
-     const reserved = s.players.filter(other => other.id !== p.id && other.startingSchoolId === deck.id).length * STARTING_SCHOOL_CARDS;
-     if (deck.cards.length + deck.discard.length >= reserved + STARTING_SCHOOL_CARDS)
-      yield { type: 'SELECT_STARTING_SCHOOL', playerId: p.id, schoolId: deck.id };
+    const options = [...s.library]
+     .map(deck => ({ deck, reserved: s.players.filter(other => other.id !== p.id && other.startingSchoolId === deck.id).length * STARTING_SCHOOL_CARDS }))
+     .filter(({ deck, reserved }) => deck.cards.length + deck.discard.length >= reserved + STARTING_SCHOOL_CARDS)
+     .map(({ deck }) => deck.id);
+    if (options.length) {
+     const schoolId = options[Math.floor(Math.random() * options.length)];
+     yield { type: 'SELECT_STARTING_SCHOOL', playerId: p.id, schoolId };
     }
    } else if (!p.ready) yield { type: 'SET_READY', playerId: p.id, ready: true };
   }
