@@ -12,8 +12,8 @@ function fixture():GameState {
 
 describe('shared evocation model supplies',()=>{
  it('starts with three Succubi and six Cadavers for the entire game',()=>{
-  expect(EVOCATION_MODEL_LIMITS).toEqual({SUCCUBUS:3,CADAVER:6,COLOSSUS:3});
-  expect(getEvocationSupply(fixture())).toEqual({SUCCUBUS:3,CADAVER:6,COLOSSUS:3});
+  expect(EVOCATION_MODEL_LIMITS).toEqual({SUCCUBUS:3,CADAVER:6,COLOSSUS:3,NIGREDO:3});
+  expect(getEvocationSupply(fixture())).toEqual({SUCCUBUS:3,CADAVER:6,COLOSSUS:3,NIGREDO:3});
  });
  it.each(['SUCCUBUS','CADAVER'] as const)('enforces the global %s supply across different owners',kind=>{
   const s=fixture(),limit=EVOCATION_MODEL_LIMITS[kind];
@@ -27,10 +27,10 @@ describe('shared evocation model supplies',()=>{
  it('keeps the per-mage three-model cap separate from both shared supplies',()=>{
   const s=fixture(),p=s.players[0];
   summonEvocation(s,p,'CADAVER',origin);summonEvocation(s,p,'SUCCUBUS',origin);summonEvocation(s,p,'CADAVER',origin);
-  expect(getEvocationSupply(s)).toEqual({SUCCUBUS:2,CADAVER:4,COLOSSUS:3});
+  expect(getEvocationSupply(s)).toEqual({SUCCUBUS:2,CADAVER:4,COLOSSUS:3,NIGREDO:3});
   expect(summonEvocation(s,p,'SUCCUBUS',origin)).toBeUndefined();
   expect(summonEvocation(s,p,'CADAVER',origin)).toBeUndefined();
-  expect(getEvocationSupply(s)).toEqual({SUCCUBUS:2,CADAVER:4,COLOSSUS:3});
+  expect(getEvocationSupply(s)).toEqual({SUCCUBUS:2,CADAVER:4,COLOSSUS:3,NIGREDO:3});
   expect(summonEvocation(s,s.players[1],'SUCCUBUS',origin)).toBeDefined();
  });
  it.each(['SUCCUBUS','CADAVER'] as const)('returns a destroyed %s to supply for another mage',kind=>{
@@ -52,7 +52,7 @@ describe('shared evocation model supplies',()=>{
   const s=fixture();
   const e=summonEvocation(s,s.players[0],'SUCCUBUS',origin)!;delete e.kind;
   e.name='Renamed servant';
-  expect(getEvocationSupply(s)).toEqual({SUCCUBUS:2,CADAVER:6,COLOSSUS:3});
+  expect(getEvocationSupply(s)).toEqual({SUCCUBUS:2,CADAVER:6,COLOSSUS:3,NIGREDO:3});
   s.evocations=Array.from({length:4},(_,i)=>({...e,id:`legacy-${i}`}));
   expect(getEvocationSupply(s).SUCCUBUS).toBe(0);
  });

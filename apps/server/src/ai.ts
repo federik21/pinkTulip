@@ -1,6 +1,6 @@
 import {
  applyAction, areAdjacent, areInSameRoom, canStartGame, canUseSpellDummy,
- GameRuleError, getDiscardMoveCards, getEvocationSupply, getQuestRewardTargets, getSpellType,
+ GameRuleError, getDiscardMoveCards, getEffectiveSpell, getEvocationSupply, getQuestRewardTargets, getSpellType,
  hexDistance, hexKey, isInStartingRoom, isWithinSpellRange, STARTING_SCHOOL_CARDS,
 } from '@brw/game-engine';
 import type { Card, FeedbackTarget, GameAction, GameState, Hex, Moment, Player, Room } from '@brw/game-engine';
@@ -38,7 +38,8 @@ function cardValue(card: Card): number {
  return steps(card, true).reduce((value, m) => value + (
   m.effect === 'SUMMON' ? 6 : m.effect === 'ACTIVATE_EVOCATION' ? 2 :
   m.effect === 'ASSIGN_UPGRADE' ? 4 : m.effect === 'ACTIVATE_TARGET' ? 3 :
-  m.effect === 'REMOVE_EVOCATION' || m.effect === 'REMOVED_BLAST' ? 0 : m.effect === 'LOOK_LIBRARY' ? 5 :
+  m.effect === 'REMOVE_EVOCATION' || m.effect === 'REMOVED_BLAST' || m.effect === 'MOVE_DAMAGED' || m.effect === 'ATTACK_BONUS' ? 0 : m.effect === 'LOOK_LIBRARY' ? 5 :
+  m.effect === 'ACTIVATE_ROOM' || m.effect === 'ACTIVATE_CHOICE' ? 3 : m.effect === 'LOSE_VP' ? 3 * m.amount :
   m.effect === 'PAIN' ? -2 * m.amount : m.effect === 'DAMAGE' ? 3 * m.amount :
   m.effect === 'INSTABILITY' ? 4 * m.amount : m.amount
  ), 0) + (card.ongoing ? 6 : 0) + (card.trigger ? 4 : 0) + Math.min(card.range, 4);
@@ -77,6 +78,12 @@ function targetValue(s: GameState, p: Player, card: Card, target: FeedbackTarget
    if (m.effect === 'LOOK_LIBRARY') value += 2;
    continue;
   }
+  if (m.effect === 'LOSE_VP') {
+   value += selected.some(t => t.playerId !== p.id && t.kind === 'MAGE') ? 3 * m.amount : 0;
+   continue;
+  }
+  if (m.effect === 'ACTIVATE_ROOM' || m.effect === 'ACTIVATE_CHOICE') { value += 1; continue; }
+  if (m.effect === 'ATTACK_BONUS' || m.effect === 'MOVE_DAMAGED') continue;
   if (m.effect === 'ACTIVATE_EVOCATION') {
    if (getEvocationSupply(s)[m.kind] > 0 && s.evocations.filter(e => e.playerId === p.id).length < 3) value += 1;
    continue;
@@ -222,7 +229,7 @@ function* actionTurn(s: GameState, p: Player): Generator<GameAction> {
    if (!prepared || prepared.used) continue;
    const card = prepared.card;
    if (['TRAP', 'PROTECTION'].includes(getSpellType(card))) spells.push({ action: { type: 'ACTIVATE_SPELL', playerId: p.id, slot }, score: 2 });
-   else for (const choice of targets(s, p, card)) spells.push({ action: { type: 'CAST_SPELL', playerId: p.id, slot, ...choice.target }, score: choice.score });
+   else for (const choice of targets(s, p, getEffectiveSpell(s, p, card))) spells.push({ action: { type: 'CAST_SPELL', playerId: p.id, slot, ...choice.target }, score: choice.score });
   }
   spells.sort((a, b) => b.score - a.score); // Stable ties preserve numbered-before-Quick order.
   for (const spell of spells) if (spell.score > 0) yield spell.action;

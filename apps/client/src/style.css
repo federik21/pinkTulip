@@ -51,7 +51,7 @@
 .hex .rebuilt-badge text{font:800 7px 'DM Sans',sans-serif;fill:#e4f5e9;letter-spacing:.2px}
 @media(max-width:720px){.actions-panel,.evocation-controls{order:-3}.evocations-panel{order:0}.damage-contributions{font-size:9px}}
 .schools{grid-template-columns:repeat(2,minmax(0,1fr));max-width:none}
-.schools button[data-school-id="transmutation"] .school-rune,.spell .heal-effect{color:#86d9c0}
+.schools button[data-school-id="technomancy"] .school-rune,.spell .heal-effect{color:#86d9c0}
 .spell .convert-effect{color:#c4b5fd}
 .spell-type{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:#d3bfdc}
 .spell-type[data-spell-type="COMBAT"]{color:#fb9b91}
@@ -61,7 +61,7 @@
 .spell-trigger{display:block;font-size:11px;font-weight:700;line-height:1.6;color:var(--gold);margin:0 0 8px;padding-bottom:8px;border-bottom:1px solid var(--border)}
 .spell-rules{display:block;font-size:10px;line-height:1.6;color:#ded3e1;margin-bottom:12px}
 .schools{grid-template-columns:repeat(auto-fit,minmax(min(150px,100%),1fr))}
-.schools button[data-school-id="enchantment"] .school-rune{color:#c4b5fd}
+.schools button[data-school-id="alchemy"] .school-rune{color:#c4b5fd}
 .active-spells-panel h2{margin:8px 0 14px;font-size:27px}
 .active-spell{display:flex;flex-direction:column;gap:7px;border:1px solid var(--border);border-left:3px solid var(--mage-color);border-radius:7px;background:#18121f;padding:13px;margin-top:12px}
 .active-spell strong{font-family:'Cormorant Garamond',serif;font-size:23px}
@@ -71,9 +71,9 @@
 .spell-type{display:inline-flex;align-items:center;gap:6px}
 .spell-type .spell-type-icon{font-size:16px;flex-shrink:0}
 .school-icon{display:inline-block;line-height:1}
-.school-icon[data-school-id="cantrip"]{color:var(--gold)}
-.school-icon[data-school-id="transmutation"]{color:#86d9c0}
-.school-icon[data-school-id="enchantment"]{color:#c4b5fd}
+.school-icon[data-school-id="agony"]{color:var(--gold)}
+.school-icon[data-school-id="technomancy"]{color:#86d9c0}
+.school-icon[data-school-id="alchemy"]{color:#c4b5fd}
 .school-icon[data-school-id="forgotten"]{color:#dbb2f4}
 .school-icon[data-school-id="unaligned"]{color:var(--muted)}
 .spell-status{font-size:10px;font-weight:700;letter-spacing:.5px;color:var(--muted);margin-bottom:7px}
@@ -198,3 +198,6 @@ aside .log-panel{position:sticky;top:20px}aside .log{max-height:70vh}
  .players-panel{order:initial}
  .players-panel .player.mage-disclosure{display:block;width:100%;padding:0}
 }.evocation-portrait.big-portrait{font-size:1.6em;width:auto;min-width:2em;height:auto}.hex .evocation-marker.big-evocation .evocation-token-disc{stroke-width:2.2}
+
+.spell-element{display:inline-block;margin-left:.35rem;padding:0 .35rem;border-radius:999px;border:1px solid currentColor;font-size:.75rem}
+.spell-enhancement{display:block;margin-top:.25rem;font-size:.8rem;font-style:italic;color:#d9b45a}

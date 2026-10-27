@@ -10,6 +10,11 @@ function rewardMoment(moment:Moment):string {
   case 'REMOVE_EVOCATION':return 'Remove one of your evocations';
   case 'REMOVED_BLAST':return 'Blast nearby mages';
   case 'LOOK_LIBRARY':return `Look at ${moment.cards} library cards`;
+  case 'LOSE_VP':return `Lose ${moment.amount} VP`;
+  case 'ATTACK_BONUS':return `+${moment.amount} attack`;
+  case 'MOVE_DAMAGED':return `Move a damaged model ${moment.distance}`;
+  case 'ACTIVATE_ROOM':return 'Activate the room effect';
+  case 'ACTIVATE_CHOICE':return 'Activate one of your evocations';
   default:return `${{DAMAGE:'Damage',HEAL:'Heal',CONVERT:'Convert',BLACK_ROSE_CONVERT:'BR convert',INSTABILITY:'Instability',PAIN:'Pain'}[moment.effect]} ${moment.amount}`;
  }
 }
@@ -66,7 +71,7 @@ export function QuickReference({game,me}:{game:GameState;me:Player}) {
   <p>Normal school discards return to their school; forced hand-limit discards are the exception. Whenever a draw pile runs out, shuffle its own discard into a new draw pile and continue drawing. Held cards and permanently removed Forgotten spells never recycle.</p>
   <p><b>Quests:</b> completing an objective keeps the quest unsolved and lights the small notification on the Quests dock icon. During your Action turn, open Quests and resolve its small reward as a <b>free action</b>: no turn action, physical token, spell slot or numbered-spell quota. Finish pending effects first. Gain the quest VP only when solved; solved quests enter the quest discard and reset when drawn again.</p>
   <p>At the end of BR, receive a quest if you have no unsolved quests. Solved quests never prevent a replacement; completed-but-unsolved quests remain available for their free reward.</p>
-  <p><b>Transmutation:</b> 12 spells, 3 copies each. <b>Heal</b> removes wounds and returns their cubes to their owners. A room heal affects every mage and evocation there. <b>Convert</b> swaps other-colored damage cubes on an enemy model, or instability cubes in a room, for your available cubes without changing the total. Damage conversion is ignored on your own mage and evocations, including triggered effects; other spell instructions still resolve. Rebuilt room history cannot be converted.</p>
+  <p><b>Alchemy:</b> 12 spells, 3 copies each. <b>Enhancement</b> adds elemental symbols and lets wild cards satisfy one missing requirement. The current element set is shown on each card; if a card is missing a symbol, wilds can complete it without changing the printed effect. Rebuilt room history cannot be converted.</p>
   <p><b>Spell targets:</b> Self = only your mage; Mage = another mage; Evocation = one evocation; Model = another mage or an evocation; Room = the room and all models there. Only Self spells can directly select your mage, including healing, Protection and ongoing spells. Support may select friendly evocations. Your mage and evocations never take your damage or ordinary damage conversion, including triggered effects. <b>Peak of Agony</b> targets a room within <b>range 2</b>: deal <b>2 damage</b> to enemy models there; then convert your mage’s <b>last 2 damage cubes received from other mages</b> into BR black, returning the colored cubes without changing wounds; then resolve <b>Pain 2</b>. Its explicitly caster-scoped neutral conversion is separate from normal friendly conversion immunity. Neutral Pain and BR events remain neutral damage.</p>
   <p><b>Pain Mark:</b> reacts only when the bound mage deals damage with their own physical attack or spell. Activating or attacking with an evocation, room-effect damage and quest-reward damage never count, even within a physical-action menu.</p>
   <p><b>Spell range:</b> Finite range follows a straight hex line. Infinite range ignores distance and line of sight, allowing any non-starting room or otherwise legal model there. Printed target categories and starting-room protection still apply.</p>

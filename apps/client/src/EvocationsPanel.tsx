@@ -12,7 +12,7 @@ export function targetModels(game:GameState):TargetModel[] {
  ];
 }
 
-const portrait=(e:Evocation)=>getEvocationKind(e)==='COLOSSUS'?'♜':e.archetype==='DEMON'?'♆':'☠';
+const portrait=(e:Evocation)=>getEvocationKind(e)==='COLOSSUS'?'♜':getEvocationKind(e)==='NIGREDO'?'☿':e.archetype==='DEMON'?'♆':'☠';
 type Props={game:GameState;playerId:string;viewerId:string;enabled:boolean;pending:boolean;send:(action:GameAction)=>void};
 
 export function EvocationSupply({game}:{game:GameState}) {
@@ -22,6 +22,7 @@ export function EvocationSupply({game}:{game:GameState}) {
    <span data-evocation-kind="SUCCUBUS">♆ Succubi <b>{supply.SUCCUBUS}/{EVOCATION_MODEL_LIMITS.SUCCUBUS}</b> available</span>
    <span data-evocation-kind="CADAVER">☠ Cadavers <b>{supply.CADAVER}/{EVOCATION_MODEL_LIMITS.CADAVER}</b> available</span>
    <span data-evocation-kind="COLOSSUS">♜ Colossi <b>{supply.COLOSSUS}/{EVOCATION_MODEL_LIMITS.COLOSSUS}</b> available</span>
+   <span data-evocation-kind="NIGREDO">☿ Nigredo <b>{supply.NIGREDO}/{EVOCATION_MODEL_LIMITS.NIGREDO}</b> available</span>
   </div><p className="hint">Destroyed models return to this supply. Each mage may control at most 3 evocations.</p>
   <p className="hint" data-upgrade-supply>Upgrade cards left: {Object.entries(getUpgradeSupply(game)).map(([name,count])=>`${UPGRADE_LABELS[name as keyof typeof UPGRADE_LABELS]} ${count}/3`).join(' · ')}</p>
  </section>;
@@ -39,13 +40,14 @@ export function EvocationsPanel({game,playerId,viewerId,enabled,pending,send}:Pr
   {!evocations.length&&<p>No evocations yet. Activate a Grey room to summon a Cadaver. Each mage may control up to three models; tokens activate existing models, not summon them.</p>}
   {evocations.map(e=><div className={`evocation-card ${e.id===active?.evocationId?'active-model':''}`} style={mageStyle(e.playerId)} data-owned={isOwn} data-owner-id={e.playerId} data-evocation-id={e.id} key={e.id}>
     <strong className="evocation-heading"><span className={`evocation-portrait${getEvocationKind(e)==='COLOSSUS'?' big-portrait':''}`} aria-hidden="true">{portrait(e)}</span><span>{e.name} <span className="evocation-number">#{evocationNumber(game,e)}</span></span></strong>
-   <small>{owner.name} · {e.archetype==='DEMON'?'Demon':'Undead'} · {roomNameAt(game,e.position)}</small>
+   <small>{owner.name} · {e.archetype==='DEMON'?'Demon':e.archetype==='CONSTRUCT'?'Construct':'Undead'} · {roomNameAt(game,e.position)}</small>
   <ModelEffects game={game} viewerId={viewerId} modelId={e.id}/>
    <div className="model-stats"><span>↝ {evocationMovement(e)} movement</span><span>⚔ {evocationAttack(e)} attack</span></div>
    {e.upgrade&&<p className="hint" data-upgrade={e.upgrade}><strong>{UPGRADE_LABELS[e.upgrade]}</strong>: {UPGRADE_RULES[e.upgrade]}</p>}
    <DamageBar game={game} {...e} name={`${owner.name} ${e.name} #${evocationNumber(game,e)}`}/>
     {getEvocationKind(e)==='SUCCUBUS'&&e.passive==='WOUNDED_FURY'&&<p className="hint">Wounded Fury: +1 attack per damage taken.</p>}
     {e.ability==='ENTRY_SHOCK'&&<p className="hint">Entry shock: inflicts 3 damage on each other mage that enters its room.</p>}
+    {e.ability==='ALCHEMY'&&<p className="hint">Alchemy: instead of damaging its target, its controller may place 1 instability or convert 1 cube in its room.</p>}
     <p className="hint">Attack one enemy model in the same room.</p>
    {e.ability==='SOUL_TITHE'&&<div className="soul-tithe"><p className="hint">Soul Tithe: when {owner.name} takes damage, one of those damage cubes may go on this model instead, wherever it stands.</p>
     <label className="auto-switch"><input type="checkbox" role="switch" aria-label={`Auto Soul Tithe for ${e.name} #${evocationNumber(game,e)}`} checked={!!e.autoAbility} disabled={!isOwn||!enabled||pending} onChange={event=>send({type:'SET_EVOCATION_AUTO',playerId:viewerId,evocationId:e.id,auto:event.target.checked})}/><span>Auto <small>{e.autoAbility?'Takes a cube without asking':'Asks before taking a cube'}</small></span></label></div>}

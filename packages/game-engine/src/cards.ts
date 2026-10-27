@@ -1,4 +1,43 @@
-import { Card, EvocationKind, EventCard, LibraryDeck, Moment, MomentEffect, Quest, SpellType, TriggerCondition, UpgradeName } from './types';
+import { Card, Element, EvocationKind, EventCard, GameState, LibraryDeck, Moment, MomentEffect, Player, Quest, SpellType, TriggerCondition, UpgradeName } from './types';
+
+export const ELEMENTS: readonly Element[] = ['air', 'fire', 'water', 'earth', 'evil', 'good', 'stars', 'wild'];
+export const ELEMENT_GLYPHS: Readonly<Record<Element, string>> = { air: '🜁', fire: '🜂', water: '🜄', earth: '🜃', evil: '☠', good: '✚', stars: '★', wild: '✦' };
+
+// Symbols shown by the caster's OTHER revealed spells: prepared spells already resolved this round,
+// except hidden Trap/Protection cards that are still face down.
+export function getRevealedElements(s: Pick<GameState, 'readiedSpells'>, p: Pick<Player, 'id' | 'prepared'>, current: Card): Element[] {
+ const hidden = new Set((s.readiedSpells ?? []).filter(a => a.playerId === p.id).map(a => a.card.id));
+ return Object.values(p.prepared)
+  .filter(x => !!x && x.used && x.card.id !== current.id && !hidden.has(x.card.id))
+  .flatMap(x => x!.card.element ? [x!.card.element] : []);
+}
+
+// Wild symbols stand in for any single missing symbol.
+export function meetsEnhancement(requires: Element[], shown: Element[]): boolean {
+ const have = (e: Element) => shown.filter(x => x === e).length;
+ const wilds = have('wild');
+ let missing = 0;
+ for (const e of new Set(requires)) missing += Math.max(0, requires.filter(r => r === e).length - (e === 'wild' ? 0 : have(e)));
+ return missing <= wilds;
+}
+
+export function isEnhanced(s: Pick<GameState, 'readiedSpells'>, p: Pick<Player, 'id' | 'prepared'>, card: Card): boolean {
+ return !!card.enhancement && meetsEnhancement(card.enhancement.requires, getRevealedElements(s, p, card));
+}
+
+// The card as it resolves: with the enhancement merged in when its condition is met.
+export function getEffectiveSpell(s: Pick<GameState, 'readiedSpells'>, p: Pick<Player, 'id' | 'prepared'>, card: Card): Card {
+ if (!card.enhancement || !isEnhanced(s, p, card)) return card;
+ const { enhancement, ...rest } = card;
+ const extra = enhancement.moments ?? [];
+ return {
+  ...rest,
+  moments: enhancement.position === 'AFTER' ? [...card.moments, ...extra] : [...extra, ...card.moments],
+  target: enhancement.target ?? card.target,
+  range: enhancement.range ?? card.range,
+  ...(enhancement.suppressReactions ? { suppressReactions: true } : {}),
+ };
+}
 
 const peakOfAgonyMoments=():Moment[]=>[
  {effect:'DAMAGE',amount:2},
@@ -33,11 +72,11 @@ export const moment = {
 };
 
 export const momentTotal = (card: Pick<Card, 'moments'>, effect: MomentEffect): number =>
- card.moments.reduce((total, m) => (m.effect === effect && 'amount' in m) ? total + m.amount : total, 0);
+ card.moments.reduce((total, m) => (m.effect === effect && 'amount' in m) ? total + (m.amount ?? 0) : total, 0);
 export const hasMoment = (card: Pick<Card, 'moments'>, effect: MomentEffect): boolean => momentTotal(card, effect) > 0;
 
 export function getSpellType(card:Card):SpellType {
- return card.spellType ?? (card.moments.some(m => m.effect !== 'HEAL' && 'amount' in m && m.amount > 0) ? 'COMBAT' : 'CONTINGENCY');
+ return card.spellType ?? (card.moments.some(m => m.effect !== 'HEAL' && 'amount' in m && (m.amount ?? 0) > 0) ? 'COMBAT' : 'CONTINGENCY');
 }
 
 // Generic fallback copy deliberately avoids inventing a binding, range or effect.
@@ -137,6 +176,9 @@ export const shuffle = <T>(items: T[], random:()=>number = Math.random): T[] => 
  return result;
 };
 
+const AGONY_ELEMENTS: Element[] = ['evil', 'fire', 'stars', 'water', 'fire', 'evil', 'wild', 'earth', 'good', 'evil', 'air', 'water'];
+const TECHNOMANCY_ELEMENTS: Element[] = ['earth', 'water', 'air', 'stars', 'fire', 'evil', 'earth', 'wild', 'good', 'stars', 'air', 'fire'];
+
 export function createAgonyDeck(prefix: string, schoolId?: string): Card[] {
  const patterns: Omit<Card, 'id' | 'kind'>[] = [
   { name: 'Shared Torture', moments: [moment.damage(4), moment.convert(1), moment.pain(3)], range: 1, target: 'MODEL' },
@@ -167,7 +209,7 @@ export function createAgonyDeck(prefix: string, schoolId?: string): Card[] {
    ongoing:{trigger:{event:'VP_CHANGED',relation:'ANY',scope:'BOUND_MODEL'},effects:[{effect:'DAMAGE',amount:2,target:'EVENT_MODEL'}]} },
   { name: 'Hearth of Ice', moments: [moment.damage(3), moment.convert(2), moment.pain(2)], range: 2, target: 'MODEL' },
  ];
- return Array.from({ length: 36 }, (_, i) => ({ ...patterns[i % patterns.length], id: `${prefix}-${i + 1}`, kind: 'SPELL', ...(schoolId ? {schoolId} : {}) }));
+ return Array.from({ length: 36 }, (_, i) => ({ ...patterns[i % patterns.length], element: AGONY_ELEMENTS[i % patterns.length], id: `${prefix}-${i + 1}`, kind: 'SPELL', ...(schoolId ? {schoolId} : {}) }));
 }
 
 
@@ -202,6 +244,52 @@ export function createTechnomancyDeck(prefix: string, schoolId?: string): Card[]
    rulesText: 'When another mage enters a room at range 2 and in line of sight, choose an evocation at range 2 from that mage. It activates under your control.',
    trigger: { event: 'ENTER_ROOM', relation: 'ENEMY', scope: 'ANY' } },
  ];
+ return Array.from({ length: 36 }, (_, i) => ({ ...patterns[i % patterns.length], element: TECHNOMANCY_ELEMENTS[i % patterns.length], id: `${prefix}-${i + 1}`, kind: 'SPELL', ...(schoolId ? {schoolId} : {}) }));
+}
+
+export function createAlchemyDeck(prefix: string, schoolId?: string): Card[] {
+ const m = moment;
+ const patterns: Omit<Card, 'id' | 'kind'>[] = [
+  { name: 'Azoth Bomb', element: 'air', spellType: 'COMBAT', range: 3, target: 'ROOM', moments: [m.damage(2)],
+   enhancement: { requires: ['water', 'water'], moments: [m.damage(2)], position: 'BEFORE', text: 'Enhancement (2 water symbols): first inflict 2 damage.' },
+   rulesText: 'Inflict 2 damage on every enemy model in the target room.' },
+  { name: 'Viatorium Spagyricum', element: 'water', instability: true, spellType: 'COMBAT', range: 0, target: 'MODEL', targetFilter: { sameRoom: true }, moments: [m.damage(2)],
+   enhancement: { requires: ['fire', 'water'], moments: [m.damage(3)], position: 'BEFORE', text: 'Enhancement (fire and water): first inflict 3 damage.' },
+   rulesText: 'Target a model in your room and inflict 2 damage.' },
+  { name: 'Deflagrate', element: 'water', spellType: 'COMBAT', range: 2, target: 'MODEL', moments: [m.damage(2), { effect: 'MOVE_DAMAGED', distance: 1 }],
+   enhancement: { requires: ['earth', 'earth'], target: 'ROOM', range: 2, text: 'Enhancement (2 earth symbols): the target becomes a room at range 2.' },
+   rulesText: 'Inflict 2 damage, then move one model that suffered damage from this effect up to 1.' },
+  { name: 'Athanor Eruption', element: 'fire', spellType: 'COMBAT', range: 1, target: 'MODEL', moments: [m.damage(3)],
+   enhancement: { requires: ['air', 'earth'], moments: [m.damage(1)], position: 'BEFORE', suppressReactions: true, text: 'Enhancement (air and earth): first inflict 1 damage; Traps and Protections will not trigger during this spell.' },
+   rulesText: 'Inflict 3 damage.' },
+  { name: 'Marbling', element: 'earth', spellType: 'COMBAT', range: 0, target: 'SELF', moments: [{ effect: 'DAMAGE', amount: 1, scope: 'ALL_MAGES' }],
+   enhancement: { requires: ['fire', 'fire'], moments: [{ effect: 'DAMAGE', amount: 1, scope: 'ALL_MAGES' }], position: 'BEFORE', text: 'Enhancement (2 fire symbols): first inflict 1 damage to each mage.' },
+   rulesText: 'Inflict 1 damage to each mage.' },
+  { name: 'Stone Phoenix', element: 'earth', spellType: 'TRAP', range: Number.POSITIVE_INFINITY, target: 'ROOM', moments: [],
+   triggerText: 'When one of your evocations is defeated or removed',
+   rulesText: 'Summon a Nigredo in the room where it was lost.',
+   trigger: { event: 'EVOCATION_LOST', relation: 'SELF', relationTo: 'EVENT_MODEL', scope: 'ANY' }, triggerTarget: 'EVENT_ROOM',
+   triggerEffects: [{ effect: 'SUMMON', kind: 'NIGREDO', position: 'TARGET', target: 'EVENT_ROOM' }] },
+  { name: 'Soul Transfer', element: 'wild', spellType: 'CONTINGENCY', range: Number.POSITIVE_INFINITY, target: 'EVOCATION', targetFilter: { own: true, archetype: 'CONSTRUCT' }, moments: [{ effect: 'ACTIVATE_ROOM' }],
+   rulesText: 'Choose one of your constructs. Activate the room it stands in, even if the room was already used this round. Not the central chamber.' },
+  { name: 'Liquid Fire', element: 'fire', instability: true, spellType: 'COMBAT', range: Number.POSITIVE_INFINITY, target: 'EVOCATION', targetFilter: { own: true }, moments: [{ effect: 'REMOVE_EVOCATION', chosen: true }, m.ifRemoved({ effect: 'REMOVED_BLAST', amount: 2, models: true })],
+   enhancement: { requires: ['air', 'water'], moments: [m.ifRemoved({ effect: 'DAMAGE', amount: 1, scope: 'DAMAGED' })], position: 'AFTER', text: 'Enhancement (air and water): then inflict 1 damage to each model that suffered damage from this effect.' },
+   rulesText: 'Remove the target evocation (yours). If you do, inflict 2 damage to every model in its room and up to 1 room away.' },
+  { name: 'Fountain of the Three', element: 'earth', spellType: 'CONTINGENCY', range: 1, target: 'EVOCATION', targetFilter: { maxHealth: 2 }, moments: [{ effect: 'REMOVE_EVOCATION', chosen: true }, m.ifRemoved({ effect: 'SUMMON', kind: 'NIGREDO', position: 'CHOICE' })],
+   enhancement: { requires: ['water', 'fire'], moments: [{ effect: 'ACTIVATE_CHOICE', archetype: 'CONSTRUCT', attackBonus: 1 }], position: 'AFTER', text: 'Enhancement (water and fire): then choose one of your constructs; it activates with +1 attack.' },
+   rulesText: 'Target an evocation with less than 3 health. Remove it. If you do, summon a Nigredo in a room of your choice.' },
+  { name: 'Purifying Aludel', element: 'air', instability: true, spellType: 'CONTINGENCY', range: Number.POSITIVE_INFINITY, target: 'EVOCATION', moments: [m.heal(3), m.activateTarget()],
+   enhancement: { requires: ['water', 'earth'], moments: [{ effect: 'ATTACK_BONUS', amount: 2 }], position: 'BEFORE', text: 'Enhancement (water and earth): the next time the target activates it has +2 attack.' },
+   rulesText: 'Heal 3 on the target evocation, then activate it.' },
+  { name: 'Albify', element: 'water', instability: true, spellType: 'COMBAT', range: 1, target: 'MAGE', moments: [m.convert(4)],
+   enhancement: { requires: ['air', 'air'], moments: [{ effect: 'LOSE_VP', amount: 2 }], position: 'BEFORE', text: 'Enhancement (2 air symbols): the target loses 2 victory points.' },
+   rulesText: 'Convert 4 damage on the target mage.' },
+  { name: 'Silver of the Sages', element: 'wild', instability: true, spellType: 'PROTECTION', range: Number.POSITIVE_INFINITY, target: 'SELF', moments: [],
+   triggerText: 'When you suffer damage',
+   rulesText: 'Ignore up to 2 of that damage. Then activate one of your evocations; when the activation ends the Black Rose inflicts 1 damage on it.',
+   trigger: { event: 'DAMAGE_TAKEN', relation: 'SELF', relationTo: 'EVENT_MODEL', scope: 'BOUND_MODEL' },
+   triggerEffects: [{ effect: 'HEAL', amount: 2, target: 'EVENT_MODEL' }, { effect: 'ACTIVATE_CHOICE', endDamage: 1, target: 'OWNER' }] },
+ ];
  return Array.from({ length: 36 }, (_, i) => ({ ...patterns[i % patterns.length], id: `${prefix}-${i + 1}`, kind: 'SPELL', ...(schoolId ? {schoolId} : {}) }));
 }
 
@@ -209,6 +297,7 @@ export function createLibrary(): LibraryDeck[] {
  return [
   { id: 'agony', name: 'Agony', cards: shuffle(createAgonyDeck('agony', 'agony')), discard: [] },
   { id: 'technomancy', name: 'Technomancy', cards: shuffle(createTechnomancyDeck('technomancy', 'technomancy')), discard: [] },
+  { id: 'alchemy', name: 'Alchemy', cards: shuffle(createAlchemyDeck('alchemy', 'alchemy')), discard: [] },
  ];
 }
 

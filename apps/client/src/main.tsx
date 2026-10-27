@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ACTIONS_PER_TURN, getSpellType, getDiscardMoveCards, canUseSpellDummy, spellCanTargetModel, upgradeLegacyCards, Card, GameAction, GameState, Player, Room, MAX_MAGES, MIN_MAGES, ROOM_COLORS, ROOM_EFFECT_LABELS, isInStartingRoom, isWithinSpellRange, mustLeaveCell, hexDistance, hexKey } from '@brw/game-engine';
+import { ACTIONS_PER_TURN, ELEMENT_GLYPHS, getEffectiveSpell, spellFilterAllows, spellReaches, getSpellType, getDiscardMoveCards, canUseSpellDummy, spellCanTargetModel, upgradeLegacyCards, Card, GameAction, GameState, Player, Room, MAX_MAGES, MIN_MAGES, ROOM_COLORS, ROOM_EFFECT_LABELS, isInStartingRoom, isWithinSpellRange, mustLeaveCell, hexDistance, hexKey } from '@brw/game-engine';
 import { ActiveEvocationControls, EvocationSupply, EvocationsPanel, targetModels } from './EvocationsPanel';
 import { PhysicalActionsPanel, PhysicalBannerActions } from './PhysicalActionsPanel';
 import { useBoardZoom, ZoomControls } from './BoardZoom';
@@ -48,6 +48,7 @@ function SpellCard({card,label,selected,disabled,onClick,used=false}:{card:Card;
   <span className="eyebrow">{label??'Spell'} · {SPELL_TARGET_LABELS[card.target]}</span>
   <span className="spell-type" data-spell-type={spellType}><SpellTypeIcon type={spellType}/><span>{SPELL_TYPE_LABELS[spellType]}{card.ongoing?' · Ongoing':''}</span></span>
   <strong>{card.name}</strong><span className="spell-rune"><SchoolIcon schoolId={card.schoolId} powerful={card.powerful}/></span>
+  {card.element&&<span className="spell-element" data-element={card.element} title={`${card.element} symbol`}>{ELEMENT_GLYPHS[card.element]} {card.element}</span>}
   <SpellDescription card={card} showMoments/>
   {used&&<span className="spell-status" data-spell-status="SPENT">Spent</span>}
   <span className="hint">Range {card.range===Number.POSITIVE_INFINITY?'∞ · ignores line of sight':card.range} · {SPELL_TARGET_DESCRIPTIONS[card.target]} · 1 action to {['TRAP','PROTECTION'].includes(spellType)?'activate':'cast'}{card.powerful?' · Remove after use':''}</span>
@@ -232,13 +233,15 @@ function App() {
   openQuickControls('evocations');
  };
  const powerfulCards=me.hand.filter(c=>c.powerful);
- const spell=active?.physicalAction?null:selectedSlot?me.prepared[selectedSlot]?.card:null;
+ const printedSpell=active?.physicalAction?null:selectedSlot?me.prepared[selectedSlot]?.card:null;
+ // Enhancements change targeting only when the other revealed spells show the symbols.
+ const spell=printedSpell?(['TRAP','PROTECTION'].includes(getSpellType(printedSpell))?printedSpell:getEffectiveSpell(game,me,printedSpell)):null;
  const activatingSpell=!!spell&&['TRAP','PROTECTION'].includes(getSpellType(spell));
  const nextSlot=(['slot1','slot2','slot3'] as Slot[]).find(key=>me.prepared[key]&&!me.prepared[key]!.used);
- const spellModelsInRoom=(room:Room)=>!spell||room.startingFor||inStart?[]:targetModels(game).filter(t=>spellCanTargetModel(spell,me.id,t.playerId,t.evocation?'EVOCATION':'MAGE')&&room.tiles.some(h=>hexKey(h)===hexKey(t.position))&&isWithinSpellRange(me.wizard.position,t.position,spell.range));
+ const spellModelsInRoom=(room:Room)=>!spell||room.startingFor||inStart?[]:targetModels(game).filter(t=>spellCanTargetModel(spell,me.id,t.playerId,t.evocation?'EVOCATION':'MAGE')&&spellFilterAllows(spell,me.id,{playerId:t.playerId,evocation:game.evocations.find(e=>e.id===t.id)})&&room.tiles.some(h=>hexKey(h)===hexKey(t.position))&&spellReaches(game,spell,me.wizard.position,t.position));
  const canTarget=(room:Room)=>{
   if(!spell||activatingSpell||room.startingFor||inStart)return false;
-  if(spell.target==='ROOM'||dummy&&canUseSpellDummy(spell))return room.tiles.some(h=>isWithinSpellRange(me.wizard.position,h,spell.range));
+  if(spell.target==='ROOM'||dummy&&canUseSpellDummy(spell))return room.tiles.some(h=>spellReaches(game,spell,me.wizard.position,h));
   return spellModelsInRoom(room).length>0;
  };
  const room=game.board.rooms.find(r=>r.id===selectedRoom);

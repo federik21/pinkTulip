@@ -6,6 +6,7 @@ export type SpellTarget = 'SELF' | 'ROOM' | 'MAGE' | 'EVOCATION' | 'MODEL';
 export type SpellType = 'COMBAT' | 'CONTINGENCY' | 'TRAP' | 'PROTECTION';
 export type TriggerEvent = 'ENTER_ROOM' | 'DAMAGE_TAKEN' | 'DAMAGE_DEALT' | 'SPELL_CAST' | 'ROOM_ACTIVATED' | 'EVOCATION_ACTIVATED' | 'MAGE_ATTACK' | 'EVOCATION_ATTACK' | 'QUEST_SOLVED' | 'MAGE_DEFEATED' | 'VP_CHANGED' | 'EVOCATION_LOST';
 export type UpgradeName = 'CEREBRAL_IMPLANT' | 'CORROSIVE_PLASMA' | 'MUSCULAR_IMPLANT' | 'REGENERATING_ICHOR' | 'REINFORCED_DERMIS' | 'TENDON_IMPLANT';
+export type Element = 'air' | 'fire' | 'water' | 'earth' | 'evil' | 'good' | 'stars' | 'wild';
 export type DamageOrigin = 'MAGE_PHYSICAL' | 'SPELL' | 'EVOCATION' | 'ROOM' | 'QUEST' | 'NEUTRAL';
 export type FeedbackTarget = { kind: 'MAGE' | 'EVOCATION' | 'ROOM'; id: string; name: string; roomId?: string };
 export type GameFeedbackEvent = { id: string; round: number; interruptId?: string } & (
@@ -34,21 +35,37 @@ export type Moment = (
  | { effect: 'BLACK_ROSE_CONVERT'; amount: number }
  | { effect: 'INSTABILITY'; amount: number }
  | { effect: 'PAIN'; amount: number }
- | { effect: 'SUMMON'; kind: EvocationKind | 'EVENT_MODEL'; position?: 'CASTER' | 'TARGET' | 'EVENT' | 'REMOVED' }
+ | { effect: 'SUMMON'; kind: EvocationKind | 'EVENT_MODEL'; position?: 'CASTER' | 'TARGET' | 'EVENT' | 'REMOVED' | 'CHOICE' }
+ // The target loses victory points (never below zero).
+ | { effect: 'LOSE_VP'; amount: number }
+ // The chosen evocation gets +attack on its next activation.
+ | { effect: 'ATTACK_BONUS'; amount: number }
+ // The caster moves one model damaged by this effect up to `distance` spaces.
+ | { effect: 'MOVE_DAMAGED'; distance: number }
+ // Activates the room effect where the chosen (own) evocation stands, even if used; never the central or violet room.
+ | { effect: 'ACTIVATE_ROOM' }
+ // The owner chooses one of their evocations to activate; optional bonus attack and damage inflicted by the Black Rose when it ends.
+ | { effect: 'ACTIVATE_CHOICE'; archetype?: 'CONSTRUCT'; attackBonus?: number; endDamage?: number }
  | { effect: 'ACTIVATE_EVOCATION'; kind: EvocationKind }
  // Activates the chosen evocation under the caster's control (borrowed if it belongs to another mage).
  | { effect: 'ACTIVATE_TARGET' }
  | { effect: 'ASSIGN_UPGRADE'; upgrade: UpgradeName | 'RANDOM'; to?: 'SUMMONED' }
  // The caster may remove one of their evocations standing in the chosen model's room.
- | { effect: 'REMOVE_EVOCATION'; archetype?: 'UNDEAD' }
+ | { effect: 'REMOVE_EVOCATION'; archetype?: 'UNDEAD'; chosen?: boolean }
  // Damage equal to the removed model's attack to every mage in its room and adjacent rooms.
- | { effect: 'REMOVED_BLAST' }
+ // Fixed `amount` and `models` (evocations too) override the removed model's attack / mages-only default.
+ | { effect: 'REMOVED_BLAST'; amount?: number; models?: boolean }
  | { effect: 'LOOK_LIBRARY'; cards: number }
-) & { scope?: 'CASTER' | 'CASTER_ROOM' | 'TARGET_ROOM'; when?: MomentCondition; area?: { range: number } };
+) & { scope?: 'CASTER' | 'CASTER_ROOM' | 'TARGET_ROOM' | 'ALL_MAGES' | 'DAMAGED'; when?: MomentCondition; area?: { range: number } };
 export type MomentEffect = Moment['effect'];
 export type TriggeredInstruction = Moment & { target: 'BOUND_MODEL' | 'BOUND_ROOM' | 'EVENT_MODEL' | 'EVENT_ACTOR' | 'EVENT_ROOM' | 'OWNER' };
+// Enhancement: if the caster's other revealed spells show `requires` symbols, the
+// enhancement moments are added (before or after the printed ones) and may override the target.
+export type Enhancement = { requires: Element[]; moments?: Moment[]; position?: 'BEFORE' | 'AFTER'; target?: SpellTarget; range?: number; suppressReactions?: boolean; text: string };
+// Extra printed restrictions on the chosen model.
+export type TargetFilter = { own?: boolean; archetype?: 'CONSTRUCT'; maxHealth?: number; sameRoom?: boolean };
 // triggerText is optional display copy only; trigger conditions govern matching.
-export type Card = { id: string; name: string; kind: 'SPELL'; moments: Moment[]; range: number; target: SpellTarget; schoolId?: string; powerful?: boolean; instability?: boolean; spellType?: SpellType; triggerText?: string; rulesText?: string; trigger?: TriggerCondition; triggerTarget?: 'EVENT_MODEL' | 'EVENT_ACTOR' | 'EVENT_ROOM'; triggerSight?: number; targetFrom?: 'EVENT_MODEL'; triggerEffects?: TriggeredInstruction[]; ongoing?: { trigger: TriggerCondition; effects: TriggeredInstruction[] } };
+export type Card = { id: string; name: string; kind: 'SPELL'; moments: Moment[]; range: number; target: SpellTarget; element?: Element; enhancement?: Enhancement; targetFilter?: TargetFilter; suppressReactions?: boolean; schoolId?: string; powerful?: boolean; instability?: boolean; spellType?: SpellType; triggerText?: string; rulesText?: string; trigger?: TriggerCondition; triggerTarget?: 'EVENT_MODEL' | 'EVENT_ACTOR' | 'EVENT_ROOM'; triggerSight?: number; targetFrom?: 'EVENT_MODEL'; triggerEffects?: TriggeredInstruction[]; ongoing?: { trigger: TriggerCondition; effects: TriggeredInstruction[] } };
 export type ActiveSpell = { id: string; playerId: string; card: Card; targetPlayerId?: string; targetEvocationId?: string; roomId?: string; cleanupDestination?: 'HAND' | 'MEMORIES' };
 export type RoomColor = 'crimson' | 'azure' | 'emerald' | 'amber' | 'violet' | 'grey';
 export type RoomEffect = 'ROOM_DAMAGE' | 'DRAW_DISCARD' | 'INSTABILITY' | 'DRAW_QUEST' | 'DRAW_GRIMOIRE' | 'SUMMON_CADAVER' | 'DRAW_POWERFUL' | 'FIRST_PLAYER';
@@ -62,11 +79,11 @@ export type PreparedCard = { card: Card; used: boolean };
 export type PreparedCards = { rapid: PreparedCard | null; slot1: PreparedCard | null; slot2: PreparedCard | null; slot3: PreparedCard | null };
 // health is the authoritative maximum HP; damageCubes tracks current wounds.
 export type Wizard = { id: string; playerId: PlayerId; health: number; attack: number; movement: number; damageCubes: number; blackDamage: number; damageByPlayer: Record<PlayerId, number>; damageOrder: PlayerId[]; position: Hex; startingRoomId: RoomId; alive: boolean };
-export type EvocationKind = 'CADAVER' | 'SUCCUBUS' | 'COLOSSUS';
+export type EvocationKind = 'CADAVER' | 'SUCCUBUS' | 'COLOSSUS' | 'NIGREDO';
 export type Evocation = {
  // At most one attached upgrade; health already includes its bonus.
  upgrade?: UpgradeName;
- id: string; playerId: PlayerId; name: string; archetype: 'UNDEAD' | 'DEMON'; movement: number; attack: number; health: number;
+ id: string; playerId: PlayerId; name: string; archetype: 'UNDEAD' | 'DEMON' | 'CONSTRUCT'; movement: number; attack: number; health: number;
  // Optional for snapshots predating finite model supplies; infer from archetype.
  kind?: EvocationKind;
  // Owner-local model slot, stable for its lifetime; optional for legacy states.
@@ -74,7 +91,9 @@ export type Evocation = {
  passive?: 'WOUNDED_FURY'; position: Hex; damageCubes: number; damageByPlayer: Record<PlayerId, number>; activated: boolean;
  // Triggered ability. SOUL_TITHE: when the owner's mage takes damage, one of those
  // damage cubes may go on this model instead. autoAbility skips the owner's prompt.
- ability?: 'SOUL_TITHE' | 'ENTRY_SHOCK'; autoAbility?: boolean;
+ ability?: 'SOUL_TITHE' | 'ENTRY_SHOCK' | 'ALCHEMY'; autoAbility?: boolean;
+ // Extra attack on the next/current activation only; cleared when that activation ends.
+ bonusAttack?: number;
 };
 // A root action paused until a mage answers. `resume` is server-private: the
 // original action and the answers given so far, replayed once the next answer arrives.
@@ -97,6 +116,8 @@ export type EvocationActivation = {
  evocationId: string; playerId: PlayerId; movesRemaining: number; returnToAction: boolean;
  // Omitted in older snapshots means the attack has not been used yet.
  attackUsed?: boolean;
+ // Damage the Black Rose inflicts on the evocation when this activation ends.
+ endDamage?: number;
  // Borrowed: playerId controls a model owned by this mage. Tendon: free Black Rose movement.
  borrowedFrom?: PlayerId; tendon?: boolean;
  // A spell may grant control outside its owner's turn, even during another
