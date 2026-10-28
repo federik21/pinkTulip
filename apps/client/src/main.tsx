@@ -319,10 +319,10 @@ function App() {
     spells={spellControls}
      evocations={<>
       {game.phase==='EVOCATION'&&<section className="evocation-phase"><span className="eyebrow">After the mages act</span><h2>Evocation phase</h2><p>{game.currentPlayerId===me.id?'Choose an unused evocation from your retinue.':`${game.players.find(p=>p.id===game.currentPlayerId)?.name} is controlling their evocations.`} Each model activates once. Move and attack in either order, or use only one; attacks target an enemy in the same room. Active controls are in the top banner.</p></section>}
-      <EvocationSupply game={game}/>
       <EvocationsPanel game={game} playerId={me.id} viewerId={me.id} enabled={enabled} pending={pending} send={send}/>
       <div className="opponent-retinue-toggles" role="group" aria-label="Opponent retinues">{game.players.filter(p=>p.id!==me.id).map(p=><button key={p.id} className="mini-toggle" aria-label={`${retinueVisible[p.id]?'Hide':'Show'} evocations for ${p.name} (${game.evocations.filter(e=>e.playerId===p.id).length})`} aria-expanded={!!retinueVisible[p.id]} aria-controls={`retinue-${p.id}`} onClick={()=>toggleRetinue(p.id)}>{retinueVisible[p.id]?'Hide':'Show'} {p.name} evocations ({game.evocations.filter(e=>e.playerId===p.id).length})</button>)}</div>
       {game.players.filter(p=>p.id!==me.id).map(p=><div key={p.id} hidden={!retinueVisible[p.id]}><EvocationsPanel game={game} playerId={p.id} viewerId={me.id} enabled={enabled} pending={pending} send={send}/></div>)}
+      <EvocationSupply game={game}/>
      </>}
     quests={<QuestsPanel game={game} me={me} disabled={!enabled||pending} send={send}/>}
     />
