@@ -307,7 +307,7 @@ describe('trigger feedback follows reveal and instruction chronology', () => {
   expect(JSON.stringify(events(result))).not.toMatch(/triggerEffects|rulesText|schoolId|targetPlayerId|targetEvocationId/);
   expect(JSON.stringify(events(result))).not.toContain(active.card.id); conserved(result);
  });
- it('prioritizes a bound model over its incidental armed room and uses its current public location', () => {
+ it('prioritizes a target model over its incidental armed room and uses its current public location', () => {
   let s = fixture(); const e = evoc(s); s = arm(s, "Servant's Safeguard", 'p1', { targetEvocationId:e.id });
   s.evocations[0].position = { q:1, r:0 }; player(s, 'p3').wizard.position = { q:1, r:0 }; turn(s, 'p3');
   const result = applyAction(s, { type:'PUNCH', playerId:'p3', targetId:e.id });
@@ -359,7 +359,7 @@ describe('trigger feedback follows reveal and instruction chronology', () => {
   expect(player(result).cubes).toEqual({available:24,onWizard:1,onBoard:0,onEvocations:0});
   expect(player(result,'p2').cubes.available).toBe(25);expect(s).toEqual(before);
   expect(outer.effects).toEqual(['Deal 2 damage to the triggering model.','Convert up to 1 cube on the owner’s mage to the owner’s color.','Heal up to 1 wound on the owner’s mage.']);
-  expect(inner.effects).toEqual(['Heal up to 1 wound on the bound model.','Deal 1 damage to the acting model.']);
+  expect(inner.effects).toEqual(['Heal up to 1 wound on the target model.','Deal 1 damage to the acting model.']);
   const returned=applyAction(result,{type:'EXPLORE_STEP',playerId:'p2',destination:{q:0,r:0}});
   const punched=applyAction(returned,{type:'PUNCH',playerId:'p2',targetId:'p1'});
   expect(events(punched).at(-1)).toMatchObject({kind:'DAMAGE',sourceId:'p2'});expect(events(punched).at(-1)).not.toHaveProperty('interruptId');
@@ -391,7 +391,7 @@ describe('trigger feedback follows reveal and instruction chronology', () => {
   let s=fixture();wound(s,'p2',{p3:3});s=arm(s,'Runic Remedy','p1',{targetPlayerId:'p2'});
   room(s).effect='DRAW_DISCARD';turn(s,'p2');s=applyAction(s,{type:'EXPLORE',playerId:'p2',activateRoomAtStart:true});
   const trigger=ofKind(s,'SPELL_TRIGGERED')[0];
-  expect(trigger).toMatchObject({ongoing:true,effects:['Heal up to 1 wound on the bound model.']});
+  expect(trigger).toMatchObject({ongoing:true,effects:['Heal up to 1 wound on the target model.']});
   expect(events(s).map(event=>[event.kind,event.interruptId])).toEqual([['HEAL',undefined],['SPELL_TRIGGERED',undefined],['HEAL',trigger.id]]);
   expect(ofKind(s,'HEAL').every(event=>event.sourceId==='p1'&&event.amount===1&&event.target.id==='p2'&&event.target.roomId===center)).toBe(true);conserved(s);
  });
@@ -407,13 +407,13 @@ describe('trigger feedback follows reveal and instruction chronology', () => {
   expect(ofKind(s, 'SPELL_TRIGGERED')).toHaveLength(2); expect(ofKind(s, 'SPELL_TRIGGERED').every(e => e.ongoing && e.activeSpellId === active.id)).toBe(true);
   expect(s.ongoingSpells).toHaveLength(1); conserved(s);
  });
- it.each(['MAGE', 'EVOCATION'] as const)('does not call lethal bound-%s expiry a trigger', kind => {
+ it.each(['MAGE', 'EVOCATION'] as const)('does not call lethal target-%s expiry a trigger', kind => {
   let s = fixture(); const e = kind === 'EVOCATION' ? evoc(s, 2) : undefined;
   if (!e) player(s, 'p2').wizard.health = 2;
   s = arm(s, e ? "Servant's Safeguard" : 'Mending Ward', 'p1', e ? { targetEvocationId:e.id } : { targetPlayerId:'p2' }); turn(s);
   const result = applyAction(s, { type:'PUNCH', playerId:'p1', targetId:e?.id ?? 'p2' });
   expect(result.readiedSpells).toEqual([]); expect(ofKind(result, 'SPELL_TRIGGERED')).toEqual([]);
-  expect(result.log.some(l => l.includes('expires with its bound model'))).toBe(true); conserved(result);
+  expect(result.log.some(l => l.includes('expires with its target model'))).toBe(true); conserved(result);
  });
  it.each(['MAGE', 'EVOCATION'] as const)('retains the actual lethal event %s and origin room for room-bound reactions', kind => {
   let s = fixture(); const e = kind === 'EVOCATION' ? evoc(s, 1) : undefined;

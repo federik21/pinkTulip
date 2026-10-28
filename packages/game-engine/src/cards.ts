@@ -48,7 +48,7 @@ const peakOfAgonyMoments=():Moment[]=>[
  {effect:'PAIN',amount:2},
 ];
 const peakOfAgonyRules='';
-const painMarkRules='Ongoing: inflict 2 damage on the bound model whenever it deals damage with its own mage physical attack or spell. Evocation attacks, room effects and quest rewards do not trigger Pain Mark.';
+const painMarkRules='Ongoing: inflict 2 damage on the target model whenever it deals damage with its own mage physical attack or spell. Evocation attacks, room effects and quest rewards do not trigger Pain Mark.';
 const liquefyThePainEffects=():NonNullable<Card['triggerEffects']>=>[
  {effect:'SUMMON',kind:'SUCCUBUS',position:'TARGET',target:'EVENT_ROOM'},
  {effect:'ACTIVATE_EVOCATION',kind:'SUCCUBUS',target:'EVENT_ROOM'},
@@ -193,6 +193,7 @@ export const shuffle = <T>(items: T[], random:()=>number = Math.random): T[] => 
  return result;
 };
 
+// TODO: those are placeholders
 const AGONY_ELEMENTS: Element[] = ['evil', 'fire', 'stars', 'water', 'fire', 'evil', 'wild', 'earth', 'good', 'evil', 'air', 'water'];
 const TECHNOMANCY_ELEMENTS: Element[] = ['earth', 'water', 'air', 'stars', 'fire', 'evil', 'earth', 'wild', 'good', 'stars', 'air', 'fire'];
 
@@ -329,9 +330,25 @@ export function createPowerfulDeck(): Card[] {
 }
 
 export function createEvents(): EventCard[] {
- return shuffle(Array.from({ length: 12 }, (_, i) => i % 2 === 0
+ const instant: EventCard[] = Array.from({ length: 12 }, (_, i) => i % 2 === 0
   ? { id: `event-${i}`, name: 'The Lodge Trembles', description: 'Place 1–2 BR instability in two random unfinished rooms.', kind: 'INSTABILITY' as const, amount: 1 + (i % 3 === 0 ? 1 : 0), rooms: 2 }
-  : { id: `event-${i}`, name: 'Thorns of BR', description: 'Every mage suffers black damage. No player receives kill credit.', kind: 'BLACK_DAMAGE' as const, amount: i % 3 === 0 ? 2 : 1, rooms: 0 }));
+  : { id: `event-${i}`, name: 'Thorns of BR', description: 'Every mage suffers black damage. No player receives kill credit.', kind: 'BLACK_DAMAGE' as const, amount: i % 3 === 0 ? 2 : 1, rooms: 0 });
+ return shuffle([...instant, ...createOngoingEvents()]);
+}
+
+// Ongoing events sit on the 3-place event board and score for BR on entry/exit.
+export function createOngoingEvents(): EventCard[] {
+ const patterns: { name: string; entryPoints: number; exitPoints: number }[] = [
+  { name: 'Gathering Dread', entryPoints: 2, exitPoints: 0 },
+  { name: 'Slow Harvest', entryPoints: 0, exitPoints: 3 },
+  { name: 'Rose Tithe', entryPoints: 1, exitPoints: 1 },
+  { name: 'Fading Echo', entryPoints: 1, exitPoints: 2 },
+ ];
+ return Array.from({ length: patterns.length * 2 }, (_, i) => {
+  const { name, entryPoints, exitPoints } = patterns[i % patterns.length];
+  const parts = [entryPoints ? `BR gains ${entryPoints} VP when it enters.` : '', exitPoints ? `BR gains ${exitPoints} VP when it shifts out.` : ''].filter(Boolean);
+  return { id: `ongoing-event-${i}`, name, description: `Ongoing. ${parts.join(' ')}`, kind: 'ONGOING' as const, amount: 0, rooms: 0, ongoing: { entryPoints, exitPoints } };
+ });
 }
 
 export function createQuests(): Quest[] {

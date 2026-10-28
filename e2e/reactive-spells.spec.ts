@@ -301,7 +301,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
   test.describe(`${viewport.width}px reactive spells`, () => {
     test.use({ viewport, reducedMotion: 'reduce' });
 
-    test('bound model icons aggregate only known bindings, remain private for unmasked foreign cards and do not intercept the map', async ({ page }, testInfo) => {
+    test('target model icons aggregate only known bindings, remain private for unmasked foreign cards and do not intercept the map', async ({ page }, testInfo) => {
       const game = fixture();
       game.evocations = [servant('own-one', 'p1'), servant('enemy-one', 'p2')];
       const alias = mage(game).wizard.id;
@@ -357,8 +357,8 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       await expect(hex(page)).toHaveClass(/selected/);
       await expect(page.locator('.room-detail')).toContainText(room(game).name);
       expect(wire.replies).toEqual([]);
-      await screenshot(testInfo, `bound-model-map-${viewport.width}`, page.locator('.board-viewport'));
-      await screenshot(testInfo, `bound-mage-roster-${viewport.width}`, page.locator('.players-panel'));
+      await screenshot(testInfo, `target-model-map-${viewport.width}`, page.locator('.board-viewport'));
+      await screenshot(testInfo, `target-mage-roster-${viewport.width}`, page.locator('.players-panel'));
 
       // Subsequent STATEs decrement the aggregate and remove the last category,
       // rather than retaining the first mounted list or inferring room occupancy.
@@ -712,7 +712,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       expect(wire.state.activation).toMatchObject({ actionsUsed: 1, physicalAction: null });
     });
 
-    test('SELF Pilgrim’s Mark follows movement, converts room contributions and expires on bound-mage defeat, not respawn', async ({ page }, testInfo) => {
+    test('SELF Pilgrim’s Mark follows movement, converts room contributions and expires on target-mage defeat, not respawn', async ({ page }, testInfo) => {
       const game = fixture(), card = prepare(game, "Pilgrim's Mark");
       Object.assign(room(game, east), { instability: 3, cubesByPlayer: { p2: 2, [BLACK_ROSE_ID]: 1 } });
       Object.assign(room(game), { instability: 2, cubesByPlayer: { p2: 1, [BLACK_ROSE_ID]: 1 } });
@@ -791,7 +791,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       await expect(boardEffects(page, 'p1')).toHaveCount(0);
       await expectEffects(htmlEffects(player(page, 'p1'), 'p1'), {}, true);
       await expect(player(page, 'p1').getByRole('meter')).toHaveAttribute('aria-valuenow', '0');
-      await expect(chronicle(page).locator(':scope > div').filter({ hasText: "Pilgrim's Mark expires with its bound model." })).toHaveCount(1);
+      await expect(chronicle(page).locator(':scope > div').filter({ hasText: "Pilgrim's Mark expires with its target model." })).toHaveCount(1);
       expectPrivacy(wire.state, wire.history);
       wire.dispatch({ type: 'END_ACTIVATION', playerId: 'p2' });
       expect(wire.state.currentPlayerId).toBe('p1');

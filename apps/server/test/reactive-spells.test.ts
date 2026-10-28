@@ -302,7 +302,7 @@ describe('reveals and expiry are irreversible information barriers', () => {
   game = apply(history, game, { type:'INFLICT_ATTACK', playerId:'p1', targetId:target });
   expect(game.readiedSpells).toEqual([]); expect(game.activeSpellOrder).toEqual([]);
   expect(game.library[2].discard).toEqual([active.card]);
-  expect(game.log).toContain(`${active.card.name} expires with its bound model.`);
+  expect(game.log).toContain(`${active.card.name} expires with its target model.`);
   expect(game.log.some(line => line.startsWith('Interrupt '))).toBe(false);
   if (kind === 'MAGE') {
    expect(player(game, target).wizard).toMatchObject({ damageCubes:0, damageByPlayer:{} });

@@ -144,7 +144,7 @@ describe('feedback wire privacy for every mage and spectator', () => {
   const feed = events(s), outer = feed[1], inner = feed[4];
   expect(feed.map(e => e.kind)).toEqual(['DAMAGE', 'SPELL_TRIGGERED', 'HEAL', 'DAMAGE', 'SPELL_TRIGGERED', 'HEAL', 'DAMAGE']);
   expect(outer).toMatchObject({ kind:'SPELL_TRIGGERED', ownerId:'p2', effects:[
-   'Heal up to 1 wound on the bound model.', 'Deal 1 damage to the acting model.',
+   'Heal up to 1 wound on the target model.', 'Deal 1 damage to the acting model.',
   ] });
   expect(outer).not.toHaveProperty('interruptId');
   expect(inner).toMatchObject({ kind:'SPELL_TRIGGERED', ownerId:'p1', interruptId:outer.id });

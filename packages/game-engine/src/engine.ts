@@ -1,4 +1,4 @@
-import { Activation, ActiveSpell, Board, Card, DamageOrigin, DecisionAnswer, DecisionDetails, Evocation, EvocationKind, FeedbackTarget, GameAction, GameFeedbackEvent, GameState, Hex, Moment, Player, PlayerId, Room, RoomId, RoomColor, RoomEffect, TriggerCondition, TriggerEvent, TriggeredInstruction, TurnRecapCard, UpgradeName } from './types';
+import { Activation, ActiveSpell, Board, Card, DamageOrigin, DecisionAnswer, DecisionDetails, EventCard, Evocation, EvocationKind, FeedbackTarget, GameAction, GameFeedbackEvent, GameState, Hex, Moment, Player, PlayerId, Room, RoomId, RoomColor, RoomEffect, TriggerCondition, TriggerEvent, TriggeredInstruction, TurnRecapCard, UpgradeName } from './types';
 import { createEvents, createLibrary, createPowerfulDeck, createQuests, getEffectiveSpell, getSpellType, hasMoment, shuffle } from './cards';
 
 export class GameRuleError extends Error {}
@@ -9,6 +9,7 @@ export const MAX_MAGES = 4;
 export const STARTING_SCHOOL_CARDS = 7;
 export const BLACK_ROSE_ID = 'black-rose';
 export const FEEDBACK_EVENT_LIMIT = 512;
+export const EVENT_BOARD_SIZE = 3;
 export const TURN_RECAP_LIMIT = 8;
 export const ENDGAME_REWARDS = [4,2,1] as const;
 export function getRoomRewards(capacity:number):Room['rewards'] {
@@ -249,7 +250,7 @@ export function createGame(playerCount=2): GameState {
   eventDeck:createEvents(), eventDiscard:[], questDeck:createQuests(), questDiscard:[],
   powerfulDeck:createPowerfulDeck(), removedCards:[], readiedSpells:[], ongoingSpells:[], activeSpellOrder:[],
   evocations:[], evocationActivation:null, feedbackEvents:[],
-  currentPlayerId:null, activation:null, winner:null, log:['Room created. Join, choose a starting school, and mark yourself ready.'], usedEvent:null, blackRoseResolved:false,
+  currentPlayerId:null, activation:null, winner:null, log:['Room created. Join, choose a starting school, and mark yourself ready.'], usedEvent:null, blackRoseResolved:false, eventBoard:Array.from({length:EVENT_BOARD_SIZE},()=>null),
  };
 }
 
@@ -445,7 +446,7 @@ function invalidateModel(s:GameState,ref:ModelSnapshot) {
  for(const active of s.readiedSpells!.slice()) {
   if(context(s).bindings.get(active.id)?.id!==ref.id)continue;
   retireActiveSpell(s,active);
-  s.log.push(`${active.card.name} expires with its bound model.`);
+  s.log.push(`${active.card.name} expires with its target model.`);
  }
 }
 function matchesTrigger(s:GameState,active:ActiveSpell,condition:TriggerCondition,event:SpellEvent) {
@@ -672,7 +673,7 @@ function resolveEvent(s:GameState,event:SpellEvent) {
    }
 }
 function describeInstruction(instruction:TriggeredInstruction):string {
- const targets:Record<TriggeredInstruction['target'],string>={BOUND_MODEL:'the bound model',BOUND_ROOM:'the bound room',EVENT_MODEL:'the triggering model',EVENT_ACTOR:'the acting model',EVENT_ROOM:'the triggering room',OWNER:'the owner’s mage'};
+ const targets:Record<TriggeredInstruction['target'],string>={BOUND_MODEL:'the target model',BOUND_ROOM:'the bound room',EVENT_MODEL:'the triggering model',EVENT_ACTOR:'the acting model',EVENT_ROOM:'the triggering room',OWNER:'the owner’s mage'};
  const target=instruction.scope==='CASTER'?'the caster’s mage':instruction.scope==='ALL_MAGES'?'each mage':instruction.scope==='DAMAGED'?'each model damaged by this effect':instruction.scope==='CASTER_ROOM'?(instruction.effect==='INSTABILITY'?'the caster’s room':instruction.effect==='DAMAGE'?'enemy models in the caster’s room':'every model in the caster’s room'):instruction.effect==='DAMAGE'&&instruction.target==='BOUND_ROOM'?'enemy models in the selected room':targets[instruction.target];
  switch(instruction.effect) {
   case 'DAMAGE':return `${instruction.when==='TARGET_DEFEATED'?'If the target is defeated: d':'D'}eal ${instruction.amount} damage to ${instruction.area?`each other mage within range ${instruction.area.range} of the target’s position`:target}.`;
@@ -708,12 +709,19 @@ function moveModel(s:GameState,ref:ModelSnapshot,destination:Hex) {
  if(to && from!==to)modelEvent(s,'ENTER_ROOM',ref,ref,to);
  if(to && from!==to && target.mage)entryShock(s,target.mage.id);
 }
+// While another mage controls an evocation (borrowed activation, including suspended ones), its owner
+// cannot use its abilities (Entry shock, Soul tithe) or activate it again.
+function isControlledByOther(s:GameState,e:Evocation):boolean {
+ for(let a:GameState['evocationActivation']|undefined=s.evocationActivation;a;a=a.resume?.evocationActivation)
+  if(a.evocationId===e.id&&a.playerId!==e.playerId)return true;
+ return false;
+}
 // Colossus Entry shock: any mage that ends up in a room with an enemy Colossus (walked, discarded to exit,
 // respawned or relocated by an effect) takes 3. Never the owner, other summons, or the Colossus's own moves.
 // Re-read the mage's current position: reactions to the entry may already have moved or defeated it.
 function entryShock(s:GameState,mageId:string) {
  const mage=s.players.find(p=>p.id===mageId);if(!mage||!mage.wizard.alive)return;
- for(const e of s.evocations.filter(x=>x.ability==='ENTRY_SHOCK'&&x.playerId!==mage.id&&areInSameRoom(s,x.position,mage.wizard.position))) {
+ for(const e of s.evocations.filter(x=>x.ability==='ENTRY_SHOCK'&&x.playerId!==mage.id&&!isControlledByOther(s,x)&&areInSameRoom(s,x.position,mage.wizard.position))) {
   if(!s.evocations.includes(e))continue;
   resolveInstruction(s,getPlayer(s,e.playerId),{effect:'DAMAGE',amount:3,target:'EVENT_MODEL'},snapshot(s,mage.id),undefined,snapshot(s,e.id),undefined,'EVOCATION');
  }
@@ -743,7 +751,7 @@ function askSoulTithe(s:GameState,e:Evocation,target:Player,amount:number,source
 // of the damage cubes instead, anywhere on the board. Auto models accept without asking.
 function soulTithe(s:GameState,target:Player,inflicted:number,source?:Player) {
  const taken:Evocation[]=[];
- const keepers=s.evocations.filter(e=>e.playerId===target.id&&e.ability==='SOUL_TITHE').sort((a,b)=>(a.number??0)-(b.number??0));
+ const keepers=s.evocations.filter(e=>e.playerId===target.id&&e.ability==='SOUL_TITHE'&&!isControlledByOther(s,e)).sort((a,b)=>(a.number??0)-(b.number??0));
  for(const e of keepers) {
   const remaining=inflicted-taken.length;
   if(remaining<=0)break;
@@ -1081,6 +1089,38 @@ function expireRoundSpells(s:GameState) {
  s.activeSpellOrder=[];
 }
 
+function eventBoardOf(s:GameState):(EventCard|null)[] {
+ const board=(s.eventBoard??=[]);
+ while(board.length<EVENT_BOARD_SIZE)board.push(null);
+ return board;
+}
+
+function leaveEventBoard(s:GameState,event:EventCard) {
+ s.eventDiscard.push(event);
+ const points=event.ongoing?.exitPoints??0;
+ s.log.push(`BR — ${event.name} leaves the event board${points?`, BR gains ${points} VP`:''}.`);
+ if(points)awardVictoryPoints(s,BLACK_ROSE_ID,points);
+}
+
+// Every ongoing event moves one place along; the last one leaves the board.
+function shiftEventBoard(s:GameState) {
+ const board=eventBoardOf(s);
+ const out=board.pop();
+ board.unshift(null);
+ if(out)leaveEventBoard(s,out);
+}
+
+// New event takes `slot`; any occupant is pushed to the next place, and so on.
+function enterEventBoard(s:GameState,event:EventCard,slot=0) {
+ const board=eventBoardOf(s);
+ const points=event.ongoing?.entryPoints??0;
+ s.log.push(`BR — ${event.name} enters the event board${points?`, BR gains ${points} VP`:''}.`);
+ if(points)awardVictoryPoints(s,BLACK_ROSE_ID,points);
+ let carry:EventCard|null=event;
+ for(let i=slot;i<board.length&&carry;i++) { const next:EventCard|null=board[i]; board[i]=carry; carry=next; }
+ if(carry)leaveEventBoard(s,carry);
+}
+
 function startBlackRose(s: GameState) {
  // Also settle legacy Cleanup snapshots, without returning a card twice.
  expireRoundSpells(s);
@@ -1096,10 +1136,14 @@ function startBlackRose(s: GameState) {
   }
   p.prepared=emptyPrepared();
  }
+ shiftEventBoard(s);
  const event=drawFromDiscard(s,s.eventDeck,s.eventDiscard);
  if(!event)throw new GameRuleError('No event cards are available');
- s.usedEvent=event; s.eventDiscard.push(event);
+ s.usedEvent=event;
  s.log.push(`Round ${s.round} · BR — ${event.name}.`);
+ if(event.kind==='ONGOING') enterEventBoard(s,event);
+ else s.eventDiscard.push(event);
+ if(event.kind==='ONGOING') return;
  if(event.kind==='BLACK_DAMAGE') for(const p of s.players) damage(s,p,event.amount);
  else {
   const candidates=shuffle(s.board.rooms.filter(r=>!r.startingFor && !r.reconstructed && r.instability<r.instabilityLimit),()=>resolutionRandom(s));
@@ -1498,8 +1542,10 @@ function summonForEffect(s:GameState,owner:Player,kind:EvocationKind,position:He
  const evocation=summonEvocation(s,owner,kind,position);
  if(effect)effect.summoned=evocation?snapshot(s,evocation.id):undefined;
  if(!evocation)return;
- evocation.activated=!effect?.activationIsExplicit;
- s.log.push(effect?.activationIsExplicit?`${owner.name} summons ${evocation.name}.`:`${owner.name} summons and activates ${evocation.name}.`);
+ // Models summoned during the Evocation phase still take their activation this phase.
+ const duringEvocation=s.phase==='EVOCATION';
+ evocation.activated=!effect?.activationIsExplicit&&!duringEvocation;
+ s.log.push(effect?.activationIsExplicit||duringEvocation?`${owner.name} summons ${evocation.name}.`:`${owner.name} summons and activates ${evocation.name}.`);
 }
 function activateEffectSummon(s:GameState,owner:Player,kind:EvocationKind,effect?:EffectResolution) {
  const evocation=liveModel(s,effect?.summoned)?.evocation;
@@ -1546,7 +1592,7 @@ function moveDamaged(s:GameState,caster:Player,spell:Card,distance:number,effect
 // Silver of the Sages, Fountain of the Three: activate one of your own evocations from an effect.
 function activateChoice(s:GameState,owner:Player,step:{archetype?:'CONSTRUCT';attackBonus?:number;endDamage?:number},label:string) {
  if(s.phase!=='ACTION'&&s.phase!=='EVOCATION'){s.log.push(`${label}: evocations can only be activated in the Action or Evocation phase.`);return;}
- const options=s.evocations.filter(e=>e.playerId===owner.id&&(!step.archetype||e.archetype===step.archetype));
+ const options=s.evocations.filter(e=>e.playerId===owner.id&&!isControlledByOther(s,e)&&(!step.archetype||e.archetype===step.archetype));
  if(!options.length){s.log.push(`${owner.name} has no eligible evocation to activate.`);return;}
  const id=options.length===1?options[0].id:askChoice(s,owner.id,`activate|${owner.id}|${label}`,`${label}: choose an evocation to activate.`,options.map(e=>({id:e.id,label:`${e.name} #${e.number??1}`})),true);
  const e=options.find(model=>model.id===id);

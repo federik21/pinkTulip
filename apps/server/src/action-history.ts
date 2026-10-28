@@ -59,7 +59,7 @@ const onlyAppended = (before: Identified[], after: Identified[]) =>
  before.length <= after.length && before.every((card, index) => same(card, after[index]));
 
 function acquiredHiddenInformation(before: GameState, after: GameState): boolean {
- // Reveals and bound-model expiry expose formerly hidden cards. Check instance
+ // Reveals and target-model expiry expose formerly hidden cards. Check instance
  // UUIDs, not discard changes: a reveal must never be undone for either owner.
  const stillReadied = new Set((after.readiedSpells ?? []).map(active => active.id));
  if ((before.readiedSpells ?? []).some(active => !stillReadied.has(active.id))) return true;

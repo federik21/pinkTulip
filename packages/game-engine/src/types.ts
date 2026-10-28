@@ -70,7 +70,10 @@ export type ActiveSpell = { id: string; playerId: string; card: Card; targetPlay
 export type RoomColor = 'crimson' | 'azure' | 'emerald' | 'amber' | 'violet' | 'grey';
 export type RoomEffect = 'ROOM_DAMAGE' | 'DRAW_DISCARD' | 'INSTABILITY' | 'DRAW_QUEST' | 'DRAW_GRIMOIRE' | 'SUMMON_CADAVER' | 'DRAW_POWERFUL' | 'FIRST_PLAYER';
 export type LibraryDeck = { id: string; name: string; cards: Card[]; discard: Card[] };
-export type EventCard = { id: string; name: string; description: string; kind: 'INSTABILITY' | 'BLACK_DAMAGE'; amount: number; rooms: number };
+// ONGOING events skip the discard on reveal and sit on GameState.eventBoard.
+// entryPoints go to BR when the event enters; exitPoints when it shifts out.
+export type OngoingEventRules = { entryPoints: number; exitPoints: number };
+export type EventCard = { id: string; name: string; description: string; kind: 'INSTABILITY' | 'BLACK_DAMAGE' | 'ONGOING'; amount: number; rooms: number; ongoing?: OngoingEventRules };
 export type Quest = {
  id: string; name: string; description: string; kind: 'KILL' | 'REBUILD' | 'INSTABILITY' | 'ROOM_ACTIVATE'; amount: number; reward: number;
  progress?: number; completed?: boolean; claimed?: boolean; rewardAction?: Card;
@@ -177,6 +180,8 @@ export type GameState = {
  turnRecapDraft?: { playerId: PlayerId; logStart: number; cards: TurnRecapCard[] } | null;
  turnRecaps?: TurnRecap[];
  usedEvent: EventCard | null; blackRoseResolved: boolean;
+ // Public ongoing-event board, slot 0 = newest. Optional for older snapshots.
+ eventBoard?: (EventCard | null)[];
 };
 export type GameAction =
  // Transport commands: intercepted by the server, never resolved by the engine.

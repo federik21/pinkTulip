@@ -491,7 +491,7 @@ describe('continuous bindings, expiry, immunities and physical ledgers',()=>{
    expect(physicalCards(moved)).toEqual(cards);conserved(moved);
   });
  }
- it('Runic Remedy heals immediately and on bound-mage room activation, including the own mage',()=>{
+ it('Runic Remedy heals immediately and on target-mage room activation, including the own mage',()=>{
   let s=fixture();wound(s,'p1',{p2:3});s=arm(s,'Runic Remedy','p1',{targetPlayerId:'p1'});
   expect(player(s).wizard.damageCubes).toBe(2);turn(s,'p1');s=applyAction(s,{type:'EXPLORE',playerId:'p1',activateRoomAtStart:true});
   expect(player(s).wizard.damageCubes).toBe(1);expect(s.ongoingSpells).toHaveLength(1);conserved(s);
@@ -531,7 +531,7 @@ describe('continuous bindings, expiry, immunities and physical ledgers',()=>{
   let zero=fixture();zero=arm(zero,'Thorn Retort','p2',{});player(zero).wizard.attack=0;turn(zero,'p1');
   zero=applyAction(zero,{type:'PUNCH',playerId:'p1',targetId:'p2'});expect(zero.readiedSpells).toHaveLength(1);conserved(s);conserved(zero);
  });
- it('triggered healing includes every owner and safely returns the bound model’s own friendly cubes first',()=>{
+ it('triggered healing includes every owner and safely returns the target model’s own friendly cubes first',()=>{
   let s=fixture();wound(s,'p1',{p1:1,p3:1});s=arm(s,'Mending Ward','p2',{targetPlayerId:'p1'});turn(s,'p4');
   s=applyAction(s,{type:'PUNCH',playerId:'p4',targetId:'p1'});
   expect(player(s).wizard).toMatchObject({damageCubes:2,damageByPlayer:{p4:2}});expect(player(s).cubes.available).toBe(25);expect(player(s,'p3').cubes.available).toBe(25);conserved(s);
