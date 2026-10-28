@@ -5,7 +5,7 @@ export const MAGE_SYMBOLS:Record<string,string>={p1:'🧙‍♀️',p2:'🧙‍�
 export { MAGE_COLOR_NAMES } from '@brw/game-engine';
 export const SPELL_TYPE_LABELS:Record<SpellType,string>={COMBAT:'Combat',CONTINGENCY:'Contingency',TRAP:'Trap',PROTECTION:'Protection'};
 export const SPELL_TARGET_LABELS:Record<SpellTarget,string>={SELF:'Self',ROOM:'Room',MAGE:'Mage',EVOCATION:'Evocation',MODEL:'Model'};
-export const SPELL_TARGET_DESCRIPTIONS:Record<SpellTarget,string>={SELF:'only your mage',ROOM:'Room',MAGE:'one mage',EVOCATION:'one evocation',MODEL:'one mage or evocation'};
+export const SPELL_TARGET_DESCRIPTIONS:Record<SpellTarget,string>={SELF:'Self Mage',ROOM:'A Room',MAGE:'Other Mage',EVOCATION:'Any evocation',MODEL:'Other model'};
 export const ownerColor=(id:string)=>MAGE_COLORS[id]??'#d4cedd';
 export const mageStyle=(id:string)=>({'--mage-color':ownerColor(id)} as CSSProperties);
 export const ownerName=(game:GameState,id:string)=>id===BLACK_ROSE_ID?'BR':game.players.find(p=>p.id===id)?.name??'Unknown mage';

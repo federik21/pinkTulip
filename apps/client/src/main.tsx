@@ -45,13 +45,13 @@ const randomName=()=>['Ember','Moon','Storm','Rune','Thorn'][Math.floor(Math.ran
 function SpellCard({card,label,selected,disabled,onClick,used=false}:{card:Card;label?:string;selected?:boolean;disabled?:boolean;onClick?:()=>void;used?:boolean}) {
  const spellType=getSpellType(card);
  return <button type="button" className={`spell ${card.powerful?'powerful':''} ${selected?'chosen':''} ${used?'used':''}`} aria-pressed={onClick?!!selected:undefined} disabled={disabled} onClick={onClick}>
-  <span className="eyebrow">{label??'Spell'} · {SPELL_TARGET_LABELS[card.target]}</span>
-  <span className="spell-type" data-spell-type={spellType}><SpellTypeIcon type={spellType}/><span>{SPELL_TYPE_LABELS[spellType]}{card.ongoing?' · Ongoing':''}</span></span>
+  {label&&<span>{label}</span>}
+  <span className="spell-type" data-spell-type={spellType}><SpellTypeIcon type={spellType}/><span>{SPELL_TYPE_LABELS[spellType]}{card.ongoing?' · Ongoing':''}</span>{card.element&&<span className="spell-element" data-element={card.element} title={`${card.element} symbol`}>{ELEMENT_GLYPHS[card.element]} {card.element}</span>}</span>
+  <span className="eyebrow">Range {card.range===Number.POSITIVE_INFINITY?'∞':card.range} · {SPELL_TARGET_DESCRIPTIONS[card.target]}{card.powerful?' · Remove after use':''}</span>
   <strong>{card.name}</strong><span className="spell-rune"><SchoolIcon schoolId={card.schoolId} powerful={card.powerful}/></span>
-  {card.element&&<span className="spell-element" data-element={card.element} title={`${card.element} symbol`}>{ELEMENT_GLYPHS[card.element]} {card.element}</span>}
+  {card.instability&&<span> ◆ Instable</span>}
   <SpellDescription card={card} showMoments/>
   {used&&<span className="spell-status" data-spell-status="SPENT">Spent</span>}
-  <span className="hint">Range {card.range===Number.POSITIVE_INFINITY?'∞ · ignores line of sight':card.range} · {SPELL_TARGET_DESCRIPTIONS[card.target]}{card.powerful?' · Remove after use':''}</span>
  </button>;
 }
 
