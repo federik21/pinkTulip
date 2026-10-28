@@ -650,7 +650,6 @@ function resolveEvent(s:GameState,event:SpellEvent) {
      resolveEffectMoments(s,owner,active.card,selectedRoom??room,refs,ownerRef!);
     } else {
    const effect:EffectResolution={activationIsExplicit:instructions.some(step=>step.effect==='ACTIVATE_EVOCATION'),eventPosition:event.position,eventKind:event.kind};
-  if(!ongoing)resolveCardInstability(s,owner,active.card,room,ownerRef!,effect);
   for(const [index,instruction] of instructions.entries()) {
    s.log.push(`Moment ${index+1}/${instructions.length} · ${active.card.name}: ${describeInstruction(instruction)}`);
     let ref:ModelSnapshot|undefined,roomId:string|undefined;
@@ -662,6 +661,7 @@ function resolveEvent(s:GameState,event:SpellEvent) {
      case 'EVENT_ROOM':roomId=event.roomId;break;
      case 'OWNER':ref=ownerRef;break;
     }
+    if(instruction.effect==='INSTABILITY'&&instruction.scope==='CASTER_ROOM')roomId=roomAt(s,owner.wizard.position)?.id;
     if(instruction.effect==='SUMMON'&&instruction.position==='TARGET'&&!liveModel(s,ref))roomId??=room?.id;
     resolveInstruction(s,owner,instruction,ref,roomId,ownerRef,effect);
    }
@@ -673,7 +673,7 @@ function resolveEvent(s:GameState,event:SpellEvent) {
 }
 function describeInstruction(instruction:TriggeredInstruction):string {
  const targets:Record<TriggeredInstruction['target'],string>={BOUND_MODEL:'the bound model',BOUND_ROOM:'the bound room',EVENT_MODEL:'the triggering model',EVENT_ACTOR:'the acting model',EVENT_ROOM:'the triggering room',OWNER:'the owner’s mage'};
- const target=instruction.scope==='CASTER'?'the caster’s mage':instruction.scope==='ALL_MAGES'?'each mage':instruction.scope==='DAMAGED'?'each model damaged by this effect':instruction.scope==='CASTER_ROOM'?(instruction.effect==='DAMAGE'?'enemy models in the caster’s room':'every model in the caster’s room'):instruction.effect==='DAMAGE'&&instruction.target==='BOUND_ROOM'?'enemy models in the selected room':targets[instruction.target];
+ const target=instruction.scope==='CASTER'?'the caster’s mage':instruction.scope==='ALL_MAGES'?'each mage':instruction.scope==='DAMAGED'?'each model damaged by this effect':instruction.scope==='CASTER_ROOM'?(instruction.effect==='INSTABILITY'?'the caster’s room':instruction.effect==='DAMAGE'?'enemy models in the caster’s room':'every model in the caster’s room'):instruction.effect==='DAMAGE'&&instruction.target==='BOUND_ROOM'?'enemy models in the selected room':targets[instruction.target];
  switch(instruction.effect) {
   case 'DAMAGE':return `${instruction.when==='TARGET_DEFEATED'?'If the target is defeated: d':'D'}eal ${instruction.amount} damage to ${instruction.area?`each other mage within range ${instruction.area.range} of the target’s position`:target}.`;
   case 'HEAL':return `Heal up to ${instruction.amount} ${instruction.amount===1?'wound':'wounds'} on ${target}.`;
@@ -1576,7 +1576,6 @@ function resolveEffectMoments(s:GameState,caster:Player,spell:Card,room:Room|und
  // The chosen model and where it stands, remembered while it is still on the board.
  const chosen=spell.target==='ROOM'?undefined:refs[0];
  let origin=chosen?liveModel(s,chosen)?.model.position:room?.tiles[0];
- resolveCardInstability(s,caster,spell,room,actor,effect,damageOrigin);
  for(const [index,step] of spell.moments.entries())atMomentEnd(s,()=>{
   const live=liveModel(s,chosen);
   if(live)origin={...live.model.position};
@@ -1597,16 +1596,6 @@ function resolveEffectMoments(s:GameState,caster:Player,spell:Card,room:Room|und
    stepRefs=origin?s.players.filter(p=>p.wizard.alive&&p.wizard.id!==chosen?.id&&hexDistance(origin!,p.wizard.position)<=area.range).map(p=>snapshot(s,p.id)!):[];
   }
   resolveMomentBody(s,caster,spell,step,room,stepRefs,actor,effect,damageOrigin);
- });
-}
-// Optional extra effect of a card (Card.instability): a single moment placing 1
-// instability cube in the mage's current room. It fully resolves, with every
-// interrupt it causes, before the card's printed moments begin.
-function resolveCardInstability(s:GameState,caster:Player,spell:Card,room:Room|undefined,actor:ModelSnapshot,effect:EffectResolution,damageOrigin:DamageOrigin='SPELL') {
- if(!spell.instability)return;
- atMomentEnd(s,()=>{
-  s.log.push(`Instability · ${spell.name}: place 1 instability in the caster’s current room.`);
-  resolveMomentBody(s,caster,spell,{effect:'INSTABILITY',amount:1,scope:'CASTER_ROOM'},room,[],actor,effect,damageOrigin);
  });
 }
 function resolveMomentBody(s:GameState,caster:Player,spell:Card,step:Moment,room:Room|undefined,refs:ModelSnapshot[],actor:ModelSnapshot,effect:EffectResolution,damageOrigin:DamageOrigin) {

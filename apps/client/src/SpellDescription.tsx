@@ -16,7 +16,7 @@ function MomentChip({moment,target}:{moment:Moment;target:Card['target']}) {
  switch(moment.effect) {
   case 'DAMAGE':return <span>⚔ {prefix}Inflict {moment.amount}{moment.area?` · each other mage within range ${moment.area.range} of target`:moment.scope==='CASTER_ROOM'?' · enemy models in your room':target==='ROOM'?' · enemy models in target room':''}</span>;
   case 'PAIN':return <span>✦ {prefix}Pain {moment.amount}</span>;
-  case 'INSTABILITY':return <span>◆ {prefix}{moment.amount} instability</span>;
+  case 'INSTABILITY':return <span>◆ {prefix}{moment.amount} instability{moment.scope==='CASTER_ROOM'?' · caster’s room':target==='ROOM'?' · target room':''}</span>;
   case 'HEAL':return <span className="heal-effect">♥ {prefix}{moment.amount} heal</span>;
   case 'CONVERT':return <span className="convert-effect">↻ {prefix}{moment.amount} convert · {target==='ROOM'?'room cubes':'damage cubes'}</span>;
   case 'BLACK_ROSE_CONVERT':return <span className="convert-effect">✺ {prefix}BR convert {moment.amount}{moment.scope==='CASTER'?' · your mage · last damage from other mages':''}</span>;

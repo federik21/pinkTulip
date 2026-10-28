@@ -49,7 +49,6 @@ function SpellCard({card,label,selected,disabled,onClick,used=false}:{card:Card;
   <span className="spell-type" data-spell-type={spellType}><SpellTypeIcon type={spellType}/><span>{SPELL_TYPE_LABELS[spellType]}{card.ongoing?' · Ongoing':''}</span>{card.element&&<span className="spell-element" data-element={card.element} title={`${card.element} symbol`}>{ELEMENT_GLYPHS[card.element]} {card.element}</span>}</span>
   <span className="eyebrow">Range {card.range===Number.POSITIVE_INFINITY?'∞':card.range} · {SPELL_TARGET_DESCRIPTIONS[card.target]}{card.powerful?' · Remove after use':''}</span>
   <strong>{card.name}</strong><span className="spell-rune"><SchoolIcon schoolId={card.schoolId} powerful={card.powerful}/></span>
-  {card.instability&&<span> ◆ Instable</span>}
   <SpellDescription card={card} showMoments/>
   {used&&<span className="spell-status" data-spell-status="SPENT">Spent</span>}
  </button>;

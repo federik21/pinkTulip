@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyAction, createGame, createLibrary, createPowerfulDeck, getSpellType, isWithinSpellRange } from '../src';
+import { applyAction, createGame, createLibrary, createPowerfulDeck, getEffectiveSpell, getSpellType, isWithinSpellRange } from '../src';
 import { moment, momentTotal, upgradeLegacyCards } from '../src/cards';
 import type { ActiveSpell, Card, Evocation, GameState, Moment, SpellTarget } from '../src';
 
@@ -215,11 +215,11 @@ describe('card catalog and legacy saves', () => {
    for (const flat of ['damage', 'instability', 'heal', 'convert']) expect(card).not.toHaveProperty(flat);
   for (const m of card.moments) {
    if('amount' in m)expect(m.amount).toBeGreaterThan(0);
-  else if((m.effect==='SUMMON'||m.effect==='ACTIVATE_EVOCATION')&&card.schoolId!=='technomancy'){expect(m).toMatchObject({kind:'SUCCUBUS'});}
+  else if(m.effect==='SUMMON'||m.effect==='ACTIVATE_EVOCATION')expect(m.kind).toBeTruthy();
   }
   }
   const cross = createLibrary().flatMap(d => d.cards).find(c => c.name === 'Cross and Delight')!;
-  expect([momentTotal(cross, 'DAMAGE'), momentTotal(cross, 'INSTABILITY'), getSpellType(cross)]).toEqual([0, 0, 'COMBAT']);
+  expect([momentTotal(cross, 'DAMAGE'), momentTotal(cross, 'INSTABILITY'), getSpellType(cross)]).toEqual([0, 1, 'COMBAT']);
  });
 
  it('upgrades flat cards in saved games in the old resolution order, once', () => {
@@ -229,5 +229,29 @@ describe('card catalog and legacy saves', () => {
   expect(card.moments).toEqual([moment.instability(1), moment.convert(3), moment.damage(2)]);
   for (const flat of ['damage', 'instability', 'heal', 'convert']) expect(card).not.toHaveProperty(flat);
   const copy = structuredClone(save); upgradeLegacyCards(copy); expect(copy).toEqual(save);
+ });
+
+ it('migrates saved instability flags to the first effect and handles reactive effects', () => {
+  const save = { cards: [
+   { id:'normal', name:'Normal', kind:'SPELL', instability:true, moments:[moment.damage(2)], range:1, target:'MODEL' },
+   { id:'reactive', name:'Reactive', kind:'SPELL', instability:true, moments:[], range:1, target:'SELF', trigger:{event:'DAMAGE_TAKEN'}, triggerEffects:[{effect:'HEAL',amount:1,target:'OWNER'}] },
+    { id:'legacy-boolean', name:'Legacy boolean', kind:'SPELL', instability:true, damage:2, range:1, target:'MODEL' },
+  ] };
+  upgradeLegacyCards(save);
+  expect(save.cards[0]).not.toHaveProperty('instability');
+  expect(save.cards[0].moments).toEqual([{effect:'INSTABILITY',amount:1,scope:'CASTER_ROOM'},moment.damage(2)]);
+  expect(save.cards[1]).not.toHaveProperty('instability');
+  expect(save.cards[1].moments).toEqual([]);
+  expect(save.cards[1].triggerEffects).toEqual([{effect:'INSTABILITY',amount:1,scope:'CASTER_ROOM',target:'OWNER'},{effect:'HEAL',amount:1,target:'OWNER'}]);
+  expect(save.cards[2].moments).toEqual([{effect:'INSTABILITY',amount:1,scope:'CASTER_ROOM'},{effect:'DAMAGE',amount:2}]);
+ });
+
+ it('keeps instability ahead of an enhancement positioned before printed moments', () => {
+  const s=fixture(), card:Card={...spell([moment.inCasterRoom(moment.instability(1)),moment.damage(2)]),id:'unstable-enhanced',
+   enhancement:{requires:['fire'],moments:[moment.damage(3)],position:'BEFORE',text:'enhanced'}};
+  const p=s.players[0];
+  p.prepared.slot1={used:true,card:{...spell([]),id:'fire-symbol',element:'fire'}};
+  const effective=getEffectiveSpell(s,p,card);
+  expect(effective.moments.map(step=>step.effect)).toEqual(['INSTABILITY','DAMAGE','DAMAGE']);
  });
 });
