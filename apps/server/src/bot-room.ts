@@ -36,11 +36,17 @@ export function configureBot(game: GameState, action: Extract<GameAction, { type
  return next;
 }
 
+export const SLOW_AI_BASE_MS = 600;
+export const SLOW_AI_STEP_MS = 1500; // matches client MOMENT_MS
+
 type BotRoom = { game: GameState; history: ActionHistory };
 
 /** One visible command per beat; always re-evaluate the latest authoritative state. */
 export class BotRunner {
  private timer: ReturnType<typeof setTimeout> | null = null;
+ private nextDelay: number | null = null;
+ /** When true, wait long enough after each command for clients to toast every new log line. */
+ slow = false;
  constructor(private room: BotRoom, private active: () => boolean, private changed: () => void, private delay = 450) {}
 
  stop() {
@@ -57,15 +63,17 @@ export class BotRunner {
    try {
     const action = chooseBotAction(this.room.game);
     if (!action) return; // A human turn, decision or explicit phase continuation.
+    const before = this.room.game.log.length;
     this.room.game = this.room.history.apply(this.room.game, action, action.playerId);
     // AI moves are opponent commitments, never a human-accessible undo stack.
     this.room.history.clear();
+    this.nextDelay = this.slow ? SLOW_AI_BASE_MS + SLOW_AI_STEP_MS * Math.max(1, this.room.game.log.length - before) : null;
     this.changed();
     this.wake();
    } catch (error) {
     // A faulty policy must not crash the room or enter an unbounded retry loop.
     console.error('AI opponent could not act:', error);
    }
-  }, this.delay);
+  }, this.slow ? (this.nextDelay ?? SLOW_AI_BASE_MS) : this.delay);
  }
 }

@@ -5,7 +5,7 @@ import { ActiveEvocationControls, EvocationSupply, EvocationsPanel, targetModels
 import { PhysicalActionsPanel, PhysicalBannerActions } from './PhysicalActionsPanel';
 import { useBoardZoom, ZoomControls } from './BoardZoom';
 import { CombatFeedback, FeedbackPulse, useGameFeedback } from './CombatFeedback';
-import { BotTurnRecap } from './TurnRecap';
+const MOMENT_MS=1500; // keep in sync with server SLOW_AI_STEP_MS
 import { ControlBanner, ControlTab, QuickAccess } from './ControlBanner';
 import { ChronicleDrawer } from './ChronicleDrawer';
 import { MageRoster } from './MageRoster';
@@ -138,6 +138,9 @@ function App() {
  const quickOpener=useRef<HTMLElement|null>(null);
  const [infoPopup,setInfoPopup]=useState<'lodge'|'reference'|null>(null);
  const [historyRevision,setHistoryRevision]=useState(0);
+ const [slowAi,setSlowAi]=useState(()=>localStorage.getItem('slowAi')==='1');
+ const [momentToast,setMomentToast]=useState('');
+ const momentQueue=useRef<string[]>([]),momentSeen=useRef<{gameId:string;len:number}|null>(null),momentBusy=useRef(false);
  const [effectTargetId,setEffectTargetId]=useState('');
  const boardZoom=useBoardZoom();
  const feedback=useGameFeedback(game);
@@ -182,6 +185,28 @@ function App() {
   setToast(myActivation?(exploring?`Explore: ${exploring} adjacent step${exploring===1?'':'s'} remaining.`:physicalKind?'Resolve your physical action effects, or skip those remaining.':'Your turn · Choose an action: physical, spell, or discard-to-move.'):'Turn handed to the next mage.');
  },[phase,myActivation,actionsUsed,exploring,activeEvocationId,physicalKind]);
  useEffect(()=>{if(!toast)return;const t=window.setTimeout(()=>setToast(''),3200);return()=>window.clearTimeout(t);},[toast]);
+ const dismissToasts=()=>{setToast('');setMomentToast('');momentQueue.current=[];momentBusy.current=false;};
+ // Tell the server our AI pacing preference (per room; last writer wins).
+ useEffect(()=>{localStorage.setItem('slowAi',slowAi?'1':'0');if(playerId&&wsRef.current?.readyState===WebSocket.OPEN)wsRef.current.send(JSON.stringify({type:'SET_AI_SPEED',slow:slowAi}));},[slowAi,playerId]);
+ // Moments of another mage's turn: queue new log lines, show one toast at a time.
+ const logLen=game?.log.length,gameKey=game?.gameId;
+ useEffect(()=>{
+  if(!game||!playerId)return;
+  const seen=momentSeen.current;
+  if(!seen||seen.gameId!==game.gameId||game.log.length<seen.len){momentSeen.current={gameId:game.gameId,len:game.log.length};momentQueue.current=[];return;}
+  const fresh=game.log.slice(seen.len);seen.len=game.log.length;
+  const acting=game.activation?.playerId??game.evocationActivation?.playerId??game.currentPlayerId;
+  if(game.phase!=='ACTION'&&game.phase!=='EVOCATION')return;
+  if(!acting||acting===playerId)return;
+  for(const line of fresh)momentQueue.current.push(line.length>110?`${line.slice(0,107)}…`:line);
+  if(!momentBusy.current)drain();
+  function drain(){
+   const next=momentQueue.current.shift();
+   if(!next){momentBusy.current=false;setMomentToast('');return;}
+   momentBusy.current=true;setMomentToast(next);
+   window.setTimeout(drain,MOMENT_MS);
+  }
+ },[logLen,gameKey]);
  const send:Send=action=>{
   if(wsRef.current?.readyState!==WebSocket.OPEN){setError('Server disconnected. Reload to reconnect.');return;}
     if(requestRef.current)return;
@@ -208,7 +233,7 @@ function App() {
  const turnActionsRemaining=myTurn?Math.max(0,ACTIONS_PER_TURN-(active?.actionsUsed??0)):0;
  const inStart=isInStartingRoom(game,me);
  const activeEvocation=game.evocations.find(e=>e.id===game.evocationActivation?.evocationId);
- const movingEvocation=enabled&&game.evocationActivation?.playerId===me.id&&(game.evocationActivation?.movesRemaining??0)>0&&activeEvocation;
+ const movingEvocation=enabled&&game.evocationActivation?.playerId===me.id&&!!game.evocationActivation?.moving&&(game.evocationActivation?.movesRemaining??0)>0&&activeEvocation;
  const actingPlayer=enabled&&(game.phase==='ACTION'||game.phase==='EVOCATION')?game.players.find(p=>p.id===game.currentPlayerId):undefined;
  // The free Evocation-phase activation is mine to make, or my activated model still needs finishing.
  const evocationDue=game.evocationActivation?game.evocationActivation.playerId===me.id:game.phase==='EVOCATION'&&game.currentPlayerId===me.id&&game.evocations.some(e=>e.playerId===me.id&&!e.activated);
@@ -283,7 +308,7 @@ function App() {
     <ActiveSpellsPanel game={game} viewerId={me.id} send={send} disabled={!enabled||pending}/>
     {powerfulCards.length>0&&<section className="powerful-panel"><span className="eyebrow">The central chamber's gift · saved in hand</span><h2>Forgotten spells</h2><p>Prepare in a later round; never cast directly from hand. Casting permanently removes the card. Unused prepared forgotten spells return to hand next round.</p><div className="cards">{powerfulCards.map(card=><SpellCard key={card.id} card={card} label="✺ Prepare in a later round" disabled/>)}</div><p className="hint">Supply: {game.powerfulDeck.length} remaining · {game.removedCards.length} permanently removed</p></section>}
  </>;
- return <div className="app"><header><a className="brand" href="/">✺ <span>BRW BATTLES <small>ONLINE LODGE</small></span></a><div className="header-meta">{canSave&&game.phase!=='LOBBY'&&game.phase!=='GAME_OVER'&&<button type="button" className="info-button" onClick={()=>wsRef.current?.send(JSON.stringify({type:'SAVE_SESSION'}))}>Save session</button>}<button type="button" className="info-button" onClick={()=>setInfoPopup('reference')}>Quick reference</button><span className="badge">{roomId}</span><span>Round {game.round}</span><span className={connected?'online':'error'}>{connected?'● Live':'○ Offline'}</span></div></header>
+ return <div className="app"><header><a className="brand" href="/">✺ <span>BRW BATTLES <small>ONLINE LODGE</small></span></a><div className="header-meta">{canSave&&game.phase!=='LOBBY'&&game.phase!=='GAME_OVER'&&<button type="button" className="info-button" onClick={()=>wsRef.current?.send(JSON.stringify({type:'SAVE_SESSION'}))}>Save session</button>}<button type="button" className="info-button" aria-pressed={slowAi} title="Pace AI turns so each move is shown as a toast" onClick={()=>setSlowAi(v=>!v)}>Slow AI: {slowAi?'on':'off'}</button><button type="button" className="info-button" onClick={()=>setInfoPopup('reference')}>Quick reference</button><span className="badge">{roomId}</span><span>Round {game.round}</span><span className={connected?'online':'error'}>{connected?'● Live':'○ Offline'}</span></div></header>
   <nav className="phase-track">{(['BLACK_ROSE','STUDY','PREPARATION','ACTION','EVOCATION','CLEANUP'] as const).map((phase,i)=><div key={phase} className={game.phase===phase?'current':''}><small>0{i+1}</small><span>{phaseInfo[phase][1]}</span></div>)}</nav>
   {actingPlayer&&<div className="turn-banner" style={mageStyle(actingPlayer.id)}><span className="acting-mage-icon" aria-hidden="true">{emoji[actingPlayer.id]}</span><div className="turn-banner-text" role="status" aria-live="polite"><span className="eyebrow">{actingPlayer.id===me.id?'Your turn':'Mage acting'}</span><strong>{actingPlayer.name}</strong><small>{game.evocationActivation?'Controlling an evocation':game.phase==='EVOCATION'?'Choosing an evocation':'Taking an Action turn'}</small></div>
   {(showHistory||myTurn)&&<div className="turn-banner-controls">
@@ -295,9 +320,9 @@ function App() {
     {ownEvocationActive&&<ActiveEvocationControls game={game} playerId={me.id} enabled={enabled} pending={pending} send={send}/>}
   </div>}
   {overlay&&<div className="phase-overlay" role="status" onClick={()=>setOverlay(null)}><span>{phaseInfo[overlay][0]}</span><small>ROUND {game.round}</small><h1>{phaseInfo[overlay][1]}</h1><p>{phaseInfo[overlay][2]}</p><small>Click to continue</small></div>}
-  {toast&&<div className="toast" role="status">{toast}</div>}
+  {toast&&!momentToast&&<div className="toast" role="status" onClick={dismissToasts}>{toast}</div>}
+  {momentToast&&<div className="toast moment-toast" role="status" aria-live="polite" onClick={dismissToasts}>{momentToast}</div>}
   <CombatFeedback game={game} feedback={feedback}/>
-  <BotTurnRecap game={game}/>
   <SoulTithePrompt game={game} viewerId={me.id} connected={connected&&!paused} pending={pending} send={send}/>
   <ReactiveSpellPrompt game={game} viewerId={me.id} connected={connected&&!paused} pending={pending} send={send}/>
   <ChoicePrompt game={game} viewerId={me.id} connected={connected&&!paused} pending={pending} send={send}/>

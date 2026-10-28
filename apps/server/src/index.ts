@@ -81,6 +81,10 @@ wss.on('connection',ws=>{
    if(!c.roomId||!c.playerId)throw new GameRuleError('Join a room first');
    const room=rooms.get(c.roomId);
    if(!room || !room.clients.has(c) || !room.game.players.some(p=>p.id===c.playerId&&p.connected))throw new GameRuleError('Join a room first');
+   if(msg.type==='SET_AI_SPEED') {
+    room.bots ??= new BotRunner(room,()=>rooms.get(room.id)===room&&room.clients.size>0,()=>{broadcast(room);broadcastRoomList();store?.schedule();});
+    room.bots.slow=msg.slow===true;return;
+   }
    if(msg.type==='SAVE_SESSION') {
     if(!store)throw new GameRuleError('Saving is not enabled on this server (set SAVE_FILE).');
     if(!isSavable(room.game))throw new GameRuleError('Only a battle in progress can be saved.');

@@ -2003,18 +2003,23 @@ function runAction(state: GameState, action: GameAction, answers: DecisionAnswer
   s.log.push(`${p.name} activates ${e!.name}: move ${evocationMovement(e!)}, attack ${evocationAttack(e!)}.`);
   modelEvent(s,'EVOCATION_ACTIVATED',snapshot(s,e!.id)!);break;
   }
+  case 'BEGIN_EVOCATION_MOVEMENT': {
+   const {active}=requireEvocation(s,p.id);assert(active.movesRemaining>0,'No evocation movement remaining');
+   assert(!active.moving,'Evocation movement already started');active.moving=true;break;
+  }
   case 'EVOCATION_STEP': {
    const {active,e}=requireEvocation(s,p.id);assert(active.movesRemaining>0,'No evocation movement remaining');
+   active.moving=true;
    assert(areAdjacent(e.position,action.destination),'Move one adjacent space at a time');
    assert(s.board.tiles.some(h=>hexKey(h)===hexKey(action.destination)),'Destination outside board');
    assert(!s.board.rooms.some(r=>r.startingFor&&r.tiles.some(h=>hexKey(h)===hexKey(action.destination))),'Evocations cannot enter starting rooms');
-  active.movesRemaining--;moveModel(s,snapshot(s,e.id)!,action.destination);
+  active.movesRemaining--;if(active.movesRemaining===0)active.moving=false;moveModel(s,snapshot(s,e.id)!,action.destination);
   if(s.evocationActivation===active&&active.movesRemaining===0&&active.attackUsed)finishEvocation(s);
   break;
   }
   case 'END_EVOCATION_MOVEMENT': {
    const {active}=requireEvocation(s,p.id);assert(active.movesRemaining>0,'No evocation movement remaining');
-   active.movesRemaining=0;
+   active.movesRemaining=0;active.moving=false;
    if(active.attackUsed)finishEvocation(s);
    break;
   }
@@ -2025,6 +2030,7 @@ function runAction(state: GameState, action: GameAction, answers: DecisionAnswer
    assert(target.evocation?.id!==e.id,'An evocation cannot attack itself');
    assert(!s.board.rooms.some(r=>r.startingFor&&r.tiles.some(h=>hexKey(h)===hexKey(target.position))),'Cannot target a model in its starting room');
   assert(areInSameRoom(s,e.position,target.position),'Target must be in the same room');
+  assert(!active.moving,'Finish the evocation movement before attacking');
   const actor=snapshot(s,e.id)!,ref=snapshot(s,action.targetId)!,roomId=roomAt(s,target.position)?.id;
   active.attackUsed=true;
   // Nigredo: instead of damaging, its controller may place or convert 1 cube in its room.

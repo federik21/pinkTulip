@@ -67,12 +67,13 @@ export function ActiveEvocationControls({game,playerId,enabled,pending,send}:Omi
   <div className="evocation-control-heading"><h2><span className="evocation-portrait" aria-hidden="true">{portrait(acting)}</span>{acting.name} #{evocationNumber(game,acting)}</h2><p>{active.movesRemaining} movement remaining · {active.attackUsed?'Attack used':'One attack available'}.</p>
    {acting.upgrade&&<p className="hint" data-upgrade={acting.upgrade}><strong>{UPGRADE_LABELS[acting.upgrade]}</strong>: {UPGRADE_RULES[acting.upgrade]}</p>}</div>
   {!active.attackUsed&&targets.length>0&&<div className="evocation-attack-targets" role="group" aria-label="Evocation attack targets" tabIndex={0}>
-   {targets.map(t=><button disabled={!enabled||pending} key={t.id} onClick={()=>send({type:'EVOCATION_ATTACK',playerId,targetId:t.id})}>{acting.name} attack {t.name}<small>{evocationAttack(acting)} damage</small></button>)}
+   {targets.map(t=><button disabled={!enabled||pending||!!active.moving} key={t.id} onClick={()=>send({type:'EVOCATION_ATTACK',playerId,targetId:t.id})}>{acting.name} attack {t.name}<small>{evocationAttack(acting)} damage</small></button>)}
   </div>}
   {!active.attackUsed&&targets.length===0&&<p className="evocation-no-targets hint">No enemy models in this room. {active.movesRemaining>0?'Move into an enemy’s room to attack, or finish the activation.':'Finish the activation to skip the attack.'}</p>}
   {active.attackUsed&&<p className="evocation-no-targets hint">Move to an adjacent room, stop movement early, or finish.</p>}
   <div className="evocation-finish-actions" role="group" aria-label="Evocation completion">
-   {active.movesRemaining>0&&<button disabled={!enabled||pending} onClick={()=>send({type:'END_EVOCATION_MOVEMENT',playerId})}>Finish evocation movement early</button>}
+   {active.movesRemaining>0&&!active.moving&&<button className="primary" disabled={!enabled||pending} onClick={()=>send({type:'BEGIN_EVOCATION_MOVEMENT',playerId})}>Start movement<small>{active.movesRemaining} spaces, all in one go</small></button>}
+   {active.movesRemaining>0&&active.moving&&<button disabled={!enabled||pending} onClick={()=>send({type:'END_EVOCATION_MOVEMENT',playerId})}>Finish movement early</button>}
    <button disabled={!enabled||pending} onClick={()=>send({type:'END_EVOCATION',playerId})}>Finish evocation</button>
   </div>
  </section>;

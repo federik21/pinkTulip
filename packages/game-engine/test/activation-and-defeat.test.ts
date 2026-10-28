@@ -49,6 +49,17 @@ describe.each(['ACTION','EVOCATION'] as const)('%s evocation effects in either o
   const s=applyAction(applyAction(activated(phase),attack),stop);
   expect(s.evocationActivation).toBeNull();expect(s.players[1].wizard.damageCubes).toBe(2);
  });
+ it('does all movement in one block started by a button; attack waits until it ends',()=>{
+  let s=activated(phase);s.players[1].wizard.position={q:1,r:0};
+  s=applyAction(s,{type:'BEGIN_EVOCATION_MOVEMENT',playerId:'p1'});
+  reject(s,{type:'BEGIN_EVOCATION_MOVEMENT',playerId:'p1'},/already started/);
+  s=applyAction(s,{type:'EVOCATION_STEP',playerId:'p1',destination:{q:1,r:0}});
+  reject(s,attack,/Finish the evocation movement/);
+  s=applyAction(s,stop);
+  expect(s.evocationActivation).toMatchObject({movesRemaining:0,moving:false});
+  reject(s,{type:'BEGIN_EVOCATION_MOVEMENT',playerId:'p1'},/No evocation movement/);
+  s=applyAction(s,attack);expect(s.evocationActivation).toBeNull();
+ });
  it('can move only and finish without an attack',()=>{
   let s=activated(phase);
   s=applyAction(s,{type:'EVOCATION_STEP',playerId:'p1',destination:{q:1,r:0}});

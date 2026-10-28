@@ -116,6 +116,8 @@ export type EvocationActivation = {
  evocationId: string; playerId: PlayerId; movesRemaining: number; returnToAction: boolean;
  // Omitted in older snapshots means the attack has not been used yet.
  attackUsed?: boolean;
+ // True while the evocation's single movement block is in progress; it must be spent or ended before the attack.
+ moving?: boolean;
  // Damage the Black Rose inflicts on the evocation when this activation ends.
  endDamage?: number;
  // Borrowed: playerId controls a model owned by this mage. Tendon: free Black Rose movement.
@@ -203,6 +205,7 @@ export type GameAction =
  | { type: 'USE_QUEST_REWARD'; playerId: PlayerId; questId: string; targetPlayerId?: PlayerId; targetEvocationId?: string; roomId?: RoomId; dummy?: boolean }
  | { type: 'PASS_ROUND'; playerId: PlayerId }
  | { type: 'ACTIVATE_EVOCATION'; playerId: PlayerId; evocationId: string }
+ | { type: 'BEGIN_EVOCATION_MOVEMENT'; playerId: PlayerId }
  | { type: 'EVOCATION_STEP'; playerId: PlayerId; destination: Hex }
  | { type: 'END_EVOCATION_MOVEMENT'; playerId: PlayerId }
  | { type: 'EVOCATION_ATTACK'; playerId: PlayerId; targetId: string }
