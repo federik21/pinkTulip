@@ -1,5 +1,5 @@
 import React from 'react';
-import { areInSameRoom, evocationAttack, evocationMovement, UPGRADE_LABELS, UPGRADE_RULES, Evocation, EVOCATION_MODEL_LIMITS, getEvocationKind, getEvocationSupply, getUpgradeSupply, GameAction, GameState, Hex, isInStartingRoom, hexKey } from '@brw/game-engine';
+import { areInSameRoom, evocationAttack, evocationMovement, UPGRADE_LABELS, UPGRADE_RULES, Evocation, EVOCATION_MODEL_LIMITS, getEvocationKind, getEvocationSupply, getMageEvocationCount, getUpgradeSupply, GameAction, GameState, Hex, isInStartingRoom, hexKey } from '@brw/game-engine';
 import { evocationNumber, mageStyle, ownerName, roomNameAt } from './presentation';
 import { DamageBar } from './DamageBar';
 import { ModelEffects } from './ModelEffects';
@@ -23,7 +23,8 @@ export function EvocationSupply({game}:{game:GameState}) {
    <span data-evocation-kind="CADAVER">☠ Cadavers <b>{supply.CADAVER}/{EVOCATION_MODEL_LIMITS.CADAVER}</b> available</span>
    <span data-evocation-kind="COLOSSUS">♜ Colossi <b>{supply.COLOSSUS}/{EVOCATION_MODEL_LIMITS.COLOSSUS}</b> available</span>
    <span data-evocation-kind="NIGREDO">☿ Nigredo <b>{supply.NIGREDO}/{EVOCATION_MODEL_LIMITS.NIGREDO}</b> available</span>
-  </div><p className="hint">Destroyed models return to this supply. Each mage may control at most 3 evocations.</p>
+   <span data-evocation-kind="UMBRA">☾ Umbra <b>{supply.UMBRA}/{EVOCATION_MODEL_LIMITS.UMBRA}</b> available</span>
+  </div><p className="hint">Destroyed models return to this supply. Each mage may control at most 3 evocations. Umbras share slots with evocations. Summoning into a full retinue replaces the chosen evocation without it counting as removed.</p>
   <p className="hint" data-upgrade-supply>Upgrade cards left: {Object.entries(getUpgradeSupply(game)).map(([name,count])=>`${UPGRADE_LABELS[name as keyof typeof UPGRADE_LABELS]} ${count}/3`).join(' · ')}</p>
  </section>;
 }
@@ -36,7 +37,12 @@ export function EvocationsPanel({game,playerId,viewerId,enabled,pending,send}:Pr
  const paid=game.phase==='ACTION'&&!isInStartingRoom(game,owner)&&owner.actionTokens>0&&(game.activation?.actionsUsed??2)<2&&!game.activation?.exploring&&!game.activation?.physicalAction;
  const canActivate=isOwn&&myTurn&&!active&&(game.phase==='EVOCATION'||paid)&&!pending;
  const evocations=game.evocations.filter(e=>e.playerId===playerId);
- return <section className="evocations-panel" id={`retinue-${playerId}`} aria-label={`${owner.name} evocations`}><div className="section-heading"><div><span className="eyebrow">{isOwn?'Your':`${owner.name}’s`} retinue · {evocations.length}/3</span><h2>Evocations · {owner.name}</h2></div></div>
+ const nightmares=game.evocations.filter(e=>e.assignedTo===playerId);
+ return <section className="evocations-panel" id={`retinue-${playerId}`} aria-label={`${owner.name} evocations`}><div className="section-heading"><div><span className="eyebrow">{isOwn?'Your':`${owner.name}’s`} retinue · {getMageEvocationCount(game,playerId)}/3</span><h2>Evocations · {owner.name}</h2></div></div>
+  {nightmares.map(n=><div className="nightmare-card" data-nightmare-id={n.id} data-owner-id={playerId} style={mageStyle(playerId)} key={n.id}><strong><span aria-hidden="true">☾ </span>{n.name} #{n.slot}</strong> <small>Black Rose · Nightmare on {owner.name}</small>
+   <div className="model-stats"><span>⚔ {evocationAttack(n)} attack</span><span>Strikes slot {n.slot}</span></div>
+   <DamageBar game={game} {...n} name={`${owner.name} ${n.name} #${n.slot}`}/>
+   <p className="hint">Activates at the start of the Evocation phase: hits {owner.name} and the evocation in slot {n.slot}.</p></div>)}
   {!evocations.length&&<p>No evocations yet. Activate a Grey room to summon a Cadaver. Each mage may control up to three models; tokens activate existing models, not summon them.</p>}
   {evocations.map(e=><div className={`evocation-card ${e.id===active?.evocationId?'active-model':''}`} style={mageStyle(e.playerId)} data-owned={isOwn} data-owner-id={e.playerId} data-evocation-id={e.id} key={e.id}>
     <strong className="evocation-heading"><span className={`evocation-portrait${getEvocationKind(e)==='COLOSSUS'?' big-portrait':''}`} aria-hidden="true">{portrait(e)}</span><span>{e.name} <span className="evocation-number">#{evocationNumber(game,e)}</span></span></strong>

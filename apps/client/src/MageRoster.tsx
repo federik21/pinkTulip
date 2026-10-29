@@ -1,5 +1,5 @@
 import React from 'react';
-import { BLACK_ROSE_ID, GameState, getSpellType } from '@brw/game-engine';
+import { BLACK_ROSE_ID, GameState, getMageEvocationCount, getSpellType } from '@brw/game-engine';
 import { DamageBar } from './DamageBar';
 import { ModelEffects } from './ModelEffects';
 import { MAGE_SYMBOLS, MAGE_COLOR_NAMES, mageStyle } from './presentation';
@@ -22,7 +22,7 @@ export function MageRoster({game,viewerId,actingPlayerId,onViewRetinue}: Props) 
     const types=readied.map(active=>getSpellType(active.card));
     const remaining=Object.values(p.prepared).filter(slot=>slot&&!slot.used).length;
    const status=!p.connected?'Disconnected':acting?game.phase==='EVOCATION'||game.evocationActivation?'Controlling evocations · acting now':'Acting now':p.passed?'Passed this round':p.studyDone&&game.phase==='STUDY'?'Study complete':p.preparationDone&&game.phase==='PREPARATION'?'Prepared':'In the lodge';
-   const evocationCount=game.evocations.filter(e=>e.playerId===p.id).length;
+  const evocationCount=getMageEvocationCount(game,p.id);
     return <details open className={`player mage-disclosure ${acting?'active-player':''}`} style={mageStyle(p.id)} data-player-id={p.id} aria-current={acting?'true':undefined} key={p.id}>
     <summary className="mage-summary">
      <div className="player-heading"><span><span className={acting?'acting-mage-icon':''} aria-hidden="true">{MAGE_SYMBOLS[p.id]}</span> {p.name} {p.id===game.firstPlayerId&&<span className="first-player" role="img" aria-label="First player" title="First-player token · +1 VP at endgame">♛</span>} {own&&<small>(you)</small>}<small className="mage-color-name">{MAGE_COLOR_NAMES[p.id]}</small></span><b>{p.victoryPoints}<small> VP</small></b></div>

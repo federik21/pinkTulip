@@ -15,6 +15,19 @@ function rewardMoment(moment:Moment):string {
   case 'MOVE_DAMAGED':return `Move a damaged model ${moment.distance}`;
   case 'ACTIVATE_ROOM':return 'Activate the room effect';
   case 'ACTIVATE_CHOICE':return 'Activate one of your evocations';
+  case 'MOVE_TARGET':return `Move the target ${moment.distance}`;
+  case 'ASSIGN_NIGHTMARE':return 'Assign an Umbra';
+  case 'ASSIGN_PER_EVENT':return 'Assign an Umbra per event';
+  case 'ACTIVATE_NIGHTMARES':return 'Activate Nightmares';
+  case 'REASSIGN_NIGHTMARES':return 'Reassign Umbras';
+  case 'STEAL_VP':return `Steal ${moment.amount} VP`;
+  case 'FIRST_PLAYER':return 'Give the first player token';
+  case 'DISCARD_CARDS':return `Discard ${moment.amount} cards`;
+  case 'ACTIVATE_ROOM_IF_NIGHTMARE':return 'Activate a room holding a Nightmare';
+  case 'INSTABILITY_PER_NIGHTMARE':return 'Instability per Nightmare';
+  case 'DRAW_EVENT':return 'Draw an event';
+  case 'GAIN_VP_PER_NIGHTMARE':return `Gain VP per Nightmare (max ${moment.max})`;
+  case 'IGNORE_DAMAGE':return `Ignore ${moment.amount} damage`;
   default:return `${{DAMAGE:'Damage',HEAL:'Heal',CONVERT:'Convert',BLACK_ROSE_CONVERT:'BR convert',INSTABILITY:'Instability',PAIN:'Pain'}[moment.effect]} ${moment.amount}`;
  }
 }

@@ -23,7 +23,7 @@ export function getRoomRewards(capacity:number):Room['rewards'] {
 }
 export const MAGE_COLORS: Record<string,string> = {p1:'#fb7185',p2:'#60a5fa',p3:'#fbbf24',p4:'#34d399'};
 export const MAGE_COLOR_NAMES: Record<string,string> = {p1:'Rose',p2:'Blue',p3:'Amber',p4:'Green'};
-export const EVOCATION_MODEL_LIMITS:Readonly<Record<EvocationKind,number>> = {SUCCUBUS:3,CADAVER:6,COLOSSUS:3,NIGREDO:3};
+export const EVOCATION_MODEL_LIMITS:Readonly<Record<EvocationKind,number>> = {SUCCUBUS:3,CADAVER:6,COLOSSUS:3,NIGREDO:3,UMBRA:9};
 export const UPGRADE_NAMES:readonly UpgradeName[]=['CEREBRAL_IMPLANT','CORROSIVE_PLASMA','MUSCULAR_IMPLANT','REGENERATING_ICHOR','REINFORCED_DERMIS','TENDON_IMPLANT'];
 export const UPGRADE_COPIES=3;
 export const UPGRADE_LABELS:Readonly<Record<UpgradeName,string>>={CEREBRAL_IMPLANT:'Cerebral implant',CORROSIVE_PLASMA:'Corrosive plasma',MUSCULAR_IMPLANT:'Muscular implant',REGENERATING_ICHOR:'Regenerating ichor',REINFORCED_DERMIS:'Reinforced dermis',TENDON_IMPLANT:'Tendon implant'};
@@ -41,7 +41,11 @@ export const getEvocationKind = (e:Evocation):EvocationKind => e.kind??(e.archet
 export function getEvocationSupply(s:Pick<GameState,'evocations'>):Record<EvocationKind,number> {
  const supply={...EVOCATION_MODEL_LIMITS};
  for(const e of s.evocations)supply[getEvocationKind(e)]--;
- return {SUCCUBUS:Math.max(0,supply.SUCCUBUS),CADAVER:Math.max(0,supply.CADAVER),COLOSSUS:Math.max(0,supply.COLOSSUS),NIGREDO:Math.max(0,supply.NIGREDO)};
+ return {SUCCUBUS:Math.max(0,supply.SUCCUBUS),CADAVER:Math.max(0,supply.CADAVER),COLOSSUS:Math.max(0,supply.COLOSSUS),NIGREDO:Math.max(0,supply.NIGREDO),UMBRA:Math.max(0,supply.UMBRA)};
+}
+// Assigned Nightmares attach to a slot but never occupy it; only real evocations count.
+export function getMageEvocationCount(s:Pick<GameState,'evocations'>,mageId:PlayerId):number {
+ return s.evocations.filter(e=>e.playerId===mageId).length;
 }
 // Upgrade cards are finite too: three copies each, derived from attached upgrades.
 export function getUpgradeSupply(s:Pick<GameState,'evocations'>):Record<UpgradeName,number> {
@@ -60,16 +64,36 @@ export const EVOCATION_TYPES = {
  COLOSSUS:{name:'Colossus',archetype:'UNDEAD',movement:2,attack:3,health:4,ability:'ENTRY_SHOCK'},
  // Instead of damaging its target, its controller may place or convert 1 cube in its room.
  NIGREDO:{name:'Nigredo',archetype:'CONSTRUCT',movement:2,attack:2,health:3,ability:'ALCHEMY'},
+ // Black Rose nightmare: assigned to a mage by spells, never summoned; it cannot move.
+ UMBRA:{name:'Umbra',archetype:'NIGHTMARE',movement:0,attack:1,health:2},
 } as const satisfies Record<EvocationKind,EvocationTemplate>;
 export type EvocationType = keyof typeof EVOCATION_TYPES;
 // Both the owner's three-model cap and the shared miniature supply must allow it.
 export function summonEvocation(s:GameState,p:Player,type:EvocationType,position:Hex):Evocation|undefined {
+ if(type==='UMBRA')return;
  const owned=s.evocations.filter(e=>e.playerId===p.id);
- if(owned.length>=3){s.log.push(`${p.name} already controls 3 evocations; no ${EVOCATION_TYPES[type].name} summoned.`);return;}
- if(getEvocationSupply(s)[type]===0){s.log.push(`No ${EVOCATION_TYPES[type].name} models remain in the shared supply; no model summoned.`);return;}
- if(type==='COLOSSUS'&&owned.some(e=>getEvocationKind(e)==='COLOSSUS')){s.log.push(`${p.name} already controls a big evocation; no Colossus summoned.`);return;}
- const number=[1,2,3].find(n=>!owned.some(e=>e.number===n))!;
  const template:EvocationTemplate=EVOCATION_TYPES[type];
+ const hasNightmare=s.evocations.some(e=>e.assignedTo===p.id);
+ const full=owned.length>=3;
+ if(full&&!instructionContexts.has(s)){s.log.push(`${p.name} already controls 3 evocations; no ${template.name} summoned.`);return;}
+ if(type==='COLOSSUS'&&owned.some(e=>getEvocationKind(e)==='COLOSSUS')){s.log.push(`${p.name} already controls a big evocation; no Colossus summoned.`);return;}
+ const free=[1,2,3].filter(n=>!owned.some(e=>e.number===n));
+ let number=free[0];
+ // A full retinue (or one carrying a Nightmare) lets the caster pick a slot; an occupied slot is replaced.
+ if(instructionContexts.has(s)&&(full||(free.length>1&&hasNightmare))) {
+  const options=(full?[1,2,3]:free).map(n=>{const o=owned.find(e=>e.number===n);return {id:String(n),label:o?`Slot ${n} · replace ${o.name}`:`Slot ${n}`};});
+  number=Number(askChoice(s,p.id,`slot|${p.id}`,`Choose an evocation slot for the new ${template.name}.`,options)!);
+ }
+ // Replacing is not a removal: the old model leaves silently (cubes return, no EVOCATION_LOST).
+ const replaced=owned.find(e=>e.number===number);
+ const supplyLeft=getEvocationSupply(s)[type]+(replaced&&getEvocationKind(replaced)===type?1:0);
+ if(supplyLeft===0){s.log.push(`No ${template.name} models remain in the shared supply; no model summoned.`);return;}
+ if(replaced) {
+  invalidateModel(s,snapshot(s,replaced.id)!);
+  for(const owner of s.players){const n=replaced.damageByPlayer[owner.id]??0;owner.cubes.available+=n;owner.cubes.onEvocations-=n;}
+  s.evocations=s.evocations.filter(model=>model.id!==replaced.id);
+  s.log.push(`${p.name} replaces ${replaced.name} #${number} with a new ${template.name}.`);
+ }
  const evocation:Evocation={id:resolutionId(s),playerId:p.id,number,kind:type,name:template.name,archetype:template.archetype,movement:template.movement,attack:template.attack,health:template.health,position:{...position},damageCubes:0,damageByPlayer:{},activated:false};
  if(template.passive)evocation.passive=template.passive;
  if(template.ability)evocation.ability=template.ability;
@@ -103,6 +127,8 @@ export function spellFilterAllows(card:Card,casterId:string,model:{playerId:stri
  return true;
 }
 export function spellCanTargetModel(card:Card,casterId:string,ownerId:string,kind:'MAGE'|'EVOCATION'):boolean {
+ // Nightmares belong to the Black Rose and are never chosen as a spell's model target.
+ if(kind==='EVOCATION'&&ownerId===BLACK_ROSE_ID)return false;
  if(card.target==='SELF')return kind==='MAGE' && casterId===ownerId;
  // Support, Protection and ongoing cards do not bypass the printed Self target.
  if(kind==='MAGE' && casterId===ownerId)return false;
@@ -314,7 +340,7 @@ function progressQuest(s: GameState, p: Player, kind: NonNullable<Player['quest'
 export function getQuestRewardTargets(s:GameState,p:Player,card:Card):FeedbackTarget[] {
  if(card.target==='ROOM')return s.board.rooms.filter(room=>!room.startingFor && room.tiles.some(h=>isWithinSpellRange(p.wizard.position,h,card.range))).map(roomFeedbackTarget);
  const models=[...s.players.map(m=>({id:m.id,name:m.name,playerId:m.id,position:m.wizard.position,kind:'MAGE' as const})),
-  ...s.evocations.map(e=>({id:e.id,name:`${e.name} #${e.number??1} · ${getPlayer(s,e.playerId).name}`,playerId:e.playerId,position:e.position,kind:'EVOCATION' as const}))];
+  ...s.evocations.filter(e=>e.archetype!=='NIGHTMARE').map(e=>({id:e.id,name:`${e.name} #${e.number??1} · ${getPlayer(s,e.playerId).name}`,playerId:e.playerId,position:e.position,kind:'EVOCATION' as const}))];
  return models.filter(model=>spellCanTargetModel(card,p.id,model.playerId,model.kind)
   && spellFilterAllows(card,p.id,{playerId:model.playerId,evocation:s.evocations.find(e=>e.id===model.id)})
   && (card.target==='SELF' || !roomAt(s,model.position)?.startingFor)
@@ -363,7 +389,7 @@ function drawQuest(s:GameState) {
 // stored in GameState; a root action remains a single clone/commit boundary.
 type ModelSnapshot = { id:string; playerId:string; kind:'MAGE'|'EVOCATION'; generation:number };
 // Local to a single effect, so a nested spell cannot replace its summoned model.
-type EffectResolution = { summoned?:ModelSnapshot; activationIsExplicit:boolean; upgraded?:boolean; removed?:{position:Hex;attack:number;roomId?:string}; eventPosition?:Hex; eventKind?:EvocationKind; damaged?:ModelSnapshot[] };
+type EffectResolution = { assigned?:string[]; eventActor?:ModelSnapshot; summoned?:ModelSnapshot; activationIsExplicit:boolean; upgraded?:boolean; removed?:{position:Hex;attack:number;roomId?:string}; eventPosition?:Hex; eventKind?:EvocationKind; damaged?:ModelSnapshot[] };
 type SpellEvent = { event:TriggerEvent; model?:ModelSnapshot; actor?:ModelSnapshot; roomId?:string; target?:FeedbackTarget; damageOrigin?:DamageOrigin; position?:Hex; kind?:EvocationKind; afterResolution?:()=>void };
 type PendingMageDefeat = { ref:ModelSnapshot; roomId?:string; target:FeedbackTarget; source?:Player };
 type ReplayEntropy={ids:string[];random:number[]};
@@ -454,6 +480,11 @@ function matchesTrigger(s:GameState,active:ActiveSpell,condition:TriggerConditio
  // Legacy in-flight Pain Marks may predate the declarative source filter.
  const damageOrigins=condition.damageOrigins??(active.card.name==='Pain Mark'&&active.card.ongoing&&condition.event==='DAMAGE_DEALT'?['MAGE_PHYSICAL','SPELL']:undefined);
  if(damageOrigins&&(!event.damageOrigin||!damageOrigins.includes(event.damageOrigin)))return false;
+ if(condition.modelKind&&event.model?.kind!==condition.modelKind)return false;
+ if(condition.roomColors) {
+  const color=event.roomId?s.board.rooms.find(r=>r.id===event.roomId)?.color:undefined;
+  if(!color||!condition.roomColors.includes(color))return false;
+ }
  const related=condition.relationTo==='EVENT_MODEL'?event.model:event.actor;
  if(condition.relation!=='ANY' && (!related || (condition.relation==='SELF')!==(related.playerId===active.playerId)))return false;
  // Hidden spells have no board binding. Evaluate model/room conditions at the
@@ -523,8 +554,15 @@ function resolveInstructionBody(s:GameState,owner:Player,instruction:TriggeredIn
   const evocation=instruction.to==='SUMMONED'?liveModel(s,effect?.summoned)?.evocation:target?.evocation;
   const done=assignUpgrade(s,evocation,instruction.upgrade);
   if(effect)effect.upgraded=done;
- } else if(instruction.effect==='ACTIVATE_TARGET'||instruction.effect==='REMOVE_EVOCATION'||instruction.effect==='REMOVED_BLAST'||instruction.effect==='LOOK_LIBRARY'||instruction.effect==='ACTIVATE_ROOM'||instruction.effect==='ATTACK_BONUS'||instruction.effect==='MOVE_DAMAGED'||instruction.effect==='LOSE_VP') {
+ } else if(instruction.effect==='ACTIVATE_TARGET'||instruction.effect==='REMOVE_EVOCATION'||instruction.effect==='REMOVED_BLAST'||instruction.effect==='LOOK_LIBRARY'||instruction.effect==='ACTIVATE_ROOM'||instruction.effect==='ATTACK_BONUS'||instruction.effect==='MOVE_DAMAGED'||instruction.effect==='LOSE_VP'||instruction.effect==='MOVE_TARGET'||instruction.effect==='ASSIGN_NIGHTMARE'||instruction.effect==='ASSIGN_PER_EVENT'||instruction.effect==='ACTIVATE_NIGHTMARES'||instruction.effect==='REASSIGN_NIGHTMARES'||instruction.effect==='STEAL_VP'||instruction.effect==='FIRST_PLAYER'||instruction.effect==='DISCARD_CARDS'||instruction.effect==='ACTIVATE_ROOM_IF_NIGHTMARE'||instruction.effect==='INSTABILITY_PER_NIGHTMARE'||instruction.effect==='DRAW_EVENT'||instruction.effect==='GAIN_VP_PER_NIGHTMARE') {
   // Spell moments only; triggered instructions never use these.
+ } else if(instruction.effect==='IGNORE_DAMAGE') {
+  // Persecution: heal the wounds just suffered, then return each ignored point to the damage's source.
+  if(!target?.mage)return;
+  const before=target.model.damageCubes;
+  healModel(s,target.model,target.location,instruction.amount,owner.id,modelFeedbackTarget(s,ref)!);
+  const ignored=before-target.model.damageCubes,culprit=effect?.eventActor;
+  if(ignored>0&&culprit)resolveInstruction(s,owner,{effect:'DAMAGE',amount:ignored,target:'EVENT_ACTOR'},culprit,undefined,actor,effect,'SPELL');
  } else if(room && (instruction.effect==='DAMAGE' || instruction.effect==='HEAL')) {
   const refs=[...s.players.filter(p=>inRoom(p,room)).map(p=>snapshot(s,p.id)!),...s.evocations.filter(e=>room.tiles.some(h=>hexKey(h)===hexKey(e.position))).map(e=>snapshot(s,e.id)!)];
   for(const model of refs)resolveInstruction(s,owner,instruction,model,undefined,actor,effect,damageOrigin);
@@ -650,7 +688,7 @@ function resolveEvent(s:GameState,event:SpellEvent) {
      const refs=selectedRef?[selectedRef]:selectedRoom?[...s.players.filter(p=>inRoom(p,selectedRoom)).map(p=>snapshot(s,p.id)!),...s.evocations.filter(e=>selectedRoom.tiles.some(h=>hexKey(h)===hexKey(e.position))).map(e=>snapshot(s,e.id)!)]:[];
      resolveEffectMoments(s,owner,active.card,selectedRoom??room,refs,ownerRef!);
     } else {
-   const effect:EffectResolution={activationIsExplicit:instructions.some(step=>step.effect==='ACTIVATE_EVOCATION'),eventPosition:event.position,eventKind:event.kind};
+   const effect:EffectResolution={activationIsExplicit:instructions.some(step=>step.effect==='ACTIVATE_EVOCATION'),eventPosition:event.position,eventKind:event.kind,eventActor:event.actor};
   for(const [index,instruction] of instructions.entries()) {
    s.log.push(`Moment ${index+1}/${instructions.length} · ${active.card.name}: ${describeInstruction(instruction)}`);
     let ref:ModelSnapshot|undefined,roomId:string|undefined;
@@ -694,6 +732,19 @@ function describeInstruction(instruction:TriggeredInstruction):string {
   case 'ACTIVATE_ROOM':return 'Activate the room effect where the chosen evocation stands.';
   case 'ACTIVATE_CHOICE':return `Activate one of your ${instruction.archetype==='CONSTRUCT'?'constructs':'evocations'}${instruction.attackBonus?` with +${instruction.attackBonus} attack`:''}${instruction.endDamage?`; when it ends BR inflicts ${instruction.endDamage} damage on it`:''}.`;
   case 'LOOK_LIBRARY':return `Look at ${instruction.cards} cards of one school, take 1 and discard the rest.`;
+  case 'MOVE_TARGET':return `Move ${target} up to ${instruction.distance} ${instruction.distance===1?'space':'spaces'}.`;
+  case 'ASSIGN_NIGHTMARE':return `Assign ${instruction.count??1} Umbra${(instruction.count??1)===1?'':'s'} to ${instruction.scope==='TARGET_ROOM'?`each ${instruction.others?'other ':''}mage in the target room`:target}; you choose each Umbra’s evocation slot.`;
+  case 'ASSIGN_PER_EVENT':return 'For each event on the event board, assign an Umbra to a mage of your choice.';
+  case 'ACTIVATE_NIGHTMARES':return `Activate ${instruction.of==='ASSIGNED'?'the Umbra just assigned':instruction.of==='ALL'?'each Nightmare in the game':'each Nightmare assigned to the target'} under your control${instruction.attackBonus?` with +${instruction.attackBonus} attack`:''}.`;
+  case 'REASSIGN_NIGHTMARES':return 'Reassign every other Umbra to the target.';
+  case 'STEAL_VP':return `Steal ${instruction.amount} victory ${instruction.amount===1?'point':'points'} from ${target}.`;
+  case 'FIRST_PLAYER':return `${target} gets the first player token.`;
+  case 'DISCARD_CARDS':return `${target} discards ${instruction.amount} cards${instruction.stealVp?'; steal 1 victory point for each it cannot discard':''}.`;
+  case 'ACTIVATE_ROOM_IF_NIGHTMARE':return 'If a Nightmare is in the target room, activate that room even if it was already used.';
+  case 'INSTABILITY_PER_NIGHTMARE':return 'Place 1 instability in the target room for each Nightmare in it.';
+  case 'DRAW_EVENT':return 'Draw a new event.';
+  case 'GAIN_VP_PER_NIGHTMARE':return `Gain 1 victory point for each Nightmare in the game, up to ${instruction.max}.`;
+  case 'IGNORE_DAMAGE':return `Ignore up to ${instruction.amount} of that damage; inflict 1 damage on the source for each point ignored.`;
  }
 }
 function modelEvent(s:GameState,event:TriggerEvent,ref:ModelSnapshot,actor=ref,roomId?:string,damageOrigin?:DamageOrigin) {
@@ -704,6 +755,7 @@ function moveModel(s:GameState,ref:ModelSnapshot,destination:Hex) {
  const target=liveModel(s,ref);if(!target)return;
  const from=roomAt(s,target.model.position)?.id;
  target.model.position={...destination};
+ if(target.mage)syncNightmares(s,target.mage.id);
  if(target.mage&&s.activation?.playerId===target.mage.id&&!isInStartingRoom(s,target.mage))delete s.activation.mustExitCell;
  const to=roomAt(s,destination)?.id;
  if(to && from!==to)modelEvent(s,'ENTER_ROOM',ref,ref,to);
@@ -802,7 +854,7 @@ function damage(s: GameState, target: Player, amount: number, source?: Player, a
  appendFeedback(s,{kind:'DAMAGE',target:feedbackTarget,sourceId:source?.id??BLACK_ROSE_ID,amount:inflicted});
  if(source && eventActor)cerebralImplant(s,source,eventActor);
  if(source && eventActor)modelEvent(s,'DAMAGE_DEALT',eventActor,eventActor,undefined,damageOrigin);
- emitEvent(s,{event:'DAMAGE_TAKEN',model:ref,actor:eventActor,roomId,target:feedbackTarget});
+ emitEvent(s,{event:'DAMAGE_TAKEN',model:ref,actor:eventActor,roomId,target:feedbackTarget,damageOrigin});
  if(target.wizard.damageCubes<target.wizard.health)return;
  const existing=context(s).defeats.get(ref.id);
  if(existing){existing.source=source;return;}
@@ -824,6 +876,7 @@ function settleMageDefeat(s:GameState,pending:PendingMageDefeat) {
   return;
  }
  invalidateModel(s,ref);
+ removeNightmares(s,target);
  s.log.push(`${target.name} is defeated and returns to their starting room.`);
  const contributions=Object.fromEntries(Object.entries(target.wizard.damageByPlayer).filter(([id,n])=>id!==target.id && n>0));
  const blackContribution=(contributions[BLACK_ROSE_ID]??0)+target.wizard.blackDamage;
@@ -886,14 +939,14 @@ function damageEvocation(s:GameState,e:Evocation,amount:number,source?:Player,ac
  appendFeedback(s,{kind:'DAMAGE',target:feedbackTarget,sourceId:source?.id??BLACK_ROSE_ID,amount:inflicted});
  if(source && actor)cerebralImplant(s,source,actor);
  if(source && actor)modelEvent(s,'DAMAGE_DEALT',actor,actor,undefined,damageOrigin);
- if(e.damageCubes<e.health){emitEvent(s,{event:'DAMAGE_TAKEN',model:ref,actor,roomId,target:feedbackTarget});return;}
+ if(e.damageCubes<e.health){emitEvent(s,{event:'DAMAGE_TAKEN',model:ref,actor,roomId,target:feedbackTarget,damageOrigin});return;}
  invalidateModel(s,ref);
  for(const owner of s.players) {
   const n=e.damageByPlayer[owner.id]??0;owner.cubes.available+=n;owner.cubes.onEvocations-=n;
  }
  s.evocations=s.evocations.filter(model=>model.id!==e.id);
  s.log.push(`${e.name} is destroyed; its damage cubes return to their owners.`);
- emitEvent(s,{event:'DAMAGE_TAKEN',model:ref,actor,roomId,target:feedbackTarget});
+ emitEvent(s,{event:'DAMAGE_TAKEN',model:ref,actor,roomId,target:feedbackTarget,damageOrigin});
  emitEvent(s,{event:'EVOCATION_LOST',model:ref,roomId,target:feedbackTarget,position:{...e.position},kind:getEvocationKind(e)});
 }
 
@@ -943,6 +996,93 @@ function assignUpgrade(s:GameState,e:Evocation|undefined,wanted:UpgradeName|'RAN
  s.log.push(`${e.name} #${e.number??1} gains ${UPGRADE_LABELS[upgrade]}: ${UPGRADE_RULES[upgrade]}`);
  if(e.damageCubes>=e.health)removeEvocation(s,e,'destroyed');
  return true;
+}
+
+// Nightmares: Black Rose evocations attached to a mage (slot = the assigned mage's evocation slot they strike).
+const isNightmare=(e:Evocation)=>e.archetype==='NIGHTMARE';
+const nightmaresOf=(s:GameState,mageId:PlayerId)=>s.evocations.filter(e=>e.assignedTo===mageId);
+// A Nightmare counts as an evocation in its mage's room and travels with it; this is not an entry, so no trigger fires.
+function syncNightmares(s:GameState,mageId:PlayerId) {
+ const mage=s.players.find(p=>p.id===mageId);
+ if(!mage)return;
+ for(const e of nightmaresOf(s,mageId))e.position={...mage.wizard.position};
+}
+function removeNightmares(s:GameState,mage:Player) {
+ for(const e of nightmaresOf(s,mage.id)) {
+  s.log.push(`${e.name} #${e.number??1} leaves ${mage.name}.`);
+  removeEvocation(s,e,'removed');
+ }
+}
+function assignNightmare(s:GameState,caster:Player,mage:Player,effect?:EffectResolution):Evocation|undefined {
+ if(!mage.wizard.alive)return;
+ if(s.evocations.filter(e=>e.assignedTo===mage.id).length>=3){s.log.push(`${mage.name} already carries 3 Umbras; none assigned.`);return;}
+ if(getEvocationSupply(s).UMBRA<=0){s.log.push('No Umbra models remain in the supply; none assigned.');return;}
+ const options=[1,2,3].map(n=>{
+  const occupant=s.evocations.find(e=>e.playerId===mage.id&&e.number===n);
+  return {id:String(n),label:`Slot ${n} · ${occupant?occupant.name:'empty'}`};
+ });
+ const slot=Number(askChoice(s,caster.id,`nightmare-slot|${caster.id}|${mage.id}`,`Assign an Umbra to ${mage.name}: choose the evocation slot it strikes.`,options)!);
+ const template=EVOCATION_TYPES.UMBRA;
+ const umbra:Evocation={id:resolutionId(s),playerId:BLACK_ROSE_ID,assignedTo:mage.id,slot,number:slot,kind:'UMBRA',name:template.name,archetype:template.archetype,movement:template.movement,attack:template.attack,health:template.health,position:{...mage.wizard.position},damageCubes:0,damageByPlayer:{},activated:true};
+ s.evocations.push(umbra);
+ if(effect)(effect.assigned??=[]).push(umbra.id);
+ s.log.push(`${caster.name} assigns an Umbra to ${mage.name} (slot ${slot}).`);
+ return umbra;
+}
+// Attack the assigned mage, then 1 damage to the evocation in the assigned slot. `controller` is undefined for BR.
+function activateNightmare(s:GameState,umbra:Evocation,controller?:Player,bonus=0) {
+ if(!s.evocations.includes(umbra))return;
+ const mage=s.players.find(p=>p.id===umbra.assignedTo);
+ if(!mage||!mage.wizard.alive)return;
+ const attack=evocationAttack(umbra)+bonus;
+ s.log.push(`${controller?.name??'BR'} activates ${umbra.name} on ${mage.name}: ${attack} damage to the mage and 1 to slot ${umbra.slot}.`);
+ const ref=snapshot(s,umbra.id)!;
+ modelEvent(s,'EVOCATION_ACTIVATED',ref);
+ damage(s,mage,attack,controller,ref,'EVOCATION');
+ if(!s.evocations.includes(umbra))return;
+ const occupant=s.evocations.find(e=>e.playerId===mage.id&&e.number===umbra.slot);
+ if(occupant)damageEvocation(s,occupant,1,controller,ref,'EVOCATION');
+}
+function activateNightmaresAtPhaseStart(s:GameState) {
+ let pending=s.evocations.filter(isNightmare);
+ if(!pending.length)return;
+ const chooser=s.players.find(p=>p.id===s.firstPlayerId)??s.players[0];
+ s.log.push('Nightmares activate first, in the order chosen by the first player.');
+ while(pending.length) {
+  let next=pending[0];
+  if(pending.length>1) {
+   const id=askChoice(s,chooser.id,`nightmare-order|${pending.length}`,'Choose the next Nightmare to activate.',
+    pending.map(e=>({id:e.id,label:`${e.name} #${e.number??1} on ${getPlayer(s,e.assignedTo!).name}`})))!;
+   next=pending.find(e=>e.id===id)??next;
+  }
+  activateNightmare(s,next);
+  pending=pending.filter(e=>e!==next&&s.evocations.includes(e));
+ }
+}
+function stealVictoryPoints(s:GameState,caster:Player,mage:Player,amount:number) {
+ if(mage.id===caster.id)return;
+ const before=mage.victoryPoints;
+ awardVictoryPoints(s,mage.id,-amount);
+ const stolen=before-mage.victoryPoints;
+ if(stolen>0){awardVictoryPoints(s,caster.id,stolen);s.log.push(`${caster.name} steals ${stolen} VP from ${mage.name}.`);}
+ else s.log.push(`${mage.name} has no victory points to steal.`);
+}
+
+// The target discards cards of its own choice; each card it cannot discard may cost it a victory point.
+function discardFromHand(s:GameState,caster:Player,mage:Player,spell:Card,amount:number,stealVp:boolean) {
+ for(let i=0;i<amount;i++) {
+  const eligible=mage.hand.filter(c=>!c.powerful);
+  if(!eligible.length){
+   s.log.push(`${mage.name} cannot discard a card.`);
+   if(stealVp)stealVictoryPoints(s,caster,mage,1);
+   continue;
+  }
+  const id=eligible.length===1?eligible[0].id:askChoice(s,mage.id,`discard|${mage.id}|${spell.id}|${i}`,`${spell.name}: discard a card.`,eligible.map(c=>({id:c.id,label:c.name})))!;
+  const card=eligible.find(c=>c.id===id)??eligible[0];
+  mage.hand.splice(mage.hand.indexOf(card),1);
+  discardCard(s,mage,card);
+  s.log.push(`${mage.name} discards ${card.name}.`);
+ }
 }
 
 function modelTarget(s:GameState,id:string) {
@@ -1141,6 +1281,10 @@ function startBlackRose(s: GameState) {
  if(!event)throw new GameRuleError('No event cards are available');
  s.usedEvent=event;
  s.log.push(`Round ${s.round} · BR — ${event.name}.`);
+ resolveDrawnEvent(s,event);
+}
+// A drawn event enters the board (ongoing) or resolves at once and is discarded.
+function resolveDrawnEvent(s:GameState,event:EventCard) {
  if(event.kind==='ONGOING') enterEventBoard(s,event);
  else s.eventDiscard.push(event);
  if(event.kind==='ONGOING') return;
@@ -1149,6 +1293,12 @@ function startBlackRose(s: GameState) {
   const candidates=shuffle(s.board.rooms.filter(r=>!r.startingFor && !r.reconstructed && r.instability<r.instabilityLimit),()=>resolutionRandom(s));
   for(const room of candidates.slice(0,event.rooms)) placeInstability(s,room,event.amount);
  }
+}
+function drawExtraEvent(s:GameState) {
+ const event=drawFromDiscard(s,s.eventDeck,s.eventDiscard);
+ if(!event){s.log.push('No event cards are available.');return;}
+ s.log.push(`BR — a new event is drawn: ${event.name}.`);
+ resolveDrawnEvent(s,event);
 }
 
 const heldQuests = (p:Player) => p.quest?[p.quest,...p.additionalQuests]:[...p.additionalQuests];
@@ -1492,6 +1642,7 @@ function startEvocationPhase(s:GameState) {
  s.phase='EVOCATION';s.activation=null;s.evocationActivation=null;
  for(const e of s.evocations)e.activated=false;
  s.log.push('EVOCATION — alternate models; every surviving evocation activates once.');
+ activateNightmaresAtPhaseStart(s);
  const first=seatOrder(s).find(p=>s.evocations.some(e=>e.playerId===p.id&&!e.activated));
  if(first)s.currentPlayerId=first.id;else cleanup(s);
 }
@@ -1603,8 +1754,14 @@ function moveDamaged(s:GameState,caster:Player,spell:Card,distance:number,effect
  const name=(ref:ModelSnapshot)=>modelFeedbackTarget(s,ref)!.name;
  const refId=live.length===1?live[0].id:askChoice(s,caster.id,`move-who|${caster.id}|${spell.id}`,`${spell.name}: choose a damaged model to move.`,live.map(r=>({id:r.id,label:name(r)})),true);
  const ref=live.find(r=>r.id===refId);
- if(!ref)return;
- const model=liveModel(s,ref)!.model;
+ if(ref)chooseMove(s,caster,spell,ref,distance);
+}
+// The caster picks where a live model goes, up to `distance` spaces away (never into a starting cell).
+function chooseMove(s:GameState,caster:Player,spell:Card,ref:ModelSnapshot,distance:number) {
+ const name=(r:ModelSnapshot)=>modelFeedbackTarget(s,r)!.name;
+ const live=liveModel(s,ref);
+ if(!live)return;
+ const model=live.model;
  const options=s.board.tiles.filter(h=>hexDistance(h,model.position)<=distance&&hexKey(h)!==hexKey(model.position)&&!s.board.rooms.some(r=>r.startingFor&&inRoomPosition(r,h)));
  if(!options.length)return;
  const hexId=askChoice(s,caster.id,`move-where|${caster.id}|${spell.id}`,`${spell.name}: move ${name(ref)} up to ${distance}.`,options.map(h=>{const r=roomAt(s,h);return {id:hexKey(h),label:r?.name??hexKey(h),...(r?{roomId:r.id}:{})};}),true);
@@ -1671,6 +1828,7 @@ function resolveMomentBody(s:GameState,caster:Player,spell:Card,step:Moment,room
  if(step.scope==='ALL_MAGES')refs=s.players.filter(p=>p.wizard.alive).map(p=>snapshot(s,p.id)!);
  if(step.scope==='DAMAGED')refs=(effect.damaged??[]).filter(ref=>!!liveModel(s,ref));
  if(step.scope==='TARGET_ROOM')refs=room?roomOccupants(s,room):[];
+ if(step.magesOnly)refs=refs.filter(ref=>ref.kind==='MAGE');
  if(step.scope==='CASTER_ROOM') {
   const origin=room??roomAt(s,caster.wizard.position);
   refs=origin?[...s.players.filter(p=>inRoom(p,origin)).map(p=>snapshot(s,p.id)!),...s.evocations.filter(e=>origin.tiles.some(h=>hexKey(h)===hexKey(e.position))).map(e=>snapshot(s,e.id)!)]:[];
@@ -1763,6 +1921,80 @@ function resolveMomentBody(s:GameState,caster:Player,spell:Card,step:Moment,room
  }
  if(step.effect==='LOOK_LIBRARY') {
   lookLibrary(s,caster,step.cards);
+  return;
+ }
+ if(step.effect==='MOVE_TARGET') {
+  if(refs[0]?.kind==='MAGE')chooseMove(s,caster,spell,refs[0],step.distance);
+  return;
+ }
+ if(step.effect==='ASSIGN_NIGHTMARE') {
+  for(const ref of refs) {
+   const mage=liveModel(s,ref)?.mage;
+   if(!mage||(step.others&&mage.id===caster.id))continue;
+   for(let i=0;i<(step.count??1);i++)assignNightmare(s,caster,mage,effect);
+  }
+  return;
+ }
+ if(step.effect==='ASSIGN_PER_EVENT') {
+  const count=eventBoardOf(s).filter(Boolean).length;
+  for(let i=0;i<count;i++) {
+   const mages=s.players.filter(p=>p.wizard.alive);
+   if(!mages.length)break;
+   const id=askChoice(s,caster.id,`ephialtes|${caster.id}|${i}`,`${spell.name}: choose a mage to receive an Umbra.`,mages.map(p=>({id:p.id,label:p.name})))!;
+   assignNightmare(s,caster,mages.find(p=>p.id===id)??mages[0],effect);
+  }
+  return;
+ }
+ if(step.effect==='ACTIVATE_NIGHTMARES') {
+  const list=step.of==='ALL'?s.evocations.filter(isNightmare)
+   :step.of==='ASSIGNED'?s.evocations.filter(e=>effect.assigned?.includes(e.id))
+   :refs.flatMap(ref=>{const mage=liveModel(s,ref)?.mage;return mage?nightmaresOf(s,mage.id):[];});
+  if(!list.length)s.log.push(`${spell.name}: no Nightmare to activate.`);
+  for(const umbra of list)activateNightmare(s,umbra,caster,step.attackBonus??0);
+  return;
+ }
+ if(step.effect==='REASSIGN_NIGHTMARES') {
+  const mage=liveModel(s,refs[0])?.mage;
+  if(!mage)return;
+  for(const umbra of s.evocations.filter(e=>isNightmare(e)&&e.assignedTo!==mage.id)) {
+   umbra.assignedTo=mage.id;umbra.position={...mage.wizard.position};
+   s.log.push(`${umbra.name} #${umbra.number??1} is reassigned to ${mage.name}.`);
+  }
+  return;
+ }
+ if(step.effect==='STEAL_VP') {
+  const mage=liveModel(s,refs[0])?.mage;
+  if(mage)stealVictoryPoints(s,caster,mage,step.amount);
+  return;
+ }
+ if(step.effect==='FIRST_PLAYER') {
+  const mage=liveModel(s,refs[0])?.mage;
+  if(mage){s.firstPlayerId=mage.id;s.log.push(`${mage.name} becomes the first player.`);}
+  return;
+ }
+ if(step.effect==='DISCARD_CARDS') {
+  const mage=liveModel(s,refs[0])?.mage;
+  if(mage)discardFromHand(s,caster,mage,spell,step.amount,!!step.stealVp);
+  return;
+ }
+ if(step.effect==='ACTIVATE_ROOM_IF_NIGHTMARE') {
+  const umbra=room?s.evocations.find(e=>isNightmare(e)&&inRoomPosition(room,e.position)):undefined;
+  if(!room||!umbra||!room.effect||room.startingFor||room.effect==='DRAW_POWERFUL'){s.log.push(`${spell.name}: no room effect to activate.`);return;}
+  activateRoomBody(s,caster,undefined,{room,position:{...umbra.position}});
+  return;
+ }
+ if(step.effect==='INSTABILITY_PER_NIGHTMARE') {
+  const count=room?s.evocations.filter(e=>isNightmare(e)&&inRoomPosition(room,e.position)).length:0;
+  if(room&&count>0)placeInstability(s,room,count,caster);
+  return;
+ }
+ if(step.effect==='DRAW_EVENT') {
+  drawExtraEvent(s);
+  return;
+ }
+ if(step.effect==='GAIN_VP_PER_NIGHTMARE') {
+  const gained=Math.min(step.max,s.evocations.filter(isNightmare).length);
+  if(gained>0){awardVictoryPoints(s,caster.id,gained);s.log.push(`${caster.name} gains ${gained} VP from Nightmares.`);}
   return;
  }
  if(step.amount<=0)return;

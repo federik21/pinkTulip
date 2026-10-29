@@ -63,6 +63,7 @@
 .spell-rules{display:block;font-size:10px;line-height:1.6;color:#ded3e1;margin-bottom:12px}
 .schools{grid-template-columns:repeat(auto-fit,minmax(min(150px,100%),1fr))}
 .schools button[data-school-id="alchemy"] .school-rune{color:#c4b5fd}
+.schools button[data-school-id="nightmare"] .school-rune{color:#818cf8}
 .active-spells-panel h2{margin:8px 0 14px;font-size:27px}
 .active-spell{display:flex;flex-direction:column;gap:7px;border:1px solid var(--border);border-left:3px solid var(--mage-color);border-radius:7px;background:#18121f;padding:13px;margin-top:12px}
 .active-spell strong{font-family:'Cormorant Garamond',serif;font-size:23px}
@@ -75,6 +76,7 @@
 .school-icon[data-school-id="agony"]{color:var(--gold)}
 .school-icon[data-school-id="technomancy"]{color:#86d9c0}
 .school-icon[data-school-id="alchemy"]{color:#c4b5fd}
+.school-icon[data-school-id="nightmare"]{color:#818cf8}
 .school-icon[data-school-id="forgotten"]{color:#dbb2f4}
 .school-icon[data-school-id="unaligned"]{color:var(--muted)}
 .spell-status{font-size:10px;font-weight:700;letter-spacing:.5px;color:var(--muted);margin-bottom:7px}
@@ -202,3 +204,5 @@ aside .log-panel{position:sticky;top:20px}aside .log{max-height:70vh}
 
 .spell-element{display:inline-block;margin-left:.35rem;padding:0 .35rem;border-radius:999px;border:1px solid currentColor;font-size:.75rem}
 .spell-enhancement{display:block;margin-top:.25rem;font-size:.8rem;font-style:italic;color:#d9b45a}
+.nightmare-card{border:1px dashed var(--mage-color);border-radius:8px;padding:.5rem;margin-top:.5rem;background:color-mix(in srgb,var(--mage-color) 10%,#19171d)}
+.hex .nightmare-marker .nightmare-crescent{fill:color-mix(in srgb,var(--mage-color) 25%,#18121f);stroke:var(--mage-color);stroke-width:1.2;stroke-dasharray:2 1;stroke-linejoin:round;pointer-events:none}

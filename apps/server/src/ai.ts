@@ -22,7 +22,7 @@ function models(s: GameState): Model[] {
  return [
   ...s.players.map(p => ({ id: p.id, playerId: p.id, kind: 'MAGE' as const, position: p.wizard.position,
    health: p.wizard.health, wounds: p.wizard.damageCubes, cubes: p.wizard.damageByPlayer })),
-  ...s.evocations.map(e => ({ id: e.id, playerId: e.playerId, kind: 'EVOCATION' as const, position: e.position,
+  ...s.evocations.filter(e => e.archetype !== 'NIGHTMARE').map(e => ({ id: e.id, playerId: e.playerId, kind: 'EVOCATION' as const, position: e.position,
    health: e.health, wounds: e.damageCubes, cubes: e.damageByPlayer })),
  ];
 }
@@ -41,7 +41,8 @@ function cardValue(card: Card): number {
   m.effect === 'REMOVE_EVOCATION' || m.effect === 'REMOVED_BLAST' || m.effect === 'MOVE_DAMAGED' || m.effect === 'ATTACK_BONUS' ? 0 : m.effect === 'LOOK_LIBRARY' ? 5 :
   m.effect === 'ACTIVATE_ROOM' || m.effect === 'ACTIVATE_CHOICE' ? 3 : m.effect === 'LOSE_VP' ? 3 * m.amount :
   m.effect === 'PAIN' ? -2 * m.amount : m.effect === 'DAMAGE' ? 3 * m.amount :
-  m.effect === 'INSTABILITY' ? 4 * m.amount : m.amount
+  m.effect === 'INSTABILITY' ? 4 * m.amount :
+  'amount' in m ? m.amount : 3
  ), 0) + (card.ongoing ? 6 : 0) + (card.trigger ? 4 : 0) + Math.min(card.range, 4);
 }
 function bestCards(cards: Card[]): Card[] {

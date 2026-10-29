@@ -311,11 +311,56 @@ export function createAlchemyDeck(prefix: string, schoolId?: string): Card[] {
  return Array.from({ length: 36 }, (_, i) => ({ ...patterns[i % patterns.length], id: `${prefix}-${i + 1}`, kind: 'SPELL', ...(schoolId ? {schoolId} : {}) }));
 }
 
+export function createNightmareDeck(prefix: string, schoolId?: string): Card[] {
+ const m = moment;
+ const unstable = m.inCasterRoom(m.instability(1));
+ const assign = (count = 1): Moment => ({ effect: 'ASSIGN_NIGHTMARE', count });
+ const activate = (of: 'ASSIGNED' | 'TARGET' | 'ALL', attackBonus?: number): Moment => ({ effect: 'ACTIVATE_NIGHTMARES', of, ...(attackBonus ? { attackBonus } : {}) });
+ const patterns: Omit<Card, 'id' | 'kind'>[] = [
+  { name: 'Hysterical Escape', element: 'air', spellType: 'CONTINGENCY', range: 2, target: 'MAGE', moments: [unstable, { effect: 'MOVE_TARGET', distance: 1 }, { effect: 'MOVE_TARGET', distance: 1 }, assign(), activate('ASSIGNED')],
+   rulesText: 'Move the target 1, then again 1. Assign an Umbra to the target and activate it under your control.' },
+  { name: 'Thorn of Thorns', element: 'stars', spellType: 'CONTINGENCY', range: 2, target: 'MAGE', moments: [{ effect: 'STEAL_VP', amount: 1 }, assign(), activate('ASSIGNED'), { effect: 'FIRST_PLAYER' }],
+   rulesText: 'Steal 1 victory point from the target. Assign an Umbra to it and activate it under your control. The target gets the first player token.' },
+  { name: 'Persecution', element: 'evil', spellType: 'PROTECTION', range: Number.POSITIVE_INFINITY, target: 'SELF', moments: [],
+   triggerText: 'After a spell inflicts damage to you',
+   rulesText: 'Ignore up to 3 of that damage. For each ignored damage, inflict 1 damage to the caster of that spell.',
+   trigger: { event: 'DAMAGE_TAKEN', relation: 'SELF', relationTo: 'EVENT_MODEL', scope: 'BOUND_MODEL', damageOrigins: ['SPELL'] },
+   triggerEffects: [{ effect: 'IGNORE_DAMAGE', amount: 3, target: 'EVENT_MODEL' }] },
+  { name: 'Shifting Nightmare', element: 'evil', spellType: 'TRAP', range: Number.POSITIVE_INFINITY, target: 'MAGE', moments: [m.damage(3), activate('TARGET')], triggerTarget: 'EVENT_MODEL',
+   triggerText: 'When another mage enters a purple or grey room',
+   rulesText: 'Inflict 3 damage to that mage, then activate each Nightmare assigned to it under your control.',
+   trigger: { event: 'ENTER_ROOM', relation: 'ENEMY', scope: 'ANY', modelKind: 'MAGE', roomColors: ['violet', 'grey'] } },
+  { name: 'Mental Chasm', element: 'evil', spellType: 'TRAP', range: Number.POSITIVE_INFINITY, target: 'MAGE', moments: [m.convert(3), { effect: 'DISCARD_CARDS', amount: 2, stealVp: true }], triggerTarget: 'EVENT_MODEL',
+   triggerText: 'When another mage enters a blue or yellow room',
+   rulesText: 'Convert 3 damage on that mage. It discards 2 cards; for each card it cannot discard, steal 1 victory point from it.',
+   trigger: { event: 'ENTER_ROOM', relation: 'ENEMY', scope: 'ANY', modelKind: 'MAGE', roomColors: ['azure', 'amber'] } },
+  { name: 'Shadow Blast', element: 'evil', spellType: 'TRAP', range: Number.POSITIVE_INFINITY, target: 'ROOM',
+   moments: [{ effect: 'DAMAGE', amount: 2, scope: 'TARGET_ROOM', magesOnly: true }, { effect: 'ASSIGN_NIGHTMARE', count: 1, others: true, scope: 'TARGET_ROOM', magesOnly: true }, { effect: 'INSTABILITY_PER_NIGHTMARE' }], triggerTarget: 'EVENT_ROOM',
+   triggerText: 'When another mage enters a red or green room',
+   rulesText: 'Inflict 2 damage to every other mage in that room and assign an Umbra to each. For each Nightmare in that room, place 1 instability there.',
+   trigger: { event: 'ENTER_ROOM', relation: 'ENEMY', scope: 'ANY', modelKind: 'MAGE', roomColors: ['crimson', 'emerald'] } },
+  { name: 'Humiliation', element: 'wild', spellType: 'COMBAT', range: 2, target: 'MAGE', moments: [unstable, m.damage(2), activate('TARGET')],
+   rulesText: 'Inflict 2 damage. Each Nightmare assigned to the target activates under your control.' },
+  { name: 'Traitor Nightmare', element: 'wild', spellType: 'CONTINGENCY', range: Number.POSITIVE_INFINITY, target: 'ROOM', moments: [unstable, { effect: 'ACTIVATE_ROOM_IF_NIGHTMARE' }],
+   rulesText: 'If there is a Nightmare in the target room, activate that room even if it was already used.' },
+  { name: 'Painful Loss', element: 'stars', spellType: 'COMBAT', range: 2, target: 'ROOM', moments: [m.damage(1), { effect: 'ASSIGN_NIGHTMARE', count: 1, scope: 'TARGET_ROOM', magesOnly: true }],
+   rulesText: 'Inflict 1 damage. Assign an Umbra to each mage in the target room.' },
+  { name: 'Anguish', element: 'stars', spellType: 'CONTINGENCY', range: 2, target: 'MAGE', moments: [unstable, assign(2), activate('ALL'), { effect: 'DRAW_EVENT' }],
+   rulesText: 'Assign 2 Umbras to the target. Each Nightmare in the game activates under your control. Draw a new event.' },
+  { name: 'Recurring Nightmare', element: 'air', spellType: 'CONTINGENCY', range: 1, target: 'MAGE', moments: [assign(), { effect: 'REASSIGN_NIGHTMARES' }, activate('TARGET', 1)],
+   rulesText: 'Assign an Umbra to the target and reassign every other Umbra to it. All Umbras assigned to the target activate under your control with +1 attack.' },
+  { name: 'Ephialtes', element: 'evil', spellType: 'CONTINGENCY', range: 0, target: 'SELF', moments: [unstable, { effect: 'DRAW_EVENT' }, { effect: 'ASSIGN_PER_EVENT' }, { effect: 'GAIN_VP_PER_NIGHTMARE', max: 5 }],
+   rulesText: 'Draw an event. For each event on the event board, assign an Umbra to a mage. Gain 1 victory point for each Nightmare in the game, up to 5.' },
+ ];
+ return Array.from({ length: 36 }, (_, i) => ({ ...patterns[i % patterns.length], id: `${prefix}-${i + 1}`, kind: 'SPELL', ...(schoolId ? {schoolId} : {}) }));
+}
+
 export function createLibrary(): LibraryDeck[] {
  return [
   { id: 'agony', name: 'Agony', cards: shuffle(createAgonyDeck('agony', 'agony')), discard: [] },
   { id: 'technomancy', name: 'Technomancy', cards: shuffle(createTechnomancyDeck('technomancy', 'technomancy')), discard: [] },
   { id: 'alchemy', name: 'Alchemy', cards: shuffle(createAlchemyDeck('alchemy', 'alchemy')), discard: [] },
+  { id: 'nightmare', name: 'Nightmare', cards: shuffle(createNightmareDeck('nightmare', 'nightmare')), discard: [] },
  ];
 }
 

@@ -16,7 +16,7 @@ export type GameFeedbackEvent = { id: string; round: number; interruptId?: strin
  | { kind: 'MAGE_DEFEATED'; target: FeedbackTarget; sourceId: string; contributions: Record<string, number>; awards: Array<{ playerId: string; cubes: number; rank: number; tied: boolean; points: number }>; bonusPlayerId?: string; returnedCubes: Record<string, number>; respawnRoomId: string }
  | { kind: 'SPELL_TRIGGERED'; activeSpellId: string; ownerId: string; cardName: string; spellType: SpellType; trigger: TriggerEvent; target?: FeedbackTarget; roomId?: string; ongoing: boolean; effects?: string[] }
 );
-export type TriggerCondition = { event: TriggerEvent; relation: 'ENEMY' | 'SELF' | 'ANY'; scope: 'BOUND_MODEL' | 'BOUND_ROOM' | 'BOUND_COLOR' | 'ANY'; relationTo?: 'EVENT_ACTOR' | 'EVENT_MODEL'; damageOrigins?: DamageOrigin[] };
+export type TriggerCondition = { event: TriggerEvent; relation: 'ENEMY' | 'SELF' | 'ANY'; scope: 'BOUND_MODEL' | 'BOUND_ROOM' | 'BOUND_COLOR' | 'ANY'; relationTo?: 'EVENT_ACTOR' | 'EVENT_MODEL'; damageOrigins?: DamageOrigin[]; roomColors?: RoomColor[]; modelKind?: 'MAGE' | 'EVOCATION' };
 // One step of an effect. A Moment is a tagged union (the TypeScript equivalent of
 // a Swift enum with associated values): add a variant with its own payload to
 // teach the engine a new kind of step. A card resolves its moments in array
@@ -56,7 +56,22 @@ export type Moment = (
  // Fixed `amount` and `models` (evocations too) override the removed model's attack / mages-only default.
  | { effect: 'REMOVED_BLAST'; amount?: number; models?: boolean }
  | { effect: 'LOOK_LIBRARY'; cards: number }
-) & { scope?: 'CASTER' | 'CASTER_ROOM' | 'TARGET_ROOM' | 'ALL_MAGES' | 'DAMAGED'; when?: MomentCondition; area?: { range: number } };
+ // Nightmares (Black Rose evocations attached to mages). The caster picks the slot of each assignment.
+ | { effect: 'MOVE_TARGET'; distance: number }
+ | { effect: 'ASSIGN_NIGHTMARE'; count?: number; others?: boolean }
+ | { effect: 'ASSIGN_PER_EVENT' }
+ | { effect: 'ACTIVATE_NIGHTMARES'; of: 'ASSIGNED' | 'TARGET' | 'ALL'; attackBonus?: number }
+ | { effect: 'REASSIGN_NIGHTMARES' }
+ | { effect: 'STEAL_VP'; amount: number }
+ | { effect: 'FIRST_PLAYER' }
+ | { effect: 'DISCARD_CARDS'; amount: number; stealVp?: boolean }
+ | { effect: 'ACTIVATE_ROOM_IF_NIGHTMARE' }
+ | { effect: 'INSTABILITY_PER_NIGHTMARE' }
+ | { effect: 'DRAW_EVENT' }
+ | { effect: 'GAIN_VP_PER_NIGHTMARE'; max: number }
+ // Ignore up to `amount` of the damage just suffered; each ignored point is inflicted on the damage's source.
+ | { effect: 'IGNORE_DAMAGE'; amount: number }
+) & { scope?: 'CASTER' | 'CASTER_ROOM' | 'TARGET_ROOM' | 'ALL_MAGES' | 'DAMAGED'; when?: MomentCondition; area?: { range: number }; magesOnly?: boolean };
 export type MomentEffect = Moment['effect'];
 export type TriggeredInstruction = Moment & { target: 'BOUND_MODEL' | 'BOUND_ROOM' | 'EVENT_MODEL' | 'EVENT_ACTOR' | 'EVENT_ROOM' | 'OWNER' };
 // Enhancement: if the caster's other revealed spells show `requires` symbols, the
@@ -82,11 +97,13 @@ export type PreparedCard = { card: Card; used: boolean };
 export type PreparedCards = { rapid: PreparedCard | null; slot1: PreparedCard | null; slot2: PreparedCard | null; slot3: PreparedCard | null };
 // health is the authoritative maximum HP; damageCubes tracks current wounds.
 export type Wizard = { id: string; playerId: PlayerId; health: number; attack: number; movement: number; damageCubes: number; blackDamage: number; damageByPlayer: Record<PlayerId, number>; damageOrder: PlayerId[]; position: Hex; startingRoomId: RoomId; alive: boolean };
-export type EvocationKind = 'CADAVER' | 'SUCCUBUS' | 'COLOSSUS' | 'NIGREDO';
+export type EvocationKind = 'CADAVER' | 'SUCCUBUS' | 'COLOSSUS' | 'NIGREDO' | 'UMBRA';
 export type Evocation = {
  // At most one attached upgrade; health already includes its bonus.
  upgrade?: UpgradeName;
- id: string; playerId: PlayerId; name: string; archetype: 'UNDEAD' | 'DEMON' | 'CONSTRUCT'; movement: number; attack: number; health: number;
+ id: string; playerId: PlayerId; name: string; archetype: 'UNDEAD' | 'DEMON' | 'CONSTRUCT' | 'NIGHTMARE'; movement: number; attack: number; health: number;
+ // Nightmares belong to the Black Rose and attach to a mage; `slot` is the assigned mage's evocation slot (1-3) they strike.
+ assignedTo?: PlayerId; slot?: number;
  // Optional for snapshots predating finite model supplies; infer from archetype.
  kind?: EvocationKind;
  // Owner-local model slot, stable for its lifetime; optional for legacy states.
