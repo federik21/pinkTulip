@@ -17,9 +17,14 @@ function ChoiceDialog({decision,disabled,send}:{decision:Extract<PendingDecision
  </DecisionDialog>;
 }
 
+/** Choices whose every option is a room are answered by clicking the map and confirming in the top bar. */
+export function isRoomChoice(decision:Extract<PendingDecision,{kind:'CHOICE'}>):boolean {
+ return decision.options.length>0&&decision.options.every(o=>!!o.roomId);
+}
+
 export function ChoicePrompt({game,viewerId,connected,pending,send}:Props) {
  const decision=game.pendingDecision;
- if(!decision||decision.kind!=='CHOICE')return null;
+ if(!decision||decision.kind!=='CHOICE'||isRoomChoice(decision))return null;
  if(decision.playerId===viewerId)return <ChoiceDialog key={decision.key} decision={decision} disabled={!connected||pending} send={send}/>;
  return null;
 }

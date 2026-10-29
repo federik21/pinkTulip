@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ACTIONS_PER_TURN, ELEMENT_GLYPHS, getEffectiveSpell, spellFilterAllows, spellReaches, getSpellType, getDiscardMoveCards, canUseSpellDummy, spellCanTargetModel, upgradeLegacyCards, Card, GameAction, GameState, Player, Room, MAX_MAGES, MIN_MAGES, ROOM_COLORS, ROOM_EFFECT_LABELS, isInStartingRoom, isWithinSpellRange, mustLeaveCell, hexDistance, hexKey } from '@brw/game-engine';
 import { ActiveEvocationControls, EvocationSupply, EvocationsPanel, targetModels } from './EvocationsPanel';
-import { PhysicalActionsPanel, PhysicalBannerActions } from './PhysicalActionsPanel';
+import { PhysicalActionsPanel, PhysicalBannerActions, physicalContext } from './PhysicalActionsPanel';
 import { useBoardZoom, ZoomControls } from './BoardZoom';
 import { CombatFeedback, FeedbackPulse, useGameFeedback } from './CombatFeedback';
 const MOMENT_MS=1500; // keep in sync with server SLOW_AI_STEP_MS
@@ -17,7 +17,7 @@ import { SchoolIcon } from './SchoolIcon';
 import { LobbyPanel } from './LobbyPanel';
 import { InfoPopup } from './InfoPopup';
 import { SoulTithePrompt } from './SoulTithePrompt';
-import { ChoicePrompt } from './ChoicePrompt';
+import { ChoicePrompt, isRoomChoice } from './ChoicePrompt';
 import { EventBoard } from './EventBoard';
 import { ActivationConfirmation, ReactiveSpellPrompt } from './ReactiveSpellPrompt';
 import { ModelEffectMarkers, RoomTrapTokens } from './ModelEffects';
@@ -144,6 +144,8 @@ function App() {
  const [momentToast,setMomentToast]=useState('');
  const momentQueue=useRef<string[]>([]),momentSeen=useRef<{gameId:string;len:number}|null>(null),momentBusy=useRef(false);
  const [effectTargetId,setEffectTargetId]=useState('');
+ const [pickingEmerald,setPickingEmerald]=useState(false);
+ const [choicePick,setChoicePick]=useState<{key:string;roomId:string}|null>(null);
  const boardZoom=useBoardZoom();
  const feedback=useGameFeedback(game);
  const wsRef=useRef<WebSocket|null>(null);
@@ -167,11 +169,13 @@ function App() {
  },[]);
  const phase=game?.phase,round=game?.round;
  useEffect(()=>{
-  setQuickControls(false);
+  setQuickControls(false);setPickingEmerald(false);
   setSelectedSlot(null);setSelectedRoom(null);setSelectedModelId('');setDummy(false);setExitCardId('');
   if(!phase||phase==='LOBBY')return;
   setOverlay(phase);const timer=window.setTimeout(()=>setOverlay(null),2400);return()=>window.clearTimeout(timer);
  },[phase,round]);
+ const pendingChoiceKey=game?.pendingDecision?.kind==='CHOICE'?game.pendingDecision.key:'';
+ useEffect(()=>{if(pendingChoiceKey)setQuickControls(false);},[pendingChoiceKey]);
  const myActivation=game?.activation?.playerId===playerId;
  const actionsUsed=game?.activation?.actionsUsed,exploring=game?.activation?.exploring;
  const activeEvocationId=game?.evocationActivation?.evocationId;
@@ -213,7 +217,7 @@ function App() {
   if(wsRef.current?.readyState!==WebSocket.OPEN){setError('Server disconnected. Reload to reconnect.');return;}
     if(requestRef.current)return;
     const requestId=`${Date.now()}-${++requestCount.current}`;
-    requestRef.current=requestId;setPending(true);
+    requestRef.current=requestId;setPending(true);setPickingEmerald(false);
     if(action.type==='PERFORM_MOVEMENT'||action.type==='ACTIVATE_EVOCATION'||action.type==='DISCARD_EXIT')setQuickControls(false);
     if(action.type==='UNDO_ACTION'||action.type==='REDO_ACTION') {
      setSelectedSlot(null);setSelectedRoom(null);setSelectedModelId('');setDummy(false);setExitCardId('');setEffectTargetId('');setHistoryRevision(n=>n+1);
@@ -271,6 +275,31 @@ function App() {
   return spellModelsInRoom(room).length>0;
  };
  const room=game.board.rooms.find(r=>r.id===selectedRoom);
+ // Room-targeted effects (Emerald rooms, Fountain-style room choices) are answered on the map and confirmed in the top bar.
+ const emeraldCtx=pickingEmerald&&myTurn?physicalContext(game,me,effectTargetId):null;
+ const emeraldPicking=!!emeraldCtx&&!!active?.physicalAction&&!active.roomEffectUsed&&!active.exploring&&emeraldCtx.roomAvailable&&emeraldCtx.currentRoom?.effect==='INSTABILITY';
+ const pendingDecision=game.pendingDecision;
+ const choiceDecision=pendingDecision?.kind==='CHOICE'&&pendingDecision.playerId===me.id&&isRoomChoice(pendingDecision)?pendingDecision:null;
+ const choiceRoomId=choiceDecision&&choicePick?.key===choiceDecision.key?choicePick.roomId:'';
+ const mapPick=choiceDecision
+  ?{prompt:choiceDecision.prompt,rooms:new Set(choiceDecision.options.map(o=>o.roomId!)),chosen:choiceRoomId,cancelLabel:choiceDecision.optional?'Decline':'',select:(id:string)=>setChoicePick({key:choiceDecision.key,roomId:id})}
+  :emeraldPicking&&emeraldCtx
+  ?{prompt:'Emerald effect: choose the room that receives instability.',rooms:new Set(emeraldCtx.effectTargets.map(r=>r.id)),chosen:effectTargetId||emeraldCtx.currentRoom?.id||'',cancelLabel:'Cancel',select:(id:string)=>setEffectTargetId(id===emeraldCtx.currentRoom?.id?'':id)}
+  :null;
+ const beginRoomPick=()=>{setEffectTargetId('');setSelectedSlot(null);setSelectedRoom(null);setPickingEmerald(true);if(quickControls)closeQuickControls();};
+ const confirmMapPick=()=>{
+  if(pending||!mapPick?.chosen)return;
+  if(choiceDecision){const option=choiceDecision.options.find(o=>o.roomId===mapPick.chosen);if(option)send({type:'RESPOND_CHOICE',playerId:me.id,key:choiceDecision.key,choiceId:option.id});}
+  else if(emeraldCtx)send(emeraldCtx.activateRoom(me.id));
+ };
+ const cancelMapPick=()=>{
+  if(choiceDecision){if(!pending)send({type:'RESPOND_CHOICE',playerId:me.id,key:choiceDecision.key});}
+  else setPickingEmerald(false);
+ };
+ const pickBar=mapPick&&<div className="room-pick-bar" role="group" aria-label="Choose a room on the map">
+  <div role="status" aria-live="polite"><span className="eyebrow">Choose a room</span><strong>{mapPick.prompt}</strong><small>{mapPick.chosen?`Selected: ${game.board.rooms.find(r=>r.id===mapPick.chosen)?.name??''}`:'Click a highlighted room on the map.'}</small></div>
+  <div className="room-pick-actions"><button type="button" className="primary" disabled={pending||!mapPick.chosen} onClick={confirmMapPick}>Confirm room</button>{mapPick.cancelLabel&&<button type="button" disabled={pending} onClick={cancelMapPick}>{mapPick.cancelLabel}</button>}</div>
+ </div>;
  const cast=()=>{
   if(!selectedSlot||!spell)return;
   if(activatingSpell && !dummy) {
@@ -314,13 +343,15 @@ function App() {
   <nav className="phase-track">{(['BLACK_ROSE','STUDY','PREPARATION','ACTION','EVOCATION','CLEANUP'] as const).map((phase,i)=><div key={phase} className={game.phase===phase?'current':''}><small>0{i+1}</small><span>{phaseInfo[phase][1]}</span></div>)}</nav>
   {actingPlayer&&<div className="turn-banner" style={mageStyle(actingPlayer.id)}><span className="acting-mage-icon" aria-hidden="true">{emoji[actingPlayer.id]}</span><div className="turn-banner-text" role="status" aria-live="polite"><span className="eyebrow">{actingPlayer.id===me.id?'Your turn':'Mage acting'}</span><strong>{actingPlayer.name}</strong><small>{game.evocationActivation?'Controlling an evocation':game.phase==='EVOCATION'?'Choosing an evocation':'Taking an Action turn'}</small></div>
   {(showHistory||myTurn)&&<div className="turn-banner-controls">
-    {myTurn&&active?.physicalAction&&<PhysicalBannerActions game={game} me={me} pending={pending} effectTargetId={effectTargetId} send={send}/>}
+    {myTurn&&active?.physicalAction&&<PhysicalBannerActions game={game} me={me} pending={pending} effectTargetId={effectTargetId} beginRoomPick={beginRoomPick} send={send}/>}
     {showHistory&&<div className="turn-history" role="group" aria-label="Action history"><button type="button" aria-label="Undo action" title={game.history?.undoLabel?`Undo: ${game.history.undoLabel}`:undefined} disabled={!enabled||pending||!game.history?.canUndo} onClick={()=>send({type:'UNDO_ACTION',playerId:me.id})}><span aria-hidden="true">↶ </span>Undo</button><button type="button" aria-label="Redo action" title={game.history?.redoLabel?`Redo: ${game.history.redoLabel}`:undefined} disabled={!enabled||pending||!game.history?.canRedo} onClick={()=>send({type:'REDO_ACTION',playerId:me.id})}>Redo<span aria-hidden="true"> ↷</span></button></div>}
     {myTurn&&cellExitRequired&&<small className="cell-exit-reminder" role="status">Use your last action to leave the cell.</small>}
     {myTurn&&<button type="button" className="primary end-turn" disabled={endTurnDisabled} onClick={()=>{setExitCardId('');send({type:'END_ACTIVATION',playerId:me.id});}}>End turn <span className="turn-action-count">({turnActionsUsed}/{ACTIONS_PER_TURN})</span></button>}
    </div>}
     {ownEvocationActive&&<ActiveEvocationControls game={game} playerId={me.id} enabled={enabled} pending={pending} send={send}/>}
+    {pickBar}
   </div>}
+  {!actingPlayer&&pickBar&&<div className="turn-banner">{pickBar}</div>}
   {overlay&&<div className="phase-overlay" role="status" onClick={()=>setOverlay(null)}><span>{phaseInfo[overlay][0]}</span><small>ROUND {game.round}</small><h1>{phaseInfo[overlay][1]}</h1><p>{phaseInfo[overlay][2]}</p><small>Click to continue</small></div>}
   {toast&&!momentToast&&<div className="toast" role="status" onClick={dismissToasts}>{toast}</div>}
   {momentToast&&<div className="toast moment-toast" role="status" aria-live="polite" onClick={dismissToasts}>{momentToast}</div>}
@@ -342,7 +373,7 @@ function App() {
     <TrapReminders game={game} viewerId={me.id}/>
     {game.phase!=='LOBBY'&&<EventBoard game={game}/>}
     <ControlBanner selected={controlTab} floating={quickControls} onClose={closeQuickControls}
-    actions={<>{game.phase==='ACTION'&&game.currentPlayerId===me.id&&!game.evocationActivation?<PhysicalActionsPanel key={historyRevision} game={game} me={me} enabled={enabled} pending={pending} exitCardId={exitCardId} setExitCardId={setExitCardId} effectTargetId={effectTargetId} setEffectTargetId={setEffectTargetId} clearSpell={()=>{setSelectedSlot(null);setSelectedRoom(null);setSelectedModelId('');setDummy(false);}} send={send}/>:<div className="control-waiting"><h2>Physical actions</h2><p>{game.evocationActivation?'An evocation is active. Open Evocations to continue.':game.phase==='ACTION'?`${game.players.find(p=>p.id===game.currentPlayerId)?.name??'Another mage'} is acting.`:'Physical actions are available during the Action phase.'}</p></div>}</>}
+    actions={<>{game.phase==='ACTION'&&game.currentPlayerId===me.id&&!game.evocationActivation?<PhysicalActionsPanel key={historyRevision} game={game} me={me} enabled={enabled} pending={pending} exitCardId={exitCardId} setExitCardId={setExitCardId} effectTargetId={effectTargetId} setEffectTargetId={setEffectTargetId} beginRoomPick={beginRoomPick} clearSpell={()=>{setSelectedSlot(null);setSelectedRoom(null);setSelectedModelId('');setDummy(false);}} send={send}/>:<div className="control-waiting"><h2>Physical actions</h2><p>{game.evocationActivation?'An evocation is active. Open Evocations to continue.':game.phase==='ACTION'?`${game.players.find(p=>p.id===game.currentPlayerId)?.name??'Another mage'} is acting.`:'Physical actions are available during the Action phase.'}</p></div>}</>}
     spells={spellControls}
      evocations={<>
       {game.phase==='EVOCATION'&&<section className="evocation-phase"><span className="eyebrow">After the mages act</span><h2>Evocation phase</h2><p>{game.currentPlayerId===me.id?'Choose an unused evocation from your retinue.':`${game.players.find(p=>p.id===game.currentPlayerId)?.name} is controlling their evocations.`} Each model activates once. Move and attack in either order, or use only one; attacks target an enemy in the same room. Active controls are in the top banner.</p></section>}
@@ -353,7 +384,7 @@ function App() {
      </>}
     quests={<QuestsPanel game={game} me={me} disabled={!enabled||pending} send={send}/>}
     />
-    <section className="board-panel"><div className="section-heading"><div><span className="eyebrow">The lodge</span><h2>{movingEvocation&&activeEvocation?`${activeEvocation.name} #${evocationNumber(game,activeEvocation)} · choose an adjacent space`:exitCardId&&myTurn?'Discard to move · choose an adjacent space':spell?`Target: ${spell.name}${dummy?' · dummy':''}`:active?.exploring&&myTurn?'Explore · choose an adjacent space':'Chambers of the BR'}</h2></div><div className="board-tools"><ZoomControls zoom={boardZoom.zoom} onZoomIn={boardZoom.zoomIn} onZoomOut={boardZoom.zoomOut} onReset={boardZoom.resetZoom}/><button type="button" className="info-button" aria-label="Lodge information" onClick={()=>setInfoPopup('lodge')}>ⓘ Info</button></div></div>
+    <section className="board-panel"><div className="section-heading"><div><span className="eyebrow">The lodge</span><h2>{mapPick?'Choose a highlighted room':movingEvocation&&activeEvocation?`${activeEvocation.name} #${evocationNumber(game,activeEvocation)} · choose an adjacent space`:exitCardId&&myTurn?'Discard to move · choose an adjacent space':spell?`Target: ${spell.name}${dummy?' · dummy':''}`:active?.exploring&&myTurn?'Explore · choose an adjacent space':'Chambers of the BR'}</h2></div><div className="board-tools"><ZoomControls zoom={boardZoom.zoom} onZoomIn={boardZoom.zoomIn} onZoomOut={boardZoom.zoomOut} onReset={boardZoom.resetZoom}/><button type="button" className="info-button" aria-label="Lodge information" onClick={()=>setInfoPopup('lodge')}>ⓘ Info</button></div></div>
       <div className="board-viewport" ref={boardZoom.setViewport} style={boardZoom.viewportStyle} tabIndex={0} role="region" aria-label="Scrollable lodge board"><svg className="board" style={boardZoom.boardStyle} viewBox="-210 -165 420 330" role="group" aria-label="Hexagonal lodge board">{game.board.rooms.map(r=>{
       const h=r.tiles[0],x=(h.q+h.r/2)*62,y=h.r*54;
       const occupants=game.players.filter(p=>r.tiles.some(tile=>hexKey(p.wizard.position)===hexKey(tile)));
@@ -364,15 +395,17 @@ function App() {
       const evocationReachable=!!movingEvocation&&(game.evocationActivation?.movesRemaining??0)>0&&hexDistance(h,movingEvocation.position)===1&&!r.startingFor;
       const mageReachable=myTurn&&(!!active?.exploring||readyExitCard&&turnActionsRemaining>0&&!active?.physicalAction&&!active?.discardedExit)&&hexDistance(h,me.wizard.position)===1&&!r.startingFor;
       const reachable=evocationReachable||mageReachable;
-      const targetable=myTurn&&turnActionsRemaining>0&&!!spell&&canTarget(r);
+      const targetable=!mapPick&&myTurn&&turnActionsRemaining>0&&!!spell&&canTarget(r);
+      const pickable=!!mapPick&&mapPick.rooms.has(r.id);
       const choose=()=>{
       if(pending)return;
+      if(mapPick){if(pickable)mapPick.select(r.id);return;}
       if(evocationReachable)send({type:'EVOCATION_STEP',playerId:me.id,destination:h});
       else if(mageReachable&&exitCardId&&!active?.exploring){send({type:'DISCARD_EXIT',playerId:me.id,cardId:exitCardId,destination:h});setExitCardId('');}
       else if(reachable)send({type:'EXPLORE_STEP',playerId:me.id,destination:h});
       else {setSelectedRoom(r.id);setSelectedModelId('');}
       };
-      return <g key={r.id} data-room-id={r.id} data-color={r.color??undefined} transform={`translate(${x},${y})`} className={`hex ${occupants.some(p=>p.id===actingPlayer?.id)?'acting-room':''} ${r.reconstructed?'rebuilt':''} ${r.startingFor?'start-room':''} ${r.id==='room-0,0'?'central':''} ${selectedRoom===r.id?'selected':''} ${reachable||targetable?'reachable':''}`} role="button" tabIndex={0} aria-label={`${r.name}, ${r.startingFor?'protected starting room':roomStatus(r)}${!r.reconstructed?contributions.map(([id,n])=>`, ${ownerName(game,id)}: ${n} cubes`).join(''):''}${occupants.map(p=>`, ${p.name}`).join('')}${summons.map(e=>`, ${e.name} #${evocationNumber(game,e)} of ${ownerName(game,e.playerId)}`).join('')}`} onClick={choose} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();choose();}}}>
+      return <g key={r.id} data-room-id={r.id} data-color={r.color??undefined} transform={`translate(${x},${y})`} className={`hex ${occupants.some(p=>p.id===actingPlayer?.id)?'acting-room':''} ${r.reconstructed?'rebuilt':''} ${r.startingFor?'start-room':''} ${r.id==='room-0,0'?'central':''} ${selectedRoom===r.id?'selected':''} ${reachable||targetable||pickable?'reachable':''} ${pickable&&mapPick?.chosen===r.id?'pick-chosen':''}`} role="button" tabIndex={0} aria-label={`${r.name}, ${r.startingFor?'protected starting room':roomStatus(r)}${!r.reconstructed?contributions.map(([id,n])=>`, ${ownerName(game,id)}: ${n} cubes`).join(''):''}${occupants.map(p=>`, ${p.name}`).join('')}${summons.map(e=>`, ${e.name} #${evocationNumber(game,e)} of ${ownerName(game,e.playerId)}`).join('')}`} onClick={choose} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();choose();}}}>
       <title>{r.name}{r.color?` · ${r.color}`:''} · {r.effect?ROOM_EFFECT_LABELS[r.effect]:'Protected starting room'}{r.reconstructed?` · Rebuilt · ${roomStatus(r)}`:` · Rewards ${r.rewards.join('/')} VP`}</title><polygon points="0,-33 29,-16 29,16 0,33 -29,16 -29,-16"/>
           <FeedbackPulse feedback={feedback} kind="ROOM" targetId={r.id} svg/>
           <RoomTrapTokens game={game} viewerId={me.id} roomId={r.id}/>

@@ -89,6 +89,11 @@
 .turn-banner .evocation-controls button small{font-size:11px;margin-top:2px}
 .turn-banner .evocation-finish-actions{display:flex;align-items:stretch;gap:6px}
 .turn-banner .evocation-finish-actions button{flex:1 1 0;max-width:170px}
+/* Map-based room picking: confirmation row in the top bar; chosen room stands out from the standard movement highlight. */
+.turn-banner>.room-pick-bar{order:1;flex:1 1 100%;display:flex;align-items:center;flex-wrap:wrap;justify-content:space-between;gap:8px 14px;padding:8px 0 0;border-top:1px solid #d7b67b33}
+.turn-banner>.room-pick-bar>div:first-child{flex:1 1 220px}
+.room-pick-actions{display:flex;gap:6px;flex-wrap:wrap}
+.hex.pick-chosen polygon{fill:#6a4a2a!important;stroke:#fff3c9;stroke-width:6}
 @media(max-width:1380px){.turn-banner{margin-left:26px;margin-right:26px}}
 @media(max-width:720px){
  .turn-banner{margin:8px 8px 0;padding:7px 10px;gap:8px;flex-wrap:wrap}

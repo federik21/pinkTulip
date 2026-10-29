@@ -110,7 +110,7 @@ export type DecisionDetails = {
  options: Array<{ activeSpellId: string; card: Card; targets: FeedbackTarget[] }>;
 } | {
  kind: 'CHOICE'; playerId: PlayerId; key: string; prompt: string; optional: boolean;
- options: Array<{ id: string; label: string }>;
+ options: Array<{ id: string; label: string; roomId?: string }>;
 } | { kind: 'WAITING'; playerId: PlayerId; key: string };
 export type PendingDecision = DecisionDetails & {
  resume?: { action: GameAction; answers: DecisionAnswer[]; entropy?: { ids: string[]; random: number[] } };

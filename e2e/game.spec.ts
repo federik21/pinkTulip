@@ -652,7 +652,6 @@ test('two browsers exhaust two round tokens, spend turn actions on spells, and r
       const emeraldCubes = (await hex(a, '1,-2').locator('.cube-count').textContent())!;
       await beginPhysical(ember, pages, 'EXPLORE', 1);
       await expect(roomButton(a)).toBeEnabled();
-      await expect(a.getByLabel('Emerald effect target')).toBeEnabled();
       await tap(movementButton(a));
       await expect(a.locator('.movement-progress strong')).toHaveText('2 movement remaining');
       await expect(roomButton(a)).toBeDisabled();
@@ -1029,12 +1028,13 @@ test('four real browsers wait for every joined mage, auto-start, show named room
       await move(mage, pages, paths[index][0]);
       if (index !== 2) {
         if (index === 3) {
-          const options = mage.page.getByLabel('Emerald effect target').locator('option');
-          const text = await options.allTextContents();
-          expect(text.length).toBeGreaterThan(1);
-          expect(text.slice(1).every(option => names.some(name => option.startsWith(name.trim())))).toBe(true);
-        }
-        await tap(roomButton(mage.page));
+          // Emerald: the target room is picked on the map and confirmed in the top bar.
+          await tap(roomButton(mage.page));
+          const bar = mage.page.getByRole('group', { name: 'Choose a room on the map' });
+          await expect(bar).toBeVisible();
+          await expect(mage.page.locator('.hex.reachable').first()).toBeVisible();
+          await tap(bar.getByRole('button', { name: 'Confirm room', exact: true }));
+        } else await tap(roomButton(mage.page));
         await expect(mage.page.locator('.physical-effects')).toHaveCount(0);
       } else await skipEffects(mage, pages);
       await beginPhysical(mage, pages, 'EXPLORE', 0);

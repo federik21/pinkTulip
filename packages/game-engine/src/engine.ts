@@ -733,7 +733,7 @@ class DecisionNeeded extends Error {
  constructor(readonly decision:DecisionDetails,readonly answers:DecisionAnswer[]) {super('Decision needed');}
 }
 
-function askChoice(s:GameState,playerId:PlayerId,keyBase:string,prompt:string,options:Array<{id:string;label:string}>,optional=false):string|undefined {
+function askChoice(s:GameState,playerId:PlayerId,keyBase:string,prompt:string,options:Array<{id:string;label:string;roomId?:string}>,optional=false):string|undefined {
  const ctx=context(s),key=`choice|${keyBase}|${ctx.cursor}`,given=ctx.answers[ctx.cursor];
  if(given?.key===key){ctx.cursor++;return given.accept?given.targetId:undefined;}
  throw new DecisionNeeded({kind:'CHOICE',playerId,key,prompt,optional,options},ctx.answers.slice(0,ctx.cursor));
@@ -1200,6 +1200,28 @@ function discardCard(s:GameState,p:Player,card:Card) {
  (school?school.discard:p.discard).push(card);
 }
 
+// Every precondition activateRoomBody asserts for the mage's own room. Root actions that
+// activate a room after a damage step (PUNCH ... END) check this first: an interrupt there
+// replays the action later, and a rule error at that point would strand the decision.
+function roomActivationProblem(s:GameState,p:Player,targetRoomId?:string):string|null {
+ try {
+  const room=s.board.rooms.find(r=>inRoom(p,r));
+  assert(room?.effect && !room.startingFor,'No room effect in a starting room');
+  assert(!targetRoomId || room!.effect==='INSTABILITY','Only Emerald instability takes a target room');
+  if(room!.effect==='DRAW_POWERFUL'&&s.powerfulDeck.length>0)assert(getCentralDiscardOptions(p).length>=CENTRAL_ROOM_DISCARD_COST,`Discard ${CENTRAL_ROOM_DISCARD_COST} cards from your hand to activate the central chamber`);
+  assert(!room!.reconstructed||!room!.specialUsed,'Reconstructed room special already used this Action phase');
+  if(room!.effect==='INSTABILITY') {
+   const target=targetRoomId?getRoom(s,targetRoomId):room!;
+   assert(!target.startingFor,'Starting rooms cannot be targeted');
+   const distance=Math.min(...target.tiles.flatMap(h=>room!.tiles.map(origin=>hexLineDistance(origin,h))));
+   assert(Number.isFinite(distance)&&distance<=1,'Room effect target out of range (maximum 1)');
+  }
+  return null;
+ } catch(error) {
+  if(error instanceof GameRuleError)return error.message;
+  throw error;
+ }
+}
 function activateRoom(s:GameState,p:Player,targetRoomId?:string) {
  atMomentEnd(s,()=>activateRoomBody(s,p,targetRoomId));
 }
@@ -1571,7 +1593,7 @@ const inRoomPosition=(room:Room,position:Hex)=>room.tiles.some(h=>hexKey(h)===he
 function chooseRoomPosition(s:GameState,caster:Player,spell:Card):Hex|undefined {
  const rooms=s.board.rooms.filter(r=>!r.startingFor);
  if(!rooms.length)return;
- const id=askChoice(s,caster.id,`room|${caster.id}|${spell.id}`,`${spell.name}: choose a room.`,rooms.map(r=>({id:r.id,label:r.name})))!;
+ const id=askChoice(s,caster.id,`room|${caster.id}|${spell.id}`,`${spell.name}: choose a room.`,rooms.map(r=>({id:r.id,label:r.name,roomId:r.id})))!;
  return rooms.find(r=>r.id===id)?.tiles[0];
 }
 // The caster chooses one model damaged by this effect and moves it up to `distance` spaces.
@@ -1585,7 +1607,7 @@ function moveDamaged(s:GameState,caster:Player,spell:Card,distance:number,effect
  const model=liveModel(s,ref)!.model;
  const options=s.board.tiles.filter(h=>hexDistance(h,model.position)<=distance&&hexKey(h)!==hexKey(model.position)&&!s.board.rooms.some(r=>r.startingFor&&inRoomPosition(r,h)));
  if(!options.length)return;
- const hexId=askChoice(s,caster.id,`move-where|${caster.id}|${spell.id}`,`${spell.name}: move ${name(ref)} up to ${distance}.`,options.map(h=>({id:hexKey(h),label:roomAt(s,h)?.name??hexKey(h)})),true);
+ const hexId=askChoice(s,caster.id,`move-where|${caster.id}|${spell.id}`,`${spell.name}: move ${name(ref)} up to ${distance}.`,options.map(h=>{const r=roomAt(s,h);return {id:hexKey(h),label:r?.name??hexKey(h),...(r?{roomId:r.id}:{})};}),true);
  const dest=options.find(h=>hexKey(h)===hexId);
  if(dest){s.log.push(`${caster.name} moves ${name(ref)} to ${roomAt(s,dest)?.name??hexKey(dest)}.`);moveModel(s,ref,dest);}
 }
@@ -2179,6 +2201,8 @@ function runAction(state: GameState, action: GameAction, answers: DecisionAnswer
   case 'PUNCH': {
   const a=requirePhysicalAction(s,p);assert(p.actionTokens>0,'No action tokens');
   const target=mageAttackTarget(s,p,action.targetId);
+  // Validate only on the first run: a replay after an interrupt answer was already accepted.
+  if(action.roomEffect&&context(s).answers.length===0){const problem=roomActivationProblem(s,p,action.roomTargetId);assert(!problem,problem!);}
   p.actionTokens--; a.actionsUsed++;a.roomEffectUsed=false;
   const ref=snapshot(s,action.targetId)!,actor=snapshot(s,p.id)!,roomId=roomAt(s,target.position)?.id;
   if(action.roomEffect==='START'){activateRoom(s,p,action.roomTargetId);a.roomEffectUsed=true;}
@@ -2187,7 +2211,12 @@ function runAction(state: GameState, action: GameAction, answers: DecisionAnswer
   resolveInstruction(s,p,{effect:'DAMAGE',amount:p.wizard.attack,target:'EVENT_MODEL'},ref,undefined,actor,undefined,'MAGE_PHYSICAL');
    modelEvent(s,'MAGE_ATTACK',ref,actor,roomId);
   }
-  if(action.roomEffect==='END' && liveModel(s,actor)){activateRoom(s,p,action.roomTargetId);a.roomEffectUsed=true;}
+  if(action.roomEffect==='END' && liveModel(s,actor)) {
+   // Interrupts during the punch (traps, moves) may have changed the room since validation.
+   const problem=roomActivationProblem(s,p,action.roomTargetId);
+   if(problem)s.log.push(`${p.name}'s room effect can no longer be activated (${problem}); it is skipped.`);
+   else {activateRoom(s,p,action.roomTargetId);a.roomEffectUsed=true;}
+  }
   afterAction(s); break;
   }
   case 'ACTIVATE_SPELL': case 'CAST_SPELL': case 'CAST_POWERFUL_SPELL': castSpell(s,p,action); break;

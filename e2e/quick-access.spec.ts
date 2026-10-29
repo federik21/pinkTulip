@@ -608,14 +608,11 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
       await openQuick(page, 'Physical actions');
       await command(page, wire, () => banner(page).getByRole('button', { name: /^Explore/ }).click(),
         { type: 'BEGIN_PHYSICAL_ACTION', playerId: 'p1', kind: 'EXPLORE' });
-      const target = banner(page).getByRole('combobox', { name: 'Emerald effect target', exact: true });
-      const chosen = await target.locator('option').nth(1).getAttribute('value');
-      expect(chosen).toBeTruthy(); await target.selectOption(chosen!);
       const original = await banner(page).locator('.physical-effects').elementHandle();
       const snapshot = structuredClone(wire.state), status = wire.history.status(wire.state, 'p1');
       await backToMap(page, 'Physical actions'); await openQuick(page, 'Quests'); await backToMap(page, 'Quests');
       await openChronicle(page); await expectLog(page, snapshot); await closeChronicle(page);
-      await openQuick(page, 'Physical actions'); await expect(target).toHaveValue(chosen!);
+      await openQuick(page, 'Physical actions');
       expect(await original!.evaluate(element => element === document.querySelector('.physical-effects'))).toBe(true);
       expect(wire.state).toEqual(snapshot); expect(wire.history.status(wire.state, 'p1')).toEqual(status);
       expect(wire.requests).toHaveLength(1);
@@ -630,7 +627,6 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
       expect(wire.state).toEqual(snapshot);
       await backToMap(page, 'Physical actions'); await openQuick(page, 'Physical actions');
       await expect(banner(page).locator('.physical-effects')).toHaveAttribute('data-physical-kind', 'EXPLORE');
-      await expect(target).toHaveValue(''); // Undo/redo intentionally resets transient choices.
       expect(wire.state.players[0].actionTokens).toBe(1); expect(wire.state.activation!.actionsUsed).toBe(1);
     });
 
