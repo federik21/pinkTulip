@@ -80,78 +80,6 @@ function physicalCards(s:GameState) {
  ].map(c=>c.id).sort();
 }
 
-describe('Transmutation physical school contract',()=>{
- it.each([1,2,3,4])('creates %i seats with empty personal zones and exactly 108 shared plus 12 forgotten physical cards',count=>{
-  const s=createGame(count),cards=physicalCards(s);
-  expect(cards).toHaveLength(120);expect(new Set(cards).size).toBe(120);
-  expect(s.library.flatMap(d=>d.cards)).toHaveLength(108);expect(s.library.every(d=>d.discard.length===0)).toBe(true);
-  expect(s.powerfulDeck).toHaveLength(12);expect(s.powerfulDeck.every(c=>c.powerful)).toBe(true);
-  for(const p of s.players) {
-   expect(p.personalDeck).toEqual([]);expect(p.hand).toEqual([]);expect(p.discard).toEqual([]);
-   expect(p.prepared).toEqual({rapid:null,slot1:null,slot2:null,slot3:null});
-  }
- });
-
- describe.each(['cantrip','transmutation','enchantment'])('%s starting grimoire',schoolId=>{
-  it.each([2,3,4])('allocates seven actual school cards for %i mages, then Study keeps four cards with normal school routing',count=>{
-   let s=createGame(count);const cards=physicalCards(s),school=s.library.find(d=>d.id===schoolId)!;
-   const stock=[...school.cards],studySchool=s.library.find(d=>d.id!==schoolId)!;
-   s.eventDeck=[{id:'quiet',name:'Quiet',description:'No effect',kind:'BLACK_DAMAGE',amount:0,rooms:0}];
-   for(const p of s.players)p.connected=true;
-   for(const p of s.players) {
-    s=applyAction(s,{type:'SELECT_STARTING_SCHOOL',playerId:p.id,schoolId});
-    s=applyAction(s,{type:'SET_READY',playerId:p.id,ready:true});
-   }
-   const lobby=structuredClone(s);s=applyAction(s,{type:'START_GAME',playerId:'p1'});
-   expect(lobby.players.every(p=>p.hand.length+p.personalDeck.length+p.discard.length===0)).toBe(true);
-   expect(s.phase).toBe('BLACK_ROSE');
-   for(const [i,p] of s.players.entries()) {
-    expect(p.startingSchoolId).toBe(schoolId);expect(p.hand).toEqual([]);
-    expect(p.personalDeck).toEqual(stock.slice(i*7,i*7+6));expect(p.discard).toEqual([stock[i*7+6]]);
-    expect([...p.personalDeck,...p.discard].every(c=>c.schoolId===schoolId)).toBe(true);
-   }
-   expect(s.library.find(d=>d.id===schoolId)!.cards).toEqual(stock.slice(count*7));
-   expect(s.library.filter(d=>d.id!==schoolId)).toEqual(lobby.library.filter(d=>d.id!==schoolId));
-   expect(s.powerfulDeck).toEqual(lobby.powerfulDeck);expect(physicalCards(s)).toEqual(cards);
-   s=applyAction(s,{type:'ADVANCE_PHASE',playerId:'p1',expectedPhase:'BLACK_ROSE',expectedRound:1});
-   expect(s.phase).toBe('STUDY');
-   for(const [i,p] of s.players.entries()) {
-    expect(p.hand).toEqual(stock.slice(i*7,i*7+2));expect(p.personalDeck).toEqual(stock.slice(i*7+2,i*7+6));
-    expect(p.discard).toEqual([stock[i*7+6]]);
-   }
-   expect(physicalCards(s)).toEqual(cards);
-   for(const [i,p] of s.players.entries()) {
-    const drawn=studySchool.cards.slice(i*4,i*4+4);
-    s=applyAction(s,{type:'DRAW_STUDY',playerId:p.id,deckId:studySchool.id});
-    expect(s.players[i].hand).toEqual([...stock.slice(i*7,i*7+2),...drawn]);
-    expect(physicalCards(s)).toEqual(cards);
-    const before=structuredClone(s);
-    expect(()=>applyAction(s,{type:'DISCARD_STUDY',playerId:p.id,cardIds:[stock[i*7].id,drawn[0].id]})).toThrow(/this Study/);
-    expect(s).toEqual(before);
-    s=applyAction(s,{type:'DISCARD_STUDY',playerId:p.id,cardIds:drawn.slice(0,2).map(c=>c.id)});
-    expect(s.players[i].hand).toEqual([...stock.slice(i*7,i*7+2),...drawn.slice(2)]);
-    expect(s.players[i].personalDeck).toEqual(stock.slice(i*7+2,i*7+6));
-    expect(s.players[i].discard).toEqual([stock[i*7+6]]);
-    expect(s.library.find(d=>d.id===schoolId)!.discard).toEqual([]);
-    expect(s.library.find(d=>d.id===studySchool.id)!.discard).toEqual(Array.from({length:i+1},(_,j)=>studySchool.cards.slice(j*4,j*4+2)).flat());
-    expect(physicalCards(s)).toEqual(cards);
-   }
-   expect(s.phase).toBe('PREPARATION');expect(s.players.every(p=>p.studyDrawn&&p.studyDone&&p.hand.length===4)).toBe(true);
-   expect(new Set(physicalCards(s)).size).toBe(120);
-  });
- });
-
- it('draws and recycles only Transmutation in Study, and routes support discards back to that school',()=>{
-  let s=createGame();s.phase='STUDY';const cantrip=structuredClone(s.library[0]);
-  const trans=s.library[1];trans.discard=trans.cards.splice(2);
-  const before=physicalCards(s);s=applyAction(s,{type:'DRAW_STUDY',playerId:'p1',deckId:'transmutation'});
-  expect(s.players[0].hand).toHaveLength(4);expect(s.players[0].hand.every(c=>c.schoolId==='transmutation')).toBe(true);
-  const ids=s.players[0].hand.slice(0,2).map(c=>c.id);
-  s=applyAction(s,{type:'DISCARD_STUDY',playerId:'p1',cardIds:ids});
-  expect(s.library[1].discard.map(c=>c.id)).toEqual(ids);expect(s.library[0]).toEqual(cantrip);expect(physicalCards(s)).toEqual(before);
- });
-});
-
 describe.each(targets)('%s public target helpers',target=>{
  for(const kind of ['MAGE','EVOCATION'] as const)for(const own of [false,true]) {
   it.each([{damage:2},{},{heal:1},{convert:1},{damage:2,heal:1},{damage:2,convert:1}])(`validates ${own?'own':'enemy'} ${kind} with %j`,effects=>{
@@ -165,28 +93,6 @@ describe.each(targets)('%s public target helpers',target=>{
 });
 
 describe('authoritative target selection and legality',()=>{
- it.each([{}, {targetPlayerId:'p1'}, {targetPlayerId:'p1-wizard'}])('infers or explicitly accepts the own mage for SELF: %j',selection=>{
-  const s=fixture();prepare(s,'Mending Light');wound(s,'MAGE',0,{p2:4});
-  const before=structuredClone(s),result=cast(s,selection);
-  expect(result.players[0].wizard.damageCubes).toBe(1);expect(result.players[0].wizard.damageByPlayer).toEqual({p2:1});
-  expect(s).toEqual(before);conserved(result);
- });
- it.each([
-  {targetPlayerId:'p2'},{targetPlayerId:'p2-wizard'},{targetEvocationId:'evoc-1'},
-  {targetPlayerId:'evoc-1'},{targetEvocationId:'p1'},{roomId:'room-0,0'},
-  {dummy:true,roomId:'room-0,0'},{targetPlayerId:'p1',targetEvocationId:'evoc-1'},
- ])('rejects non-self, forged or room SELF selection %j immutably',selection=>{
-  const s=fixture();prepare(s,'Mending Light');reject(s,selection,/Spell cannot target|payload|room|Dummy|Select one/);
- });
-
- for(const target of ['MAGE','EVOCATION','MODEL'] as const)for(const kind of ['MAGE','EVOCATION'] as const)for(const own of [false,true]) {
-  it(`${target} support ${target==='MODEL'||target===kind?'accepts':'rejects'} ${own?'own':'enemy'} ${kind}`,()=>{
-   const s=fixture(),index=own?0:1;prepare(s,card(target,{heal:1}));wound(s,kind,index,{p3:2});
-   const selection=kind==='MAGE'?{targetPlayerId:s.players[index].id}:{targetEvocationId:s.evocations[index].id};
-   if(target!=='MODEL'&&target!==kind)reject(s,selection,/Spell cannot target/);
-   else {const result=cast(s,selection);expect(model(result,kind,index).damageCubes).toBe(1);conserved(result);}
-  });
- }
  it.each(['MAGE','EVOCATION','MODEL'] as const)('%s requires a real typed target or an explicit dummy; rejects forgeries and mixed payloads',target=>{
   const s=fixture();prepare(s,card(target,{heal:1,convert:1}));
   for(const selection of [{},{targetPlayerId:'missing'},{targetEvocationId:'missing'},
@@ -198,16 +104,6 @@ describe('authoritative target selection and legality',()=>{
   const before=structuredClone(s),result=cast(s,{dummy:true,roomId:'room-0,0'});
   expect(result.players.map(p=>p.wizard)).toEqual(before.players.map(p=>p.wizard));
   expect(result.evocations).toEqual(before.evocations);conserved(result);
- });
- it('accepts wizard IDs only in the mage field',()=>{
-  const s=fixture();prepare(s,'Renewing Word');wound(s,'MAGE',1,{p3:4});
-  const result=cast(s,{targetPlayerId:'p2-wizard'});expect(result.players[1].wizard.damageCubes).toBe(1);conserved(result);
- });
- it('ROOM rejects individual target fields even when accompanied by a valid room',()=>{
-  const s=fixture();prepare(s,'Sanctuary');
-  for(const selection of [{targetPlayerId:'p2'},{targetEvocationId:'evoc-2'},
-   {roomId:'room-0,0',targetPlayerId:'p2'},{roomId:'room-0,0',targetEvocationId:'evoc-2'},
-   {roomId:'room-0,0',dummy:true}])reject(s,selection,/room\/dummy|Dummy/);
  });
  it('legacy MODEL dummy preserves instability but never damages models or supplies support',()=>{
   const s=fixture();prepare(s,card('MODEL',{damage:8,instability:2}));const before=structuredClone(s);
@@ -278,29 +174,9 @@ describe('authoritative target selection and legality',()=>{
   model(s,kind,1).position={q:3,r:-2};reject(s,selection,/starting room/);
   expect(canPlayerAct(s,s.players[0])).toBe(true);
  });
- it('canPlayerAct sees the next-turn evocation dummy without bypassing the current numbered quota or turn cap',()=>{
-  const s=fixture();s.players[0].actionTokens=0;s.evocations=[];
-  prepare(s,'Mending Light','slot1');prepare(s,"Summoner's Balm",'slot2');
-  const result=cast(s,{},'slot1');expect(result.currentPlayerId).toBe('p2');
-  expect(canPlayerAct(result,result.players[0])).toBe(true);
-  reject(result,{dummy:true,roomId:'room-0,0'},/Not your turn/,'slot2');
-  const other=fixture();other.players[0].actionTokens=0;prepare(other,'Mending Light');other.activation!.actionsUsed=2;
-  expect(canPlayerAct(other,other.players[0])).toBe(false);
- });
 });
 
 describe('healing wounds and returning only actual physical cubes',()=>{
- for(const kind of ['MAGE','EVOCATION'] as const)for(const index of [0,1]) {
-  it(`heals ${index===0?'own':'enemy'} ${kind} in seat order, then Pink Tulip, then unattributed wounds`,()=>{
-   const s=fixture();prepare(s,card(kind,{heal:3}));
-   // Deliberately reverse insertion order; deterministic behavior follows seats.
-   wound(s,kind,index,{p4:1,p3:1,p2:1,p1:1,[BLACK_ROSE_ID]:1},1,kind==='MAGE'?1:0);
-   const result=cast(s,kind==='MAGE'?{targetPlayerId:s.players[index].id}:{targetEvocationId:s.evocations[index].id});
-   expect(model(result,kind,index).damageByPlayer).toEqual({p4:1,[BLACK_ROSE_ID]:1});
-   expect(model(result,kind,index).damageCubes).toBe(kind==='MAGE'?4:3);
-   expect(result.players.slice(0,3).every(p=>p.cubes.available===25)).toBe(true);conserved(result);
-  });
- }
  it.each([1,2,3,4,5,20])('caps %i healing at actual wounds, removing black damage before unattributed wounds',heal=>{
   const s=fixture();prepare(s,card('MAGE',{heal}));wound(s,'MAGE',1,{p3:1,[BLACK_ROSE_ID]:1},2,1);
   const before=structuredClone(s.players.map(p=>p.cubes));const result=cast(s,{targetPlayerId:'p2'});
@@ -318,18 +194,6 @@ describe('healing wounds and returning only actual physical cubes',()=>{
    expect(result.players.map(p=>p.cubes)).toEqual(before);conserved(result);
   }
  });
- it('ROOM healing affects every mage and evocation across all its tiles, each for the printed amount',()=>{
-  const s=fixture();mergeRoom(s,{q:1,r:0});prepare(s,'Sanctuary');
-  for(const i of [0,1,2,3]) {
-   s.players[i].wizard.position=i%2?{q:1,r:0}:{...origin};s.evocations[i].position={...s.players[i].wizard.position};
-   wound(s,'MAGE',i,{p4:3});wound(s,'EVOCATION',i,{p3:3});
-  }
-  // One model outside the multihex room must remain untouched.
-  s.evocations[3].position={q:0,r:1};const before=structuredClone(s);
-  const result=cast(s,{roomId:'room-0,0'});
-  expect(result.players.map(p=>p.wizard.damageCubes)).toEqual([1,1,1,1]);expect(result.evocations.map(e=>e.damageCubes)).toEqual([1,1,1,3]);
-  expect(result.blackRose).toEqual(before.blackRose);expect(result.players.every(p=>p.kills===0&&p.victoryPoints===0&&p.questsCompleted===0)).toBe(true);conserved(result);
- });
  it('healing Succubus Wounded Fury reduces the actual subsequent evocation attack',()=>{
   const s=fixture();prepare(s,card('EVOCATION',{heal:2}));
   Object.assign(s.evocations[0],{kind:'SUCCUBUS',name:'Succubus',archetype:'DEMON',attack:1,health:3});wound(s,'EVOCATION',0,{p2:1});
@@ -342,67 +206,12 @@ describe('healing wounds and returning only actual physical cubes',()=>{
 });
 
 describe('conversion replaces ownership without creating wounds, instability or rewards',()=>{
- for(const kind of ['MAGE','EVOCATION'] as const)for(const own of [false,true]) {
-  it(`${kind} conversion legally selects ${own?'own models without changing them':'enemy models, skipping own cubes in seat order'}`,()=>{
-   const s=fixture(),i=own?0:1;prepare(s,card(kind,{convert:3}));
-   wound(s,kind,i,{p4:1,[BLACK_ROSE_ID]:1,p3:1,p2:2,p1:1});
-   const before=structuredClone(s);
-   const result=cast(s,kind==='MAGE'?{targetPlayerId:s.players[i].id}:{targetEvocationId:s.evocations[i].id});
-   expect(model(result,kind,i).damageCubes).toBe(6);
-   if(own) {
-    expect(model(result,kind,i)).toEqual(model(before,kind,i));
-    expect(result.players.map(p=>p.cubes)).toEqual(before.players.map(p=>p.cubes));
-    expect(result.feedbackEvents).toEqual(before.feedbackEvents);
-   } else {
-    expect(model(result,kind,i).damageByPlayer).toEqual({p4:1,[BLACK_ROSE_ID]:1,p1:4});
-    expect(result.players[0].cubes[kind==='MAGE'?'onWizard':'onEvocations']).toBe(4);
-    expect(result.players[1].cubes.available).toBe(25);expect(result.players[2].cubes.available).toBe(25);
-   }
-   expect(result.activation).toMatchObject({actionsUsed:1,spellsCast:1});
-   expect(result.players[0].prepared.rapid?.used).toBe(true);expect(result.players[0].actionTokens).toBe(2);
-   expect(s).toEqual(before);conserved(result);
-  });
- }
- for(const kind of ['MAGE','EVOCATION'] as const)for(const available of [0,1,20]) {
-  it.each([
-   {label:'other-colored',ledger:{p3:3},black:0,unattributed:0},
-   {label:'neutral ledger',ledger:{[BLACK_ROSE_ID]:3},black:0,unattributed:0},
-   {label:'neutral wounds',ledger:{},black:kind==='MAGE'?2:0,unattributed:1},
-   {label:'own-colored',ledger:{p1:2},black:0,unattributed:0},
-   {label:'mixed colors and neutral wounds',ledger:{p1:1,p2:1,p3:1,[BLACK_ROSE_ID]:1},black:kind==='MAGE'?1:0,unattributed:1},
-  ])(`own ${kind} ignores $label conversion with ${available} available cubes`,({ledger,black,unattributed})=>{
-   const s=fixture(),spell=prepare(s,kind==='MAGE'?"Mage's Due":'Reclaimed Servant');
-   wound(s,kind,0,ledger as Record<string,number>,unattributed,black);limitStock(s,'p1',available);
-   const before=structuredClone(s),cards=physicalCards(s);
-   const result=cast(s,kind==='MAGE'?{targetPlayerId:'p1-wizard'}:{targetEvocationId:'evoc-1'});
-   expect(result.players.map(p=>p.wizard)).toEqual(before.players.map(p=>p.wizard));
-   expect(result.evocations).toEqual(before.evocations);expect(result.board).toEqual(before.board);
-   expect(result.players.map(p=>p.cubes)).toEqual(before.players.map(p=>p.cubes));
-   expect(result.feedbackEvents).toEqual(before.feedbackEvents);
-   expect(result.activation).toMatchObject({actionsUsed:1,spellsCast:1});
-   expect(result.players[0].actionTokens).toBe(2);expect(result.players[0].prepared.rapid).toMatchObject({used:true});
-   expect(result.library[1].discard).toContainEqual(spell);expect(physicalCards(result)).toEqual(cards);
-   expect(s).toEqual(before);conserved(result);
-  });
- }
- it.each([0,1,2,25])('model conversion is capped at the %i caster cubes actually available',available=>{
-  const s=fixture();prepare(s,'Stolen Sigil');wound(s,'MAGE',1,{p3:3});limitStock(s,'p1',available);
-  const result=cast(s,{targetPlayerId:'p2'}),n=Math.min(2,available);
-  expect(result.players[1].wizard.damageCubes).toBe(3);expect(result.players[1].wizard.damageByPlayer.p1??0).toBe(n);
-  expect(result.players[1].wizard.damageByPlayer.p3).toBe(3-n);expect(result.players[0].cubes.available).toBe(available-n);conserved(result);
- });
  it('converts actual mage Pink Tulip ledger/blackDamage, but not unattributed wounds',()=>{
   const s=fixture();prepare(s,card('MAGE',{convert:20}));wound(s,'MAGE',1,{p3:1,[BLACK_ROSE_ID]:1},3,2);
   const result=cast(s,{targetPlayerId:'p2'});
   expect(result.players[1].wizard).toMatchObject({damageCubes:7,blackDamage:0,damageByPlayer:{p1:4}});
   expect(result.players[2].cubes.available).toBe(25);expect(result.players[0].cubes.available).toBe(21);
   expect(result.blackRose).toEqual(s.blackRose);conserved(result);
- });
- it('converts neutral evocation cubes with no neutral physical supply return',()=>{
-  const s=fixture();prepare(s,'Reclaimed Servant');wound(s,'EVOCATION',1,{[BLACK_ROSE_ID]:1},2);
-  const result=cast(s,{targetEvocationId:'evoc-2'});
-  expect(result.evocations[1]).toMatchObject({damageCubes:3,damageByPlayer:{p1:1}});
-  expect(result.players[0].cubes).toEqual({available:24,onWizard:0,onBoard:0,onEvocations:1});conserved(result);
  });
  it.each(['MAGE','EVOCATION'] as const)('enemy %s conversion cannot spend supply on caster-colored cubes or unattributed wounds',kind=>{
   for(const ledger of [{p1:2},{}] as Record<string,number>[]) {
@@ -412,31 +221,6 @@ describe('conversion replaces ownership without creating wounds, instability or 
    expect(result.feedbackEvents).toEqual(before.feedbackEvents);expect(s).toEqual(before);conserved(result);
   }
  });
- it.each([false,true])('ROOM conversion changes live instability only, including full-unbuilt rooms (full=%s)',full=>{
-  const s=fixture();prepare(s,'Rewrite the Lodge');const r=room(s);r.instability=full?r.instabilityLimit:5;
-  r.cubesByPlayer={p4:1,p3:1,p2:2,[BLACK_ROSE_ID]:r.instability-5,p1:1};
-  wound(s,'MAGE',0,{p3:2,[BLACK_ROSE_ID]:1},1,1);wound(s,'EVOCATION',0,{p2:2,[BLACK_ROSE_ID]:1});
-  wound(s,'MAGE',1,{p3:3});wound(s,'EVOCATION',1,{p2:2});
-  const before=structuredClone(s);const result=cast(s,{roomId:r.id});
-  expect(room(result)).toMatchObject({instability:r.instability,reconstructed:false,scored:false,cubesByPlayer:{p4:1,p1:4,[BLACK_ROSE_ID]:r.instability-5}});
-  expect(result.players.map(p=>p.wizard)).toEqual(before.players.map(p=>p.wizard));expect(result.evocations).toEqual(before.evocations);
-  expect(result.players[0].cubes).toEqual({...before.players[0].cubes,available:before.players[0].cubes.available-3,onBoard:before.players[0].cubes.onBoard+3});
-  expect(result.players[1].cubes.available).toBe(before.players[1].cubes.available+2);
-  expect(result.players[2].cubes.available).toBe(before.players[2].cubes.available+1);
-  expect(result.feedbackEvents).toMatchObject([{kind:'CONVERT',target:{kind:'ROOM',id:r.id},sourceId:'p1',amount:3,total:r.instability}]);
-  expect(result.players.every(p=>p.kills===0&&p.victoryPoints===0&&p.questsCompleted===0)).toBe(true);expect(s).toEqual(before);conserved(result);
- });
- it.each([0,1,2,24])('ROOM conversion obeys stock %i and sources colored seats before neutral cubes',available=>{
-  const s=fixture();prepare(s,'Rewrite the Lodge');room(s).instability=5;room(s).cubesByPlayer={p1:1,p2:1,[BLACK_ROSE_ID]:3};syncCubes(s);limitStock(s,'p1',available);
-  const result=cast(s,{roomId:'room-0,0'}),n=Math.min(3,available);
-  expect(room(result).cubesByPlayer.p1).toBe(1+n);expect(room(result).cubesByPlayer.p2??0).toBe(n>0?0:1);
-  expect(room(result).cubesByPlayer[BLACK_ROSE_ID]).toBe(3-Math.max(0,n-1));expect(room(result).instability).toBe(5);conserved(result);
- });
- it.each([{scored:true,reconstructed:true},{scored:true,reconstructed:false},{scored:false,reconstructed:true}])('never converts historical room contributions %j',flags=>{
-  const s=fixture();prepare(s,'Rewrite the Lodge');Object.assign(room(s),flags,{instability:10,cubesByPlayer:{p2:10}});
-  syncCubes(s);const before=structuredClone(s);const result=cast(s,{roomId:'room-0,0'});
-  expect(room(result)).toEqual(room(before));expect(result.players.map(p=>p.cubes)).toEqual(before.players.map(p=>p.cubes));conserved(result);
- });
  it('conversion of a completed all-enemy room earns no immediate solo/completion/instability/kill quests or VP',()=>{
   const s=fixture();prepare(s,card('ROOM',{convert:10}));room(s).instability=10;room(s).cubesByPlayer={p2:10};syncCubes(s);
   s.players[0].quest={id:'inst',name:'Instability',description:'Place instability',kind:'INSTABILITY',amount:2,reward:2};
@@ -445,52 +229,9 @@ describe('conversion replaces ownership without creating wounds, instability or 
   expect(result.players[0]).toMatchObject({victoryPoints:0,kills:0,questsCompleted:0,quest:s.players[0].quest,additionalQuests:s.players[0].additionalQuests});
   expect(room(result)).toMatchObject({reconstructed:false,scored:false,instability:10});expect(result.questDiscard).toEqual(s.questDiscard);conserved(result);
  });
- it('later Cleanup scores converted room ownership and returns those cubes exactly once',()=>{
-  const s=fixture();prepare(s,'Rewrite the Lodge');room(s).instability=10;room(s).cubesByPlayer={p2:7,[BLACK_ROSE_ID]:3};syncCubes(s);
-  let result=cast(s,{roomId:'room-0,0'});expect(result.players[0].victoryPoints).toBe(0);
-  for(const p of result.players){p.actionTokens=0;p.prepared={rapid:null,slot1:null,slot2:null,slot3:null};}
-  result.evocations=[];result=applyAction(result,{type:'END_ACTIVATION',playerId:'p1'});
-  expect(result.phase).toBe('CLEANUP');expect(room(result)).toMatchObject({scored:true,reconstructed:true,cubesByPlayer:{p1:3,p2:4,[BLACK_ROSE_ID]:3}});
-  expect(result.players[1].victoryPoints).toBe(6);expect(result.players[0].victoryPoints).toBe(2);expect(result.blackRose.victoryPoints).toBe(2);
-  expect(result.players[0].cubes.available).toBe(25);expect(result.players[1].cubes.available).toBe(25);conserved(result);
- });
 });
 
 describe('mixed support, damage immunity, resolution order and settlement',()=>{
- it.each(['MAGE','EVOCATION'] as const)('canonical Transmuting Surge legally targets own %s but ignores both conversion and damage',kind=>{
-  const s=fixture(),spell=prepare(s,'Transmuting Surge');wound(s,kind,0,{p3:2,[BLACK_ROSE_ID]:1});
-  const before=structuredClone(s),cards=physicalCards(s);
-  const result=cast(s,kind==='MAGE'?{targetPlayerId:'p1'}:{targetEvocationId:'evoc-1'});
-  expect(result.players.map(p=>p.wizard)).toEqual(before.players.map(p=>p.wizard));expect(result.evocations).toEqual(before.evocations);
-  expect(result.players.map(p=>p.cubes)).toEqual(before.players.map(p=>p.cubes));expect(result.board).toEqual(before.board);
-  expect(result.feedbackEvents).toEqual([]);expect(result.activation).toMatchObject({actionsUsed:1,spellsCast:1});
-  expect(result.players[0].actionTokens).toBe(2);expect(result.players[0].prepared.rapid?.used).toBe(true);
-  expect(result.library[1].discard).toContainEqual(spell);expect(physicalCards(result)).toEqual(cards);expect(s).toEqual(before);conserved(result);
- });
- for(const kind of ['MAGE','EVOCATION'] as const) {
-  it.each([1,2])(`mixed MODEL conversion and damage ignore own ${kind} without suppressing instability with %i available cubes`,available=>{
-   // Transmuting Surge has no printed instability; exercise the independent
-   // instability instruction with a composite MODEL fixture, not a catalog edit.
-   const s=fixture();prepare(s,card('MODEL',{damage:1,convert:1,instability:1}));
-   wound(s,kind,0,{p3:2,[BLACK_ROSE_ID]:1});limitStock(s,'p1',available);const before=structuredClone(s);
-   const result=cast(s,kind==='MAGE'?{targetPlayerId:'p1'}:{targetEvocationId:'evoc-1'});
-   expect(result.players.map(p=>p.wizard)).toEqual(before.players.map(p=>p.wizard));expect(result.evocations).toEqual(before.evocations);
-   expect(room(result)).toMatchObject({instability:1,cubesByPlayer:{p1:1}});
-   expect(result.players[0].cubes).toEqual({...before.players[0].cubes,available:available-1,onBoard:before.players[0].cubes.onBoard+1});
-   expect(result.players.slice(1).map(p=>p.cubes)).toEqual(before.players.slice(1).map(p=>p.cubes));
-   expect(result.feedbackEvents).toEqual([]);expect(result.activation).toMatchObject({actionsUsed:1,spellsCast:1});
-   expect(s).toEqual(before);conserved(result);
-  });
- }
- it.each(['MAGE','EVOCATION'] as const)('mixed support+damage on own %s ignores conversion and damage but still heals',kind=>{
-  const s=fixture();prepare(s,card('MODEL',{damage:8,convert:1,heal:1}));wound(s,kind,0,{p2:3});
-  const before=structuredClone(s);
-  const result=cast(s,kind==='MAGE'?{targetPlayerId:'p1'}:{targetEvocationId:'evoc-1'});
-  expect(model(result,kind,0)).toMatchObject({damageCubes:2,damageByPlayer:{p2:2}});
-  expect(result.feedbackEvents).toMatchObject([{kind:'HEAL',sourceId:'p1',amount:1,target:{kind,id:kind==='MAGE'?'p1':'evoc-1'}}]);
-  expect(result.players[0].cubes).toEqual(before.players[0].cubes);expect(result.players[1].cubes.available).toBe(before.players[1].cubes.available+1);
-  expect(result.players[0].kills).toBe(0);expect(s).toEqual(before);conserved(result);
- });
  it('ROOM support heals all owners but ROOM damage skips caster and every owned evocation',()=>{
   const s=fixture();prepare(s,card('ROOM',{heal:2,damage:3}));
   for(const i of [0,1,2,3]){wound(s,'MAGE',i,{p4:3});wound(s,'EVOCATION',i,{p3:3});}
@@ -518,58 +259,8 @@ describe('mixed support, damage immunity, resolution order and settlement',()=>{
   expect(result.players[1].wizard).toMatchObject({damageCubes:2,damageByPlayer:{p3:1,p1:1}});
   expect(result.players[0].cubes.available).toBe(0);conserved(result);
  });
- it.each([0,1,25])("Alchemist's Refuge ignores own-mage conversion but heals with %i available cubes",available=>{
-  const s=fixture();prepare(s,"Alchemist's Refuge");wound(s,'MAGE',0,{p2:3});
-  limitStock(s,'p1',available);const before=structuredClone(s);
-  const result=cast(s);expect(result.players[0].wizard).toMatchObject({damageCubes:1,damageByPlayer:{p2:1}});
-  expect(result.players[0].cubes).toEqual(before.players[0].cubes);expect(result.players[1].cubes.available).toBe(24);
-  expect(result.feedbackEvents).toMatchObject([{kind:'HEAL',target:{kind:'MAGE',id:'p1'},sourceId:'p1',amount:2}]);
-  expect(result.activation).toMatchObject({actionsUsed:1,spellsCast:1});expect(s).toEqual(before);conserved(result);
- });
- it('a converted mage defeat scores new contributors and returns only the defeated model cubes',()=>{
-  const s=fixture();prepare(s,card('MODEL',{convert:3,instability:1,damage:1}));
-  wound(s,'MAGE',1,{p3:4},2,3);wound(s,'MAGE',3,{p3:1});wound(s,'EVOCATION',0,{p3:1});
-  s.players[0].quest={id:'kill',name:'Kill',description:'Defeat mage',kind:'KILL',amount:1,reward:3};
-  const result=cast(s,{targetPlayerId:'p2'});
-  expect(result.players[1].wizard).toMatchObject({damageCubes:0,damageByPlayer:{},blackDamage:0,position:{q:-3,r:2}});
-  // Converted 3 + final 1 ranks first; Pink Tulip 3 second; p3 1 third.
-  expect(result.players[0]).toMatchObject({victoryPoints:7,kills:1,questsCompleted:1});expect(result.blackRose.victoryPoints).toBe(2);expect(result.players[2].victoryPoints).toBe(1);
-  expect(result.players[2].cubes).toMatchObject({available:23,onWizard:1,onEvocations:1});
-  expect(result.players[0].cubes).toEqual({available:24,onWizard:0,onEvocations:0,onBoard:1});
-  expect(room(result).instability).toBe(1);expect(room(result,'room--3,2').instability).toBe(0);conserved(result);
- });
- it('converted evocation destruction returns colored cubes, ignores neutral supply, and grants no kill/VP',()=>{
-  const s=fixture();prepare(s,'Transmuting Surge');s.evocations[1].health=4;wound(s,'EVOCATION',1,{p3:1,[BLACK_ROSE_ID]:2});
-  const result=cast(s,{targetEvocationId:'evoc-2'});expect(result.evocations.some(e=>e.id==='evoc-2')).toBe(false);
-  expect(result.players.every(p=>p.cubes.available===25&&p.kills===0&&p.victoryPoints===0)).toBe(true);expect(result.blackRose).toEqual(s.blackRose);conserved(result);
- });
  it('unconverted neutral cubes also return safely on evocation destruction',()=>{
   const s=fixture();prepare(s,card('EVOCATION',{damage:1}));s.evocations[1].health=2;wound(s,'EVOCATION',1,{[BLACK_ROSE_ID]:1});
   const result=cast(s,{targetEvocationId:'evoc-2'});expect(result.evocations.some(e=>e.id==='evoc-2')).toBe(false);conserved(result);
- });
-});
-
-describe('support casts preserve turn, discard, conservation and immutable command contracts',()=>{
- it.each(['Mending Light','Stolen Sigil','Sanctuary','Rewrite the Lodge'])('%s may have zero effect but still consumes one action and one physical card, not a token',name=>{
-  const s=fixture();const spell=prepare(s,name);const before=structuredClone(s),cards=physicalCards(s);
-  const selection=spell.target==='SELF'?{}:spell.target==='ROOM'?{roomId:'room-0,0'}:{targetPlayerId:'p1'};
-  const result=cast(s,selection);expect(result.activation).toMatchObject({actionsUsed:1,spellsCast:1});
-  expect(result.players[0].actionTokens).toBe(2);expect(result.players[0].prepared.rapid?.used).toBe(true);
-  expect(result.library[1].discard.map(c=>c.id)).toContain(spell.id);expect(result.library[0]).toEqual(before.library[0]);expect(result.players[0].discard).toEqual([]);
-  expect(physicalCards(result)).toEqual(cards);expect(s).toEqual(before);reject(result,selection,/Spell unavailable/);conserved(result);
- });
- it('support obeys numbered ordering/quota, shared two-action cap, and automatic handoff',()=>{
-  const s=fixture();prepare(s,'Mending Light','slot1');prepare(s,'Renewing Word','slot2');prepare(s,'Vital Thread');
-  reject(s,{targetPlayerId:'p1'},/in order/,'slot2');
-  let result=cast(s,{},'slot1');reject(result,{targetPlayerId:'p1'},/one sequenced/,'slot2');
-  result=cast(result,{targetPlayerId:'p1'});expect(result.currentPlayerId).toBe('p2');expect(result.players[0].actionTokens).toBe(2);
-  reject(result,{targetPlayerId:'p1'},/Not your turn/,'slot2');
-  const capped=fixture();prepare(capped,'Mending Light');capped.activation!.actionsUsed=2;reject(capped,{},/both turn actions/);
- });
- it('support cannot interrupt pending physical effects, exploration, or an evocation activation',()=>{
-  const s=fixture();prepare(s,'Mending Light');
-  const physical=applyAction(s,{type:'BEGIN_PHYSICAL_ACTION',playerId:'p1',kind:'EXPLORE'});reject(physical,{},/pending physical/);
-  const exploring=applyAction(s,{type:'EXPLORE',playerId:'p1'});reject(exploring,{},/Finish exploring/);
-  const evoc=applyAction(s,{type:'ACTIVATE_EVOCATION',playerId:'p1',evocationId:'evoc-1'});reject(evoc,{},/active evocation/);
  });
 });

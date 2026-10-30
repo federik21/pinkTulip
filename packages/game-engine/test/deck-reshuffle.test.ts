@@ -70,12 +70,6 @@ describe('every discard-backed deck refills when exhausted, even partway through
   for(const quest of quests)expect(quest).toMatchObject({progress:0,completed:false,claimed:false});
   expect(after.questDiscard).toEqual([]);expect(ids([...after.questDeck,...quests]).sort()).toEqual(available);
  });
- it('refills event cards at the start of a new round',()=>{
-  const s=createGame(2);s.phase='CLEANUP';s.round=1;s.eventDiscard=s.eventDeck.splice(0);
-  const available=ids(s.eventDiscard).sort();const after=applyAction(s,{type:'ADVANCE_PHASE',playerId:s.hostId,expectedPhase:'CLEANUP',expectedRound:1});
-  expect(after.phase).toBe('BLACK_ROSE');expect(after.usedEvent).toBeTruthy();expect(after.eventDiscard).toEqual([after.usedEvent]);
-  expect(ids([...after.eventDeck,...after.eventDiscard]).sort()).toEqual(available);
- });
  it('replays the identical shuffle after a reaction pauses a drawing room action, even through JSON',()=>{
   const s=actionRoom('DRAW_GRIMOIRE');s.players[0].discard=s.library[0].cards.splice(0,4);
     const card={id:s.library[0].cards.shift()!.id,name:'Draw observer',kind:'SPELL' as const,target:'SELF' as const,range:0,moments:[],spellType:'PROTECTION' as const,

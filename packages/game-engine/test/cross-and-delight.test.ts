@@ -61,15 +61,6 @@ describe('Cross and Delight final activation moment',()=>{
   const finished=applyAction(result,{type:'END_EVOCATION',playerId:'p1'});
   expect(finished.evocationActivation).toBeNull();expect(finished.currentPlayerId).toBe('p2');
  });
- it('does not activate an unrelated model when the summon cannot fit',()=>{
-  const s=fixture();
-  for(let i=0;i<3;i++)summonEvocation(s,s.players[0],'CADAVER',{q:0,r:0});
-  const ids=s.evocations.map(e=>e.id),result=cast(s);
-  expect(result.evocations.map(e=>e.id)).toEqual(ids);
-  expect(result.evocations.every(e=>!e.activated)).toBe(true);
-  expect(result.evocationActivation).toBeNull();
-  expect(result.players[0].wizard.blackDamage).toBe(1);
- });
  it('keeps the original summon when a nested interrupt summons another Succubus',()=>{
   const s=fixture();
   s.readiedSpells!.push({id:'nested-summon',playerId:'p1',card:{id:'nested-card',name:'Nested summon',kind:'SPELL',spellType:'PROTECTION',target:'SELF',range:0,

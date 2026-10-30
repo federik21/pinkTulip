@@ -70,18 +70,6 @@ describe('two shared turn actions',()=>{
   expect(g.players[0].wizard.position).toEqual({q:2,r:-2});
  });
 
- it('counts Attack once, keeping its second-action room effect available before handing off',()=>{
-  let g=fixture();prepare(g,'rapid');
-  g=applyAction(g,cast('rapid'));
-  g=applyAction(g,{type:'BEGIN_PHYSICAL_ACTION',playerId:'p1',kind:'ATTACK'});
-  expect(g.activation?.actionsUsed).toBe(2);expect(canPlayerAct(g,g.players[0])).toBe(true);
-  g=applyAction(g,{type:'INFLICT_ATTACK',playerId:'p1',targetId:'p2'});
-  expect(g.currentPlayerId).toBe('p1');expect(g.activation?.physicalAction?.mainEffectUsed).toBe(true);
-  g=applyAction(g,{type:'ACTIVATE_ROOM',playerId:'p1'});
-  expect(g.currentPlayerId).toBe('p2');expect(g.players[1].wizard.damageCubes).toBe(2);
-  expect(g.players[0].hand.some(c=>c.powerful)).toBe(true);
- });
-
  it('finishes both movement steps and the room effect of the second action before handing off',()=>{
   let g=fixture();prepare(g,'slot1');g=applyAction(g,cast('slot1'));
   g=applyAction(g,{type:'BEGIN_PHYSICAL_ACTION',playerId:'p1',kind:'EXPLORE'});

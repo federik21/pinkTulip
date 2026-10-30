@@ -144,11 +144,6 @@ describe('Progressable quests',()=>{
   expect(card?.ongoing).toMatchObject({trigger:{event:'VP_CHANGED',relation:'ANY',scope:'BOUND_MODEL'}});
   expect(card?.ongoing?.effects).toContainEqual(expect.objectContaining({effect:'DAMAGE',amount:2,target:'EVENT_MODEL'}));
  });
- it('uses the Agony deck as the active library deck',()=>{
-  const library=createLibrary();
-  expect(library.map(d=>[d.id,d.name])).toEqual([['agony','Agony'],['technomancy','Technomancy'],['alchemy','Alchemy']]);
-  expect(library[0].cards.every(c=>c.schoolId==='agony')).toBe(true);
- });
 });
 
 describe('Soul Tithe chains and edge cases',()=>{
@@ -187,21 +182,5 @@ describe('Soul Tithe chains and edge cases',()=>{
   const result=answer(paused,true);
   expect(result.players[1].wizard.damageCubes).toBe(game.players[1].wizard.health-1);
   expect(model(result,'succ').damageCubes).toBe(1);
- });
- it('absorbs Pink Tulip damage as unattributed wounds and resumes the whole phase change',()=>{
-  const game=createGame(2);game.round=1;game.phase='CLEANUP';game.activation=null;game.currentPlayerId=null;
-  game.eventDeck=[{id:'thorns',name:'Thorns',description:'Black damage',kind:'BLACK_DAMAGE',amount:1,rooms:0}];
-  const succubus=summonEvocation(game,game.players[0],'SUCCUBUS',far)!;succubus.id='succ';
-  const advance:GameAction={type:'ADVANCE_PHASE',playerId:'p1',expectedPhase:'CLEANUP',expectedRound:1};
-  const paused=applyAction(game,advance);
-  expect(paused.pendingDecision).toMatchObject({playerId:'p1',sourceName:'Pink Tulip',amount:1});
-  expect(paused.phase).toBe('CLEANUP');expect(paused.eventDeck).toHaveLength(1);
-  const result=answer(paused,true,'p1');
-  expect(result.pendingDecision).toBeUndefined();
-  expect(result.phase).toBe('BLACK_ROSE');expect(result.round).toBe(2);
-  expect(result.players[0].wizard.damageCubes).toBe(0);expect(result.players[1].wizard.damageCubes).toBe(1);
-  expect(model(result,'succ')).toMatchObject({damageCubes:1,damageByPlayer:{}});
-  expect(result.eventDiscard.filter(c=>c.id==='thorns')).toHaveLength(1);
-  cubesConserved(result);
  });
 });

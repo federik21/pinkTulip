@@ -389,7 +389,7 @@ function drawQuest(s:GameState) {
 // stored in GameState; a root action remains a single clone/commit boundary.
 type ModelSnapshot = { id:string; playerId:string; kind:'MAGE'|'EVOCATION'; generation:number };
 // Local to a single effect, so a nested spell cannot replace its summoned model.
-type EffectResolution = { assigned?:string[]; eventActor?:ModelSnapshot; summoned?:ModelSnapshot; activationIsExplicit:boolean; upgraded?:boolean; removed?:{position:Hex;attack:number;roomId?:string}; eventPosition?:Hex; eventKind?:EvocationKind; damaged?:ModelSnapshot[] };
+type EffectResolution = { casterSeen?:{position:Hex}; assigned?:string[]; eventActor?:ModelSnapshot; summoned?:ModelSnapshot; activationIsExplicit:boolean; upgraded?:boolean; removed?:{position:Hex;attack:number;roomId?:string}; eventPosition?:Hex; eventKind?:EvocationKind; damaged?:ModelSnapshot[] };
 type SpellEvent = { event:TriggerEvent; model?:ModelSnapshot; actor?:ModelSnapshot; roomId?:string; target?:FeedbackTarget; damageOrigin?:DamageOrigin; position?:Hex; kind?:EvocationKind; afterResolution?:()=>void };
 type PendingMageDefeat = { ref:ModelSnapshot; roomId?:string; target:FeedbackTarget; source?:Player };
 type ReplayEntropy={ids:string[];random:number[]};
@@ -679,7 +679,7 @@ function resolveEvent(s:GameState,event:SpellEvent) {
   const instructions=ongoing?active.card.ongoing!.effects:active.card.triggerEffects??[];
   const trigger=appendFeedback(s,{kind:'SPELL_TRIGGERED',activeSpellId:active.id,ownerId:owner.id,
    cardName:active.card.name,spellType:getSpellType(active.card),trigger:event.event,ongoing,
-  effects:!ongoing&&active.card.moments.length?active.card.moments.map(step=>describeInstruction({...step,target:active.card.target==='ROOM'?'BOUND_ROOM':'BOUND_MODEL'})):instructions.map(describeInstruction),...(target?{target}:{}),...(roomId?{roomId}:{})});
+  effects:[...(!ongoing&&active.card.instability?[describeInstruction(PRINTED_INSTABILITY)]:[]),...(!ongoing&&active.card.moments.length?active.card.moments.map(step=>describeInstruction({...step,target:active.card.target==='ROOM'?'BOUND_ROOM':'BOUND_MODEL'})):instructions.map(describeInstruction))],...(target?{target}:{}),...(roomId?{roomId}:{})});
   const ownerRef=snapshot(s,owner.id);
   const previousInterruptId=context(s).interruptId;
   context(s).interruptId=trigger.id;
@@ -689,6 +689,11 @@ function resolveEvent(s:GameState,event:SpellEvent) {
      resolveEffectMoments(s,owner,active.card,selectedRoom??room,refs,ownerRef!);
     } else {
    const effect:EffectResolution={activationIsExplicit:instructions.some(step=>step.effect==='ACTIVATE_EVOCATION'),eventPosition:event.position,eventKind:event.kind,eventActor:event.actor};
+  if(!ongoing&&active.card.instability) {
+   const effects=1+(instructions.length?1:0);
+   resolveInstabilityEffect(s,owner,active.card,ownerRef,effects,{position:{...owner.wizard.position}});
+   if(instructions.length)s.log.push(`Effect 2/${effects} · ${active.card.name}: main effect.`);
+  }
   for(const [index,instruction] of instructions.entries()) {
    s.log.push(`Moment ${index+1}/${instructions.length} · ${active.card.name}: ${describeInstruction(instruction)}`);
     let ref:ModelSnapshot|undefined,roomId:string|undefined;
@@ -1796,11 +1801,35 @@ function lookLibrary(s:GameState,p:Player,count:number) {
  deck.discard.push(...seen.filter(c=>c!==pick));
  s.log.push(`${p.name} looks at ${seen.length} ${deck.name} spells, takes one and discards ${seen.length-1}.`);
 }
+// `Card.instability`: place 1 instability in the caster's room. It is its own effect, resolved before the
+// card's main effect, with its own log entry, EffectResolution and moment boundary. It is never one of the
+// main effect's numbered moments, so quests/triggers that count moments or effects see it separately.
+const PRINTED_INSTABILITY:TriggeredInstruction={effect:'INSTABILITY',amount:1,scope:'CASTER_ROOM',target:'OWNER'};
+// The caster's position while that life is on the board; afterwards, where it stood when defeated. A defeated
+// caster respawns in its starting cell, but the spell keeps resolving where it was cast.
+function casterPosition(s:GameState,caster:Player,actor:ModelSnapshot|undefined,effect?:EffectResolution):Hex {
+ const seen=effect?.casterSeen,live=liveModel(s,actor);
+ if(live){
+  if(seen)seen.position={...live.model.position};
+  return live.model.position;
+ }
+ return seen?.position??caster.wizard.position;
+}
+function resolveInstabilityEffect(s:GameState,owner:Player,spell:Card,actor:ModelSnapshot|undefined,total:number,seen:{position:Hex},damageOrigin:DamageOrigin='SPELL') {
+ const effect:EffectResolution={activationIsExplicit:false,casterSeen:seen};
+ const room=roomAt(s,casterPosition(s,owner,actor,effect));
+ s.log.push(`Effect 1/${total} · ${spell.name}: ${describeInstruction(PRINTED_INSTABILITY)}`);
+ if(room)resolveInstruction(s,owner,{...PRINTED_INSTABILITY,target:'BOUND_ROOM'},undefined,room.id,actor,effect,damageOrigin);
+}
 function resolveEffectMoments(s:GameState,caster:Player,spell:Card,room:Room|undefined,refs:ModelSnapshot[],actor:ModelSnapshot,damageOrigin:DamageOrigin='SPELL') {
- const effect:EffectResolution={activationIsExplicit:spell.moments.some(step=>step.effect==='ACTIVATE_EVOCATION')};
+ const seen={position:{...caster.wizard.position}};
+ const effect:EffectResolution={activationIsExplicit:spell.moments.some(step=>step.effect==='ACTIVATE_EVOCATION'),casterSeen:seen};
  // The chosen model and where it stands, remembered while it is still on the board.
  const chosen=spell.target==='ROOM'?undefined:refs[0];
  let origin=chosen?liveModel(s,chosen)?.model.position:room?.tiles[0];
+ const effects=(spell.instability?1:0)+(spell.moments.length?1:0);
+ if(spell.instability)resolveInstabilityEffect(s,caster,spell,actor,effects,seen,damageOrigin);
+ if(spell.instability&&spell.moments.length)s.log.push(`Effect 2/${effects} · ${spell.name}: main effect.`);
  for(const [index,step] of spell.moments.entries())atMomentEnd(s,()=>{
   const live=liveModel(s,chosen);
   if(live)origin={...live.model.position};
@@ -1830,7 +1859,7 @@ function resolveMomentBody(s:GameState,caster:Player,spell:Card,step:Moment,room
  if(step.scope==='TARGET_ROOM')refs=room?roomOccupants(s,room):[];
  if(step.magesOnly)refs=refs.filter(ref=>ref.kind==='MAGE');
  if(step.scope==='CASTER_ROOM') {
-  const origin=room??roomAt(s,caster.wizard.position);
+  const origin=room??roomAt(s,casterPosition(s,caster,actor,effect));
   refs=origin?[...s.players.filter(p=>inRoom(p,origin)).map(p=>snapshot(s,p.id)!),...s.evocations.filter(e=>origin.tiles.some(h=>hexKey(h)===hexKey(e.position))).map(e=>snapshot(s,e.id)!)]:[];
  }
  if(step.effect==='PAIN') {
@@ -1840,7 +1869,7 @@ function resolveMomentBody(s:GameState,caster:Player,spell:Card,step:Moment,room
  if(step.effect==='SUMMON') {
   const target = refs[0] ? liveModel(s, refs[0]) : undefined;
   const kind=step.kind==='EVENT_MODEL'?effect.eventKind:step.kind;
-  const position = step.position === 'TARGET' ? target?.model.position??room?.tiles[0] : step.position==='REMOVED' ? effect.removed?.position : step.position==='EVENT' ? effect.eventPosition : step.position==='CHOICE' ? chooseRoomPosition(s,caster,spell) : caster.wizard.position;
+  const position = step.position === 'TARGET' ? target?.model.position??room?.tiles[0] : step.position==='REMOVED' ? effect.removed?.position : step.position==='EVENT' ? effect.eventPosition : step.position==='CHOICE' ? chooseRoomPosition(s,caster,spell) : casterPosition(s,caster,actor,effect);
   if(!position||!kind)return;
   summonForEffect(s,caster,kind,position,effect);
   return;
@@ -2000,7 +2029,7 @@ function resolveMomentBody(s:GameState,caster:Player,spell:Card,step:Moment,room
  if(step.amount<=0)return;
  // Instability always lands in the chosen room; conversion of a room spell converts that room's cubes.
  if(step.effect==='INSTABILITY' || (step.effect==='CONVERT' && spell.target==='ROOM')) {
-  const placeIn=step.effect==='INSTABILITY'&&step.scope==='CASTER_ROOM'?roomAt(s,caster.wizard.position):room;
+  const placeIn=step.effect==='INSTABILITY'&&step.scope==='CASTER_ROOM'?roomAt(s,casterPosition(s,caster,actor,effect)):room;
   if(placeIn)resolveInstruction(s,caster,{...step,target:'BOUND_ROOM'},undefined,placeIn.id,actor,effect,damageOrigin);
   return;
  }

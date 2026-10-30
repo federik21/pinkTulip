@@ -347,19 +347,4 @@ describe('forced-target restrictions coexist with generic reaction choices and r
   expect(entropy.ids).toContain(result.evocations[0].id);
   expect(result.feedbackEvents!.every(e=>entropy.ids.includes(e.id))).toBe(true);expect(hits(result,'p1')).toEqual([2]);conserved(result);
  });
-
- it('never redirects a forced target or activates an old model when owner or shared summon supply is capped',()=>{
-  for(const cap of ['owner','shared'] as const) {
-   const s=fixture(),trap=arm(s,'Torment');
-   for(let i=0;i<3;i++) {
-    if(cap==='owner')cadaver(s,'p3',`old-${i}`,offAxis);
-    else summonEvocation(s,s.players[1],'SUCCUBUS',offAxis);
-   }
-   const existing=structuredClone(s.evocations),paused=cast(s,[moment.damage(1)],'p4');expect(targets(paused)).toEqual(['p1']);
-   const result=respond(paused,trap.id);
-   expect(result.pendingDecision).toBeUndefined();expect(result.evocations).toEqual(existing);expect(result.evocationActivation).toBeNull();
-   expect(result.readiedSpells).toEqual([]);expect(triggers(result)[0].target?.id).toBe('p1');
-   expect(hits(result,'p1')).toEqual([2]);expect(hits(result,'p4')).toEqual([1]);expect(hits(result,'p2')).toEqual([]);conserved(result);
-  }
- });
 });

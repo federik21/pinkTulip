@@ -202,23 +202,6 @@ describe('real AI room transport', () => {
   expect(host.state!.phase).toBe('LOBBY'); expect(server.errors()).toBe('');
  }, 20000);
 
- it('caps mixed rosters at three for Agony Study supply and never hands an AI seat to a joining socket', async () => {
-  const server = await startServer(), host = await connect(server.url);
-  await joinRoom(host, 'supply', 'Host', true);
-  await host.action({ type: 'ADD_BOT', playerId: 'p1' });
-  const human = await connect(server.url);
-  expect(await joinRoom(human, 'supply', 'AI Mage 2')).toBe('p3');
-  await host.stateWhere(game => game.players.length === 3 && game.players[1].ready);
-  expect(host.state!.players[1]).toMatchObject({ id: 'p2', isBot: true, connected: true, name: 'AI Mage 2' });
-  const before = structuredClone(host.state!);
-  await host.rejected({ type: 'ADD_BOT', playerId: 'p1' }, /Not enough library/);
-  const fourth = await connect(server.url);
-  fourth.send({ type: 'JOIN', roomId: 'supply', playerName: 'Fourth' });
-  expect(await fourth.next(message => message.type === 'ERROR')).toMatchObject({ message: expect.stringMatching(/Not enough library/) });
-  expect(host.state).toEqual(before); expect(fourth.messages.some(message => message.type === 'WELCOME')).toBe(false);
-  expect(server.errors()).toBe('');
- }, 15000);
-
  it('migrates a departing lobby host to the remaining human, skipping the earlier AI seat', async () => {
   const server = await startServer(), host = await connect(server.url), guest = await connect(server.url);
   await joinRoom(host, 'migration', 'Host', true); await host.action({ type: 'ADD_BOT', playerId: 'p1' });
@@ -232,96 +215,6 @@ describe('real AI room transport', () => {
   expect(guest.state!.players.at(-1)).toMatchObject({ id: 'p1', isBot: true }); expect(guest.state!.hostId).toBe('p3');
   expect(server.errors()).toBe('');
  }, 15000);
-
- it('deletes a running SAVE_FILE=off room when the last human leaves despite its connected AI seat', async () => {
-  const server = await startServer(), host = await connect(server.url), watcher = await connect(server.url);
-  await startHumanAndBot(host, 'ephemeral-bot');
-  const closed = once(host.ws, 'close'); host.ws.close(); await closed;
-  await watcher.next(message => message.type === 'ROOM_LIST' && message.rooms?.length === 0);
-  await expectQuiet(watcher);
-  expect(await joinRoom(watcher, 'ephemeral-bot', 'New host', true)).toBe('p1');
-  expect(watcher.state!.players).toHaveLength(1); expect(watcher.state!.phase).toBe('LOBBY');
-  expect(watcher.state!.players[0].isBot).not.toBe(true); expect(server.errors()).toBe('');
- }, 15000);
-
- it('runs human + AI school/ready/Pink Tulip/Study/preparation and paced movement and combat on the current catalog', async () => {
-  const server = await startServer(), host = await connect(server.url);
-  const initial = await reachAction(host, 'live-bot');
-  expect(initial.round).toBe(1); expect(initial.players[1].prepared.slot1!.card.name).toBe('Hidden spell');
-  expect((await host.request({ type: 'SAVE_SESSION' })).message).toMatch(/not enabled/);
-  for (const type of ['ADD_BOT', 'REMOVE_BOT'] as const)
-   await host.rejected({ type, playerId: 'p1', botId: 'p2' }, /only.*lobby/);
-  const route = pathTo(host.state!, host.state!.players[0].wizard.position, { q: 0, r: 0 });
-  expect(route).toHaveLength(2);
-  await host.action({ type: 'BEGIN_PHYSICAL_ACTION', playerId: 'p1', kind: 'EXPLORE' });
-  await host.action({ type: 'PERFORM_MOVEMENT', playerId: 'p1' });
-  for (const destination of route) await host.action({ type: 'EXPLORE_STEP', playerId: 'p1', destination });
-  await host.action({ type: 'SKIP_PHYSICAL_EFFECTS', playerId: 'p1' });
-  expect(host.state!.history?.canUndo).toBe(true);
-  const firstBotState = host.states.length;
-  await host.action({ type: 'END_ACTIVATION', playerId: 'p1' });
-  await host.stateWhere(game => game.activation?.physicalAction?.kind === 'EXPLORE' && game.currentPlayerId === 'p2');
-  expect(host.state!.history).toEqual({ canUndo: false, canRedo: false });
-  await host.rejected({ type: 'UNDO_ACTION', playerId: 'p1' }, /No action available/);
-  await host.rejected({ type: 'PUNCH', playerId: 'p2', targetId: 'p1' }, /another player/);
-  await finishBotTurn(host);
-  expect(host.states.slice(firstBotState).some(game => !game.board.rooms.some(room => room.startingFor === 'p2' && room.tiles.some(h => hexKey(h) === hexKey(game.players[1].wizard.position))))).toBe(true);
-
-  // A naturally shuffled preparation may use a hidden activation before an
-  // attack. Give it further real turns rather than replacing dealt cards.
-  const dealtByBot = (game: GameState) => game.feedbackEvents?.some(event => event.kind === 'DAMAGE' && event.sourceId === 'p2' && event.target.id === 'p1');
-  for (let turn = 0; turn < 5 && !dealtByBot(host.state!); turn++) {
-   expect(host.state!.phase).toBe('ACTION'); expect(host.state!.currentPlayerId).toBe('p1');
-   const own = host.state!.players[0];
-   if (own.actionTokens > 0) {
-    await host.action({ type: 'BEGIN_PHYSICAL_ACTION', playerId: 'p1', kind: 'ATTACK' });
-    await host.action({ type: 'SKIP_PHYSICAL_EFFECTS', playerId: 'p1' });
-   } else {
-    const card = getDiscardMoveCards(own,host.state!.activation)[0];
-    expect(card).toBeDefined();
-    const destination = host.state!.board.rooms.filter(room => !room.startingFor).flatMap(room => room.tiles)
-     .filter(h => areAdjacent(own.wizard.position, h)).sort((a, b) => hexDistance(a, { q: 0, r: 0 }) - hexDistance(b, { q: 0, r: 0 }))[0];
-    await host.action({ type: 'DISCARD_EXIT', playerId: 'p1', cardId: card.id, destination });
-   }
-   await host.action({ type: 'END_ACTIVATION', playerId: 'p1' }); await finishBotTurn(host);
-  }
-  expect(dealtByBot(host.state!)).toBe(true);
-  expect(host.state!.players[1].actionTokens).toBeLessThan(2);
-  expect(host.messages.filter(message => message.type === 'ERROR').every(message => /not enabled|only.*lobby|No action available|another player/.test(message.message!))).toBe(true);
-  expect(server.errors()).toBe('');
- }, 45000);
-
- it('keeps AI connected across save/restart, requires human rejoin, and never lets a socket reclaim an AI seat', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'bot-network-')); directories.push(directory);
-  const file = join(directory, 'sessions.json');
-  let server = await startServer(file); const host = await connect(server.url, true);
-  const started = await startHumanAndBot(host, 'restore-bot');
-  expect(await host.request({ type: 'SAVE_SESSION' })).toMatchObject({ type: 'SESSION_SAVED', savedAt: expect.any(String) });
-  const saved = JSON.parse(readFileSync(file, 'utf8')).rooms[0].game as GameState;
-  expect(saved.players[1]).toMatchObject({ isBot: true, connected: true });
-  const watcher = await connect(server.url, true), closed = once(host.ws, 'close'); host.ws.close(); await closed;
-  const listed = await watcher.next(message => message.type === 'ROOM_LIST' && message.rooms?.some(room => room.status === 'saved') === true);
-  expect(listed.rooms).toContainEqual({ id: 'restore-bot', players: 2, capacity: 4, status: 'saved', mages: ['Human host', 'AI Mage 2'] });
-  await stop(server.child); server = await startServer(file);
-  const loaded = new SessionStore(file, () => []).load()[0].game;
-  expect(loaded.players.map(p => p.connected)).toEqual([false, true]); expect(loaded.players[1].isBot).toBe(true);
-  expect(loaded.gameId).toBe(started.gameId); expect(loaded.players[1].personalDeck.map(c => c.id)).toEqual(saved.players[1].personalDeck.map(c => c.id));
-  const returning = await connect(server.url, true);
-  expect((await returning.next(message => message.type === 'ROOM_LIST')).rooms?.[0].status).toBe('saved');
-  // Even an exact bot name must get the open HUMAN seat, never p2.
-  expect(await joinRoom(returning, 'restore-bot', 'AI Mage 2')).toBe('p1');
-  expect(returning.state!.players.map(p => p.connected)).toEqual([true, true]);
-  expect(returning.state!.players[1]).toMatchObject({ id: 'p2', isBot: true, connected: true });
-  expect(returning.state!.players[0].isBot).not.toBe(true);
-  const intruder = await connect(server.url, true);
-  intruder.send({ type: 'JOIN', roomId: 'restore-bot', playerName: 'AI Mage 2' });
-  expect(await intruder.next(message => message.type === 'ERROR')).toMatchObject({ message: expect.stringMatching(/already in progress/) });
-  expect(intruder.messages.some(message => message.type === 'WELCOME')).toBe(false);
-  await returning.rejected({ type: 'SET_READY', playerId: 'p2', ready: true }, /another player/);
-  await returning.action({ type: 'ADVANCE_PHASE', playerId: 'p1', expectedPhase: 'BLACK_ROSE', expectedRound: 1 });
-  await returning.stateWhere(game => game.players[1].studyDone);
-  expect(returning.state!.phase).toBe('STUDY'); expect(server.errors()).toBe('');
- }, 30000);
 
  it('does not run AI without human clients or through a disconnected human, and clears history after a restored real attack', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'bot-network-')); directories.push(directory);

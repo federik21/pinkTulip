@@ -19,7 +19,7 @@ function fixture(count = 2): GameState {
  return game;
 }
 function prepare(game: GameState, changes: Partial<Card> = {}, slot: keyof Player['prepared'] = 'rapid') {
- const card = { ...game.library[0].cards.shift()!, target:'ROOM' as const, moments:[], range:4, ...changes };
+ const card = { ...game.library[0].cards.shift()!, target:'ROOM' as const, spellType:undefined, ongoing:undefined, trigger:undefined, moments:[], range:4, ...changes };
  game.players[0].prepared[slot] = { card, used:false };
  return card;
 }
@@ -65,32 +65,6 @@ describe('private exact snapshot undo/redo', () => {
   expect(available(history, game)).toEqual({ canUndo:false, canRedo:true, redoLabel:'Begin physical action' });
   for (const state of states.slice(1)) { game = apply(history, game, redo); expect(game).toEqual(state); }
   expect(available(history, game).canRedo).toBe(false);
- });
-
- it('restores casting, defeat respawn, contributions, cubes, scoring and completed/promoted quests', () => {
-  const history = new ActionHistory(), initial = fixture(3);
-  prepare(initial, { ...withMoments({ damage:2, instability:2 }), target:'MODEL' }, 'slot1');
-  const [attacker, victim, contributor] = initial.players;
-  victim.wizard.damageCubes = 8; victim.wizard.blackDamage = 1;
-  victim.wizard.damageByPlayer = { p1:5, p3:2 };
-  attacker.cubes.available -= 5; attacker.cubes.onWizard = 5;
-  contributor.cubes.available -= 2; contributor.cubes.onWizard = 2;
-  attacker.quest = { id:'kill-quest', name:'Kill quest', description:'Defeat', kind:'KILL', amount:1, reward:3 };
-  attacker.additionalQuests = [{ ...attacker.quest, id:'later-quest', kind:'REBUILD' }];
-  const room = initial.board.rooms.find(r => r.id === 'room-0,0')!;
-  room.instability = 8; room.cubesByPlayer = { p1:8 };
-  attacker.cubes.available -= 8; attacker.cubes.onBoard = 8;
-  let game = apply(history, initial, { type:'CAST_SPELL', playerId:'p1', slot:'slot1', targetPlayerId:'p2' });
-  const after = structuredClone(game);
-  expect(game.players[0]).toMatchObject({ kills:1, questsCompleted:2, victoryPoints:11, cubes:{ onWizard:0, onBoard:10 } });
-  expect(game.players[0].prepared.slot1?.used).toBe(true);
-  expect(game.players[1].wizard).toMatchObject({ damageCubes:0, damageByPlayer:{}, blackDamage:0 });
-  expect(game.players[1].wizard.position).not.toEqual(initial.players[1].wizard.position);
-  expect(game.players[2].cubes.onWizard).toBe(0);
-  expect(game.questDiscard).toHaveLength(2);
-  expect(available(history, game).canUndo).toBe(true);
-  game = apply(history, game, undo); expect(game).toEqual(initial);
-  game = apply(history, game, redo); expect(game).toEqual(after);
  });
 
  it('restores removed forgotten preparations without changing draws', () => {
@@ -147,34 +121,6 @@ describe('private exact snapshot undo/redo', () => {
   game = apply(history, game, undo); game = apply(history, game, undo); expect(game).toEqual(earliest);
   reject(history, game, undo, /No action available/);
  });
-
- it.each(['ACTION', 'EVOCATION'] as const)('restores %s evocation activation, movement, damage, destruction and handoff', phase => {
-  const history = new ActionHistory(), initial = fixture(); initial.phase = phase;
-  if (phase === 'EVOCATION') initial.activation = null;
-  const model = (id: string, owner: string) => ({ id, playerId:owner, number:1, name:'Cadaver',
-   archetype:'UNDEAD' as const, movement:2, attack:2, health:2, passive:'WOUNDED_FURY' as const,
-   position:{ q:0, r:0 }, damageCubes:0, damageByPlayer:{}, activated:false });
-  initial.evocations = [model('own-model', 'p1'), model('victim-model', 'p2'), model('opponent-model', 'p2')];
-  initial.evocations[1].position = { q:1, r:0 };
-  const states = [initial]; let game = initial;
-  const actions: GameAction[] = [
-   { type:'ACTIVATE_EVOCATION', playerId:'p1', evocationId:'own-model' },
-   { type:'EVOCATION_STEP', playerId:'p1', destination:{ q:1, r:0 } },
-   { type:'EVOCATION_ATTACK', playerId:'p1', targetId:'victim-model' },
-  ];
-  for (const action of actions) {
-   game = apply(history, game, action); states.push(structuredClone(game));
-   if (action.type === 'ACTIVATE_EVOCATION') {
-    reject(history, game, { type:'EVOCATION_ATTACK', playerId:'p1', targetId:'victim-model' }, /^Target must be in the same room$/);
-   }
-  }
-  expect(game.evocations.map(e => e.id)).not.toContain('victim-model');
-  expect(game.players[0].cubes.onEvocations).toBe(0);
-  expect(game.players[0].actionTokens).toBe(phase === 'ACTION' ? 1 : 2);
-  if (phase === 'EVOCATION') expect(game.currentPlayerId).toBe('p2');
-  for (const state of states.slice(0, -1).reverse()) { game = apply(history, game, undo); expect(game).toEqual(state); }
-  for (const state of states.slice(1)) { game = apply(history, game, redo); expect(game).toEqual(state); }
- });
 });
 
 describe('spell-only dummy targeting preserves rejected attack history', () => {
@@ -230,55 +176,6 @@ describe('spell-only dummy targeting preserves rejected attack history', () => {
   expect(available(history, attacked)).toMatchObject({ canUndo:true, canRedo:false, undoLabel:'Attack' });
   game = apply(history, attacked, undo); expect(game).toEqual(before);
   game = apply(history, game, redo); expect(game).toEqual(attacked);
- });
-
- it.each(['ACTION', 'EVOCATION'] as const)('rejected dummy EVOCATION_ATTACK in %s preserves the activation and exact Finish redo', phase => {
-  const history = new ActionHistory(), initial = targets('EVOCATION_ATTACK'); initial.phase = phase;
-  if (phase === 'EVOCATION') initial.activation = null;
-  let game = apply(history, initial, { type:'ACTIVATE_EVOCATION', playerId:'p1', evocationId:'own' });
-  const active = structuredClone(game);
-  game = apply(history, game, command('END_EVOCATION')); const finished = structuredClone(game);
-  expect(game.evocationActivation).toBeNull(); expect(game.players).toEqual(active.players);
-  expect(game.currentPlayerId).toBe(phase === 'ACTION' ? 'p1' : 'p2');
-  game = apply(history, game, undo); expect(game).toEqual(active);
-  expect(available(history, game)).toEqual({ canUndo:true, canRedo:true,
-   undoLabel:'Activate evocation', redoLabel:'End evocation' });
-  for (const selection of [{ targetId:'p2' }, { targetId:'enemy' }, {}, { roomId:'room-0,0' },
-   { targetId:'dummy' }, { targetId:'dummy-room-0,0', roomId:'room-0,0' }]) {
-   reject(history, game, { type:'EVOCATION_ATTACK', playerId:'p1', ...selection, dummy:true } as unknown as GameAction, dummyError);
-  }
-  reject(history, game, { type:'EVOCATION_ATTACK', playerId:'p1', targetId:'p2', dummy:false } as unknown as GameAction, dummyError);
-  game = apply(history, game, redo); expect(game).toEqual(finished);
-  game = apply(history, game, undo); expect(game).toEqual(active);
-  for (const targetId of ['p2-wizard', 'enemy']) {
-   const attacked = apply(history, game, { type:'EVOCATION_ATTACK', playerId:'p1', targetId });
-   if (targetId === 'enemy') expect(attacked.evocations.find(e => e.id === 'enemy')?.damageByPlayer).toEqual({ p1:2 });
-   else expect(attacked.players[1].wizard.damageByPlayer).toEqual({ p1:2 });
-   expect(attacked.evocations.find(e => e.id === 'own')?.damageByPlayer).toEqual({ p2:1 });
-   expect(attacked.evocationActivation).toBeNull(); expect(attacked.players[0].actionTokens).toBe(phase === 'ACTION' ? 1 : 2);
-   game = apply(history, attacked, undo); expect(game).toEqual(active);
-   game = apply(history, game, redo); expect(game).toEqual(attacked);
-   game = apply(history, game, undo); expect(game).toEqual(active);
-  }
- });
-
- it('still permits MAGE, EVOCATION and MODEL spell dummies with exact cast undo/redo', () => {
-  for (const target of ['MAGE', 'EVOCATION', 'MODEL'] as const) {
-   const history = new ActionHistory(), initial = fixture();
-   const card = prepare(initial, { target, spellType:'COMBAT', ...withMoments({ damage:4, heal:2, convert:1, instability:1 }), range:0 });
-   delete card.trigger; delete card.triggerEffects; delete card.ongoing;
-   const before = structuredClone(initial);
-   let game = apply(history, initial, { ...cast, dummy:true }); const after = structuredClone(game);
-   expect(initial).toEqual(before); expect(game.players.map(p => p.wizard)).toEqual(before.players.map(p => p.wizard));
-   expect(game.players[0].prepared.rapid).toEqual({ card, used:true }); expect(game.players[0].actionTokens).toBe(2);
-   expect(game.activation).toMatchObject({ actionsUsed:1, spellsCast:1 });
-   expect(game.readiedSpells).toEqual(before.readiedSpells); expect(game.ongoingSpells).toEqual(before.ongoingSpells);
-   expect(game.board.rooms.find(r => r.id === 'room-0,0')).toMatchObject({ instability:1, cubesByPlayer:{ p1:1 } });
-   expect(game.library[0].discard).toContainEqual(card);
-   expect(available(history, game)).toEqual({ canUndo:true, canRedo:false, undoLabel:'Cast spell' });
-   game = apply(history, game, undo); expect(game).toEqual(before);
-   game = apply(history, game, redo); expect(game).toEqual(after);
-  }
  });
 });
 

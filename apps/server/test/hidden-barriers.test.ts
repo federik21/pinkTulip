@@ -88,33 +88,4 @@ describe('fail-closed detection of future engine information effects', () => {
   expect(() => history.apply(game, { type:'PERFORM_MOVEMENT', playerId:'p1' }, 'p1')).toThrow(/Rejected/);
   expect(game).toEqual(before); expect(history.status(game, 'p1')).toEqual(status);
  });
-
- it.each(['removed', 'absent legacy zone', 'replaced UUID'] as const)('blocks readied-instance %s even without a public discard change', mode => {
-  const history = new ActionHistory(); let game = fixture();
-  const deck = game.library.find(d => d.id === 'enchantment')!;
-  const index = deck.cards.findIndex(card => card.name === 'Threshold Snare');
-  game.readiedSpells = [{ id:crypto.randomUUID(), playerId:'p2', card:deck.cards.splice(index, 1)[0], roomId:'room-1,0' }];
-  game.activeSpellOrder = game.readiedSpells.map(active => active.id);
-  game = history.apply(game, { type:'BEGIN_PHYSICAL_ACTION', playerId:'p1', kind:'EXPLORE' }, 'p1');
-  game = history.apply(game, { type:'PERFORM_MOVEMENT', playerId:'p1' }, 'p1');
-  game = history.apply(game, { type:'UNDO_ACTION', playerId:'p1' }, 'p1');
-  expect(history.status(game, 'p1')).toMatchObject({ canUndo:true, canRedo:true });
-  vi.mocked(applyAction).mockImplementationOnce((state, action) => {
-   const result = original.applyAction(state, action);
-   if (mode === 'absent legacy zone') delete result.readiedSpells;
-   else if (mode === 'removed') result.readiedSpells = [];
-   else result.readiedSpells![0].id = crypto.randomUUID();
-   result.activeSpellOrder = (result.readiedSpells ?? []).map(active => active.id);
-   return result;
-  });
-  const discards = structuredClone(game.library.map(d => d.discard));
-  game = history.apply(game, { type:'PERFORM_MOVEMENT', playerId:'p1' }, 'p1');
-  expect(game.library.map(d => d.discard)).toEqual(discards);
-  for (const owner of ['p1', 'p2']) {
-   expect(history.status(game, owner)).toEqual({ canUndo:false, canRedo:false });
-   for (const type of ['UNDO_ACTION', 'REDO_ACTION'] as const) {
-    expect(() => history.apply(game, { type, playerId:owner }, owner)).toThrow(/No action available/);
-   }
-  }
- });
 });

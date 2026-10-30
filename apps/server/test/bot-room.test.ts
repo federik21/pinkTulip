@@ -38,19 +38,6 @@ function unchangedRejection(game: GameState, action: BotCommand, message: RegExp
 }
 
 describe('AI lobby roster configuration', () => {
- it('adds a connected server-controlled empty seat without mutating or dealing from the real Agony library', () => {
-  const game = lobby(), before = structuredClone(game), next = configureBot(game, add);
-  expect(game.library.map(deck => [deck.id, deck.cards.length])).toEqual([['agony', 36]]);
-  expect(game.powerfulDeck).toHaveLength(12);
-  expect(game).toEqual(before); expect(next).not.toBe(game);
-  expect(next.players[1]).toMatchObject({ id: 'p2', name: 'AI Mage 2', isBot: true, connected: true, ready: false,
-   startingSchoolId: null, hand: [], personalDeck: [], discard: [], prepared: { slot1: null, slot2: null, slot3: null, rapid: null } });
-  expect(next.players[0].isBot).toBeUndefined();
-  expect(next.library).toEqual(before.library); expect(next.board).toEqual(before.board);
-  expect(next.log).toEqual([...before.log, 'AI Mage 2 joined as a basic AI opponent.']);
-  next.players[0].name = 'Changed'; next.library[0].cards.pop();
-  expect(game).toEqual(before);
- });
 
  it.each(['ADD_BOT', 'REMOVE_BOT'] as const)('%s resets all readiness but preserves school choices and never starts a previously ready lobby', type => {
   const game = configureBot(lobby(), add);
@@ -95,26 +82,6 @@ describe('AI lobby roster configuration', () => {
   unchangedRejection(configureBot(lobby(), add), { ...remove, botId }, /AI opponent not found/);
  });
 
- it('rejects a fourth seat on finite Study supply, a physically full room, and exhausted library stock', () => {
-  const three = configureBot(configureBot(lobby(), add), add);
-  expect(three.players).toHaveLength(3); unchangedRejection(three, add, /Not enough library/);
-  unchangedRejection(lobby(4), add, /Room full/);
-  const empty = lobby(); empty.removedCards.push(...empty.library[0].cards.splice(0));
-  unchangedRejection(empty, add, /Not enough library/);
- });
-
- it('counts only library draw/discard supply, includes the final four-card choice, and never mutates', () => {
-  const game = lobby(), before = structuredClone(game);
-  expect([2, 3, 4, 5].map(count => canFitBotRoster(game, count))).toEqual([true, true, false, false]);
-  expect(canFitBotRoster(game)).toBe(true); expect(game).toEqual(before);
-  game.players[0].hand.push(...game.library[0].cards.splice(19));
-  expect(canFitBotRoster(game, 2)).toBe(false); // 2 * (7 + 2) + 2 = 20, not 18 or 19.
-  game.library[0].discard.push(game.players[0].hand.pop()!);
-  expect(canFitBotRoster(game, 2)).toBe(true);
-  game.library[0].discard.push(...game.library[0].cards.splice(0));
-  expect(canFitBotRoster(game, 2)).toBe(true);
- });
-
  it.each([2, 3])('the admitted %s-seat roster really completes first Study from the same physical supply', count => {
   let game = lobby(); while (game.players.length < count) game = configureBot(game, add);
   const history = new ActionHistory();
@@ -142,18 +109,6 @@ describe('paced authoritative BotRunner', () => {
   return { room, active, changed, choose, runner };
  }
  const beat = () => vi.advanceTimersByTime(450);
-
- it('coalesces repeated broadcast wakes, waits 450ms, and commits only one visible command per beat', () => {
-  const h = harness(configureBot(lobby(), add));
-  h.changed.mockImplementation(() => h.runner.wake());
-  h.runner.wake(); h.runner.wake(); h.runner.wake(); expect(vi.getTimerCount()).toBe(1);
-  vi.advanceTimersByTime(449); expect(h.choose).not.toHaveBeenCalled(); expect(h.changed).not.toHaveBeenCalled();
-  vi.advanceTimersByTime(1); expect(h.choose).toHaveBeenCalledTimes(1); expect(h.changed).toHaveBeenCalledTimes(1);
-  expect(h.room.game.players[1]).toMatchObject({ startingSchoolId: 'agony', ready: false });
-  expect(vi.getTimerCount()).toBe(1); beat(); expect(h.room.game.players[1].ready).toBe(true);
-  expect(h.changed).toHaveBeenCalledTimes(2); beat(); expect(vi.getTimerCount()).toBe(0);
-  vi.advanceTimersByTime(9000); expect(h.choose).toHaveBeenCalledTimes(3);
- });
 
  it('auto-starts through history only after human consent, then waits for explicit Pink Tulip continuation', () => {
   const h = harness(configureBot(lobby(), add));

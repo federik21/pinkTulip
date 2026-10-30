@@ -38,7 +38,7 @@ export function SpellDescription({card,showMoments=false}:{card:Card;showMoments
  const moments=reactive?(card.triggerEffects??card.moments):card.moments;
  return <>
   {triggerText&&<span className="spell-trigger">{triggerText}</span>}
-  {showMoments&&<span className="spell-effects">{moments.map((moment,index)=><MomentChip key={index} moment={moment} target={reactive&&'target' in moment?(moment.target==='BOUND_ROOM'||moment.target==='EVENT_ROOM'?'ROOM':'MODEL'):card.target}/>)}</span>}
+  {showMoments&&<span className="spell-effects">{card.instability&&<span>◆ 1 instability · caster’s room</span>}{moments.map((moment,index)=><MomentChip key={index} moment={moment} target={reactive&&'target' in moment?(moment.target==='BOUND_ROOM'||moment.target==='EVENT_ROOM'?'ROOM':'MODEL'):card.target}/>)}</span>}
   {card.enhancement&&<span className="spell-enhancement">⚗ {card.enhancement.text}</span>}
   {rulesText&&<span className="spell-rules"> full card text: {rulesText}</span>}
  </>;

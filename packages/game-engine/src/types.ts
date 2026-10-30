@@ -80,7 +80,10 @@ export type Enhancement = { requires: Element[]; moments?: Moment[]; position?: 
 // Extra printed restrictions on the chosen model.
 export type TargetFilter = { own?: boolean; archetype?: 'CONSTRUCT'; maxHealth?: number; sameRoom?: boolean };
 // triggerText is optional display copy only; trigger conditions govern matching.
-export type Card = { id: string; name: string; kind: 'SPELL'; moments: Moment[]; range: number; target: SpellTarget; element?: Element; enhancement?: Enhancement; targetFilter?: TargetFilter; suppressReactions?: boolean; schoolId?: string; powerful?: boolean; spellType?: SpellType; triggerText?: string; rulesText?: string; trigger?: TriggerCondition; triggerTarget?: 'EVENT_MODEL' | 'EVENT_ACTOR' | 'EVENT_ROOM'; triggerSight?: number; targetFrom?: 'EVENT_MODEL'; triggerEffects?: TriggeredInstruction[]; ongoing?: { trigger: TriggerCondition; effects: TriggeredInstruction[] } };
+// `instability` prints "place 1 instability in the caster's current room". It resolves FIRST, as its own
+// effect (own log entry, own moment boundary, own quest/trigger count), never as one of the `moments`
+// of the card's main effect, so moment-based and effect-based triggers can tell them apart.
+export type Card = { id: string; name: string; kind: 'SPELL'; moments: Moment[]; instability?: boolean; range: number; target: SpellTarget; element?: Element; enhancement?: Enhancement; targetFilter?: TargetFilter; suppressReactions?: boolean; schoolId?: string; powerful?: boolean; spellType?: SpellType; triggerText?: string; rulesText?: string; trigger?: TriggerCondition; triggerTarget?: 'EVENT_MODEL' | 'EVENT_ACTOR' | 'EVENT_ROOM'; triggerSight?: number; targetFrom?: 'EVENT_MODEL'; triggerEffects?: TriggeredInstruction[]; ongoing?: { trigger: TriggerCondition; effects: TriggeredInstruction[] } };
 export type ActiveSpell = { id: string; playerId: string; card: Card; targetPlayerId?: string; targetEvocationId?: string; roomId?: string; cleanupDestination?: 'HAND' | 'MEMORIES' };
 export type RoomColor = 'crimson' | 'azure' | 'emerald' | 'amber' | 'violet' | 'grey';
 export type RoomEffect = 'ROOM_DAMAGE' | 'DRAW_DISCARD' | 'INSTABILITY' | 'DRAW_QUEST' | 'DRAW_GRIMOIRE' | 'SUMMON_CADAVER' | 'DRAW_POWERFUL' | 'FIRST_PLAYER';

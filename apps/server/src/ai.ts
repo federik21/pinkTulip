@@ -31,8 +31,11 @@ function enemies(s: GameState, p: Player): Model[] {
   .sort((a, b) => (a.health - a.wounds) - (b.health - b.wounds) || compareId(a.id, b.id));
 }
 
+// The card's separate instability effect (Card.instability) is scored like a printed caster-room moment.
+const PRINTED_INSTABILITY: Moment = { effect: 'INSTABILITY', amount: 1, scope: 'CASTER_ROOM' };
 function steps(card: Card, reactive = false): Moment[] {
- return reactive && !card.moments.length ? card.triggerEffects ?? [] : card.moments;
+ const printed = reactive && !card.moments.length ? card.triggerEffects ?? [] : card.moments;
+ return card.instability ? [PRINTED_INSTABILITY, ...printed] : printed;
 }
 function cardValue(card: Card): number {
  return steps(card, true).reduce((value, m) => value + (

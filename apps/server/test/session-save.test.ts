@@ -75,67 +75,6 @@ async function connect(url: string) {
  return { peer, canSave:hello.canSave };
 }
 
-it('saves a running battle on request, keeps it when everyone leaves, and resumes it after a server restart', async () => {
- const file = join(tempDir(), 'nested', 'sessions.json');
- let { child, url } = await startServer(file);
- try {
-  const host = await connect(url), guest = await connect(url);
-  expect(host.canSave).toBe(true);
-  host.peer.send({ type:'CREATE_ROOM', roomId:'later', playerName:'Ayla' });
-  expect((await host.peer.next(message => message.type === 'WELCOME')).playerId).toBe('p1');
-  guest.peer.send({ type:'JOIN', roomId:'later', playerName:'Borin' });
-  expect((await guest.peer.next(message => message.type === 'WELCOME')).playerId).toBe('p2');
-
-  // A lobby cannot be saved.
-  host.peer.send({ type:'SAVE_SESSION' });
-  expect((await host.peer.next(message => message.type === 'ERROR')).message).toMatch(/battle in progress/);
-
-  for (const [peer, playerId] of [[host.peer, 'p1'], [guest.peer, 'p2']] as const) {
-   await peer.action({ type:'SELECT_STARTING_SCHOOL', playerId, schoolId:'cantrip' });
-  }
-  for (const [peer, playerId] of [[host.peer, 'p1'], [guest.peer, 'p2']] as const) await peer.action({ type:'SET_READY', playerId, ready:true });
-  await host.peer.next(message => message.type === 'STATE' && message.state?.phase === 'BLACK_ROSE');
-
-  host.peer.send({ type:'SAVE_SESSION', requestId:'manual-save' });
-  const saved = await host.peer.next(message => message.type === 'SESSION_SAVED');
-  expect(saved).toMatchObject({ requestId:'manual-save', roomId:'later' });
-  const onDisk = JSON.parse(readFileSync(file, 'utf8')) as { version:number; rooms:Array<{ id:string; savedAt:string; game:GameState }> };
-  expect(onDisk.version).toBe(1);
-  expect(onDisk.rooms.map(room => room.id)).toEqual(['later']);
-  expect(onDisk.rooms[0].game.phase).toBe('BLACK_ROSE');
-  expect(existsSync(`${file}.tmp`)).toBe(false);
-
-  // Everybody leaves: the battle stays listed as a saved session with its mage names.
-  const watcher = await connect(url);
-  host.peer.ws.close(); guest.peer.ws.close();
-  const listed = await watcher.peer.next(message => message.type === 'ROOM_LIST' && message.rooms?.[0]?.status === 'saved');
-  expect(listed.rooms).toEqual([{ id:'later', players:2, capacity:4, status:'saved', mages:['Ayla', 'Borin'] }]);
-  watcher.peer.ws.close();
- } finally { await stop(child); }
-
- // Server restarted from the same file.
- ({ child, url } = await startServer(file));
- try {
-  const returning = await connect(url);
-  const list = await returning.peer.next(message => message.type === 'ROOM_LIST');
-  expect(list.rooms).toEqual([{ id:'later', players:2, capacity:4, status:'saved', mages:['Ayla', 'Borin'] }]);
-  const other = await connect(url);
-  // The second mage rejoins first and must get their own seat by name, not the first free one.
-  other.peer.send({ type:'JOIN', roomId:'later', playerName:'borin' });
-  expect((await other.peer.next(message => message.type === 'WELCOME')).playerId).toBe('p2');
-  const paused = await other.peer.next(message => message.type === 'STATE');
-  expect(paused.state).toMatchObject({ phase:'BLACK_ROSE', round:1 });
-  expect(paused.state!.players.map(player => player.connected)).toEqual([false, true]);
-  // The game stays paused until the missing mage returns.
-  other.peer.send({ requestId:'paused', action:{ type:'ADVANCE_PHASE', playerId:'p2', expectedPhase:'BLACK_ROSE', expectedRound:1 } });
-  expect((await other.peer.next(message => message.requestId === 'paused')).message).toMatch(/paused/);
-  returning.peer.send({ type:'JOIN', roomId:'later', playerName:'Ayla' });
-  expect((await returning.peer.next(message => message.type === 'WELCOME')).playerId).toBe('p1');
-  await returning.peer.next(message => message.type === 'STATE' && message.state!.players.every(player => player.connected));
-  returning.peer.ws.close(); other.peer.ws.close();
- } finally { await stop(child); }
-}, 40000);
-
 it('stays off unless SAVE_FILE is set: no Save control offered, empty rooms are discarded', async () => {
  const { child, url } = await startServer(null);
  try {

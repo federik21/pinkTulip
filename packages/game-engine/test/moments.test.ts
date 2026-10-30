@@ -212,7 +212,10 @@ describe('card catalog and legacy saves', () => {
   const cards = [...createLibrary().flatMap(d => d.cards), ...createPowerfulDeck()];
   for (const card of cards) {
    expect(Array.isArray(card.moments)).toBe(true);
-   for (const flat of ['damage', 'instability', 'heal', 'convert']) expect(card).not.toHaveProperty(flat);
+   for (const flat of ['damage', 'heal', 'convert']) expect(card).not.toHaveProperty(flat);
+   if ('instability' in card) expect(card.instability).toBe(true);
+   // Printed instability is its own effect, never an opening caster-room moment.
+   expect(card.moments.some(m => m.effect === 'INSTABILITY' && m.scope === 'CASTER_ROOM')).toBe(false);
   for (const m of card.moments) {
    if('amount' in m)expect(m.amount).toBeGreaterThan(0);
   else if(m.effect==='SUMMON'||m.effect==='ACTIVATE_EVOCATION')expect(m.kind).toBeTruthy();
@@ -231,19 +234,25 @@ describe('card catalog and legacy saves', () => {
   const copy = structuredClone(save); upgradeLegacyCards(copy); expect(copy).toEqual(save);
  });
 
- it('migrates saved instability flags to the first effect and handles reactive effects', () => {
+ it('keeps saved instability flags as the separate first effect and migrates opening moments', () => {
   const save = { cards: [
    { id:'normal', name:'Normal', kind:'SPELL', instability:true, moments:[moment.damage(2)], range:1, target:'MODEL' },
    { id:'reactive', name:'Reactive', kind:'SPELL', instability:true, moments:[], range:1, target:'SELF', trigger:{event:'DAMAGE_TAKEN'}, triggerEffects:[{effect:'HEAL',amount:1,target:'OWNER'}] },
-    { id:'legacy-boolean', name:'Legacy boolean', kind:'SPELL', instability:true, damage:2, range:1, target:'MODEL' },
+   { id:'legacy-boolean', name:'Legacy boolean', kind:'SPELL', instability:true, damage:2, range:1, target:'MODEL' },
+   { id:'moment-form', name:'Moment form', kind:'SPELL', moments:[moment.inCasterRoom(moment.instability(1)),moment.damage(2)], range:1, target:'MODEL' },
+   { id:'reactive-form', name:'Reactive form', kind:'SPELL', moments:[], range:1, target:'SELF', trigger:{event:'DAMAGE_TAKEN'}, triggerEffects:[{effect:'INSTABILITY',amount:1,scope:'CASTER_ROOM',target:'OWNER'},{effect:'HEAL',amount:1,target:'OWNER'}] },
+   { id:'target-room', name:'Target room', kind:'SPELL', moments:[moment.instability(1),moment.damage(2)], range:1, target:'ROOM' },
   ] };
   upgradeLegacyCards(save);
-  expect(save.cards[0]).not.toHaveProperty('instability');
-  expect(save.cards[0].moments).toEqual([{effect:'INSTABILITY',amount:1,scope:'CASTER_ROOM'},moment.damage(2)]);
-  expect(save.cards[1]).not.toHaveProperty('instability');
-  expect(save.cards[1].moments).toEqual([]);
-  expect(save.cards[1].triggerEffects).toEqual([{effect:'INSTABILITY',amount:1,scope:'CASTER_ROOM',target:'OWNER'},{effect:'HEAL',amount:1,target:'OWNER'}]);
-  expect(save.cards[2].moments).toEqual([{effect:'INSTABILITY',amount:1,scope:'CASTER_ROOM'},{effect:'DAMAGE',amount:2}]);
+  expect(save.cards[0]).toMatchObject({instability:true,moments:[moment.damage(2)]});
+  expect(save.cards[1]).toMatchObject({instability:true,moments:[],triggerEffects:[{effect:'HEAL',amount:1,target:'OWNER'}]});
+  expect(save.cards[2]).toMatchObject({instability:true,moments:[{effect:'DAMAGE',amount:2}]});
+  expect(save.cards[3]).toMatchObject({instability:true,moments:[moment.damage(2)]});
+  expect(save.cards[4]).toMatchObject({instability:true,triggerEffects:[{effect:'HEAL',amount:1,target:'OWNER'}]});
+  // A plain instability moment aimed at the target room is a different printed effect and stays put.
+  expect(save.cards[5]).not.toHaveProperty('instability');
+  expect(save.cards[5].moments).toEqual([moment.instability(1),moment.damage(2)]);
+  const copy = structuredClone(save); upgradeLegacyCards(copy); expect(copy).toEqual(save);
  });
 
  it('keeps instability ahead of an enhancement positioned before printed moments', () => {

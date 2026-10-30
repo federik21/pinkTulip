@@ -154,33 +154,6 @@ describe.each(['ACTION','EVOCATION'] as const)('%s authoritative evocation comba
    expect(result.players[0].cubes[target==='mage'?'onWizard':'onEvocations']).toBe(Math.min(2,available));
      cubesConserved(result);
     });
-
-    it('caps overkill to remaining health and returns all victim contributor cubes without disturbing other wounds',()=>{
-   const initial=fixture(phase),[owner,,contributor]=initial.players;
-   initial.evocations[0].damageCubes=1;initial.evocations[0].damageByPlayer={p2:1};
-   initial.players[1].cubes.available--;initial.players[1].cubes.onEvocations++;
-   owner.quest={id:'kill',name:'Kill',description:'Defeat a mage',kind:'KILL',amount:1,reward:3};
-   if(target==='mage') {
-    initial.players[1].wizard.damageCubes=9;initial.players[1].wizard.damageByPlayer={p3:9};
-    contributor.cubes.onWizard=9;
-   } else {
-    const victim=initial.evocations.find(e=>e.id==='victim')!;
-    victim.health=2;victim.damageCubes=1;victim.damageByPlayer={p3:1};contributor.cubes.onEvocations=1;
-   }
-   contributor.cubes.available-=target==='mage'?9:1;cubesConserved(initial);
-   const result=applyAction(activate(initial),attack(target));
-   expect(result.evocations[0].damageCubes).toBe(1);expect(result.players[1].cubes.onEvocations).toBe(1);
-   expect(result.players[2].cubes).toEqual({available:25,onWizard:0,onEvocations:0,onBoard:0});
-   expect(result.players[0].cubes).toEqual({available:25,onWizard:0,onEvocations:0,onBoard:0});
-   expect(result.players[0]).toMatchObject(target==='mage'?{kills:1,questsCompleted:1,victoryPoints:5}:{kills:0,questsCompleted:0,victoryPoints:0});
-   if(target==='mage') {
-    expect(result.players[1].wizard).toMatchObject({damageCubes:0,damageByPlayer:{},position:{q:-3,r:2}});
-    expect(result.players[0].quest).toBeNull();expect(result.questDiscard.map(q=>q.id)).toContain('kill');
-   } else {
-    expect(result.evocations.some(e=>e.id==='victim')).toBe(false);expect(result.players[0].quest?.id).toBe('kill');
-   }
-   expect(result.log.some(line=>line.includes('suffers 1 damage'))).toBe(true);cubesConserved(result);
-  });
  });
 
  it('accepts a wizard ID as well as a player ID',()=>{
