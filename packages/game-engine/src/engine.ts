@@ -1070,9 +1070,11 @@ function removeNightmares(s:GameState,mage:Player) {
 }
 function assignNightmare(s:GameState,caster:Player,mage:Player,effect?:EffectResolution):Evocation|undefined {
  if(!mage.wizard.alive)return;
+ const availableSlots=[1,2,3].filter(slot=>!s.evocations.some(e=>isNightmare(e)&&e.assignedTo===mage.id&&e.slot===slot));
+ if(!availableSlots.length){s.log.push(`${mage.name} has an Umbra in every evocation slot; none assigned.`);return;}
  if(s.evocations.filter(e=>e.assignedTo===mage.id).length>=3){s.log.push(`${mage.name} already carries 3 Umbras; none assigned.`);return;}
  if(getEvocationSupply(s).UMBRA<=0){s.log.push('No Umbra models remain in the supply; none assigned.');return;}
- const options=[1,2,3].map(n=>{
+ const options=availableSlots.map(n=>{
   const occupant=s.evocations.find(e=>e.playerId===mage.id&&e.number===n);
   return {id:String(n),label:`Slot ${n} · ${occupant?occupant.name:'empty'}`};
  });
@@ -1430,7 +1432,7 @@ function roomActivationProblem(s:GameState,p:Player,targetRoomId?:string):string
 function activateRoom(s:GameState,p:Player,targetRoomId?:string) {
  atMomentEnd(s,()=>activateRoomBody(s,p,targetRoomId));
 }
-function activateRoomBody(s:GameState,p:Player,targetRoomId?:string,via?:{room:Room;position:Hex}) {
+function activateRoomBody(s:GameState,p:Player,targetRoomId?:string,via?:{room:Room;position:Hex;allowUsedSpecial?:boolean}) {
  const room=via?.room??s.board.rooms.find(r=>inRoom(p,r));
  assert(room?.effect && !room.startingFor,'No room effect in a starting room');
  assert(!targetRoomId || room!.effect==='INSTABILITY','Only Emerald instability takes a target room');
@@ -1438,8 +1440,9 @@ function activateRoomBody(s:GameState,p:Player,targetRoomId?:string,via?:{room:R
  const reward=room!.reconstructed?2:1;
  if(room!.reconstructed) {
   // A spell-driven activation just fizzles on an already used reconstructed room.
-  if(via&&room!.specialUsed){s.log.push(`${room!.name} special already used this Action phase; nothing happens.`);return;}
-  assert(!room!.specialUsed,'Reconstructed room special already used this Action phase');room!.specialUsed=true;
+  if(via&&room!.specialUsed&&!via.allowUsedSpecial){s.log.push(`${room!.name} special already used this Action phase; nothing happens.`);return;}
+  if(room!.specialUsed)assert(via?.allowUsedSpecial,'Reconstructed room special already used this Action phase');
+  else room!.specialUsed=true;
  }
  const actor=snapshot(s,p.id)!,position={...(via?.position??p.wizard.position)};
  const targets=[...s.players.filter(t=>inRoom(t,room!)).map(t=>snapshot(s,t.id)!),...s.evocations.filter(e=>room!.tiles.some(h=>hexKey(h)===hexKey(e.position))).map(e=>snapshot(s,e.id)!)];
@@ -2060,7 +2063,7 @@ function resolveMomentBody(s:GameState,caster:Player,spell:Card,step:Moment,room
  if(step.effect==='ACTIVATE_ROOM_IF_NIGHTMARE') {
   const umbra=room?s.evocations.find(e=>isNightmare(e)&&inRoomPosition(room,e.position)):undefined;
   if(!room||!umbra||!room.effect||room.startingFor||room.effect==='DRAW_POWERFUL'){s.log.push(`${spell.name}: no room effect to activate.`);return;}
-  activateRoomBody(s,caster,undefined,{room,position:{...umbra.position}});
+  activateRoomBody(s,caster,undefined,{room,position:{...umbra.position},allowUsedSpecial:true});
   return;
  }
  if(step.effect==='INSTABILITY_PER_NIGHTMARE') {

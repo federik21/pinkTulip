@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { applyAction, BLACK_ROSE_ID, createGame, createNightmareDeck, EVOCATION_TYPES, getEvocationSupply, getMageEvocationCount, summonEvocation } from '../src';
-import type { Card, GameState } from '../src';
+import type { Card, EventCard, GameState } from '../src';
 
 const card=(name:string):Card=>({...createNightmareDeck('n','nightmare').find(c=>c.name===name)!,id:`n-${name}`});
 function fixture():GameState {
@@ -51,6 +51,24 @@ describe('Nightmare school',()=>{
   expect(getMageEvocationCount(assigned,'p2')).toBe(3);
   expect(summonEvocation(assigned,assigned.players[1],'CADAVER',{q:0,r:0})).toBeUndefined();
  });
+ it('assigns multiple Umbras to distinct slots and wastes assignments after all slots are occupied',()=>{
+  const s=fixture();
+  s.players[0].prepared.rapid={used:false,card:card('Anguish')};
+  let assigned=applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',targetPlayerId:'p2'});
+  assigned=choose(assigned,'1');
+  expect(assigned.pendingDecision?.kind).toBe('CHOICE');
+  if(assigned.pendingDecision?.kind!=='CHOICE')throw new Error('Expected the second Umbra slot choice');
+  expect(assigned.pendingDecision.options.map(option=>option.id)).toEqual(['2','3']);
+  assigned=choose(assigned,'2');
+  expect(assigned.evocations.filter(e=>e.kind==='UMBRA').map(e=>e.slot)).toEqual([1,2]);
+
+  assigned.players[0].prepared.rapid={used:false,card:card('Anguish')};
+  retake(assigned);
+  const full=choose(applyAction(assigned,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',targetPlayerId:'p2'}),'3');
+  expect(full.evocations.filter(e=>e.kind==='UMBRA').map(e=>e.slot)).toEqual([1,2,3]);
+  expect(full.pendingDecision).toBeUndefined();
+  expect(full.log.some(line=>line.includes('has an Umbra in every evocation slot; none assigned.'))).toBe(true);
+ });
  it('activates on Humiliation and is removed when its mage is defeated',()=>{
   let s=castHumiliationAfterAssign(fixture());
   const id=s.evocations.find(e=>e.kind==='UMBRA')!.id;
@@ -65,5 +83,42 @@ describe('Nightmare school',()=>{
   retake(s);
   const dead=applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',targetPlayerId:'p2'});
   expect(dead.evocations.find(e=>e.id===id)).toBeUndefined();
+ });
+ it('lets Traitor Nightmare reactivate a used reconstructed Whispering Library',()=>{
+  const s=castHumiliationAfterAssign(fixture());
+  const umbra=s.evocations.find(e=>e.kind==='UMBRA')!;
+  const library=s.board.rooms.find(r=>!r.startingFor&&r.id!=='room-0,0')!;
+  library.name='Whispering Library';library.effect='DRAW_GRIMOIRE';library.reconstructed=true;library.specialUsed=true;
+  umbra.position={...library.tiles[0]};
+  s.players[0].personalDeck=[card('Anguish')];
+  s.players[0].prepared.rapid={used:false,card:card('Traitor Nightmare')};
+  retake(s);
+
+  const activated=applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:library.id});
+
+  expect(activated.players[0].hand.map(c=>c.id)).toContain('n-Anguish');
+  expect(activated.log.some(line=>line.includes('Whispering Library special already used'))).toBe(false);
+ });
+ it('lets Ephialtes assign to one mage without removing that mage’s evocations',()=>{
+  const s=fixture();
+  for(let i=0;i<3;i++)summonEvocation(s,s.players[1],'CADAVER',{q:0,r:0});
+  const event=(id:string):EventCard=>({id,name:id,description:id,kind:'ONGOING',amount:0,rooms:0,ongoing:{entryPoints:0,exitPoints:0}});
+  s.eventBoard=[event('board-1'),event('board-2'),event('board-3')];
+  s.eventDeck=[event('drawn')];
+  s.players[0].prepared.rapid={used:false,card:card('Ephialtes')};
+
+  let result=applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid'});
+  const assignedSlots:number[]=[];
+  while(result.pendingDecision) {
+   if(result.pendingDecision.kind!=='CHOICE')throw new Error('Expected Ephialtes choice');
+   const decision=result.pendingDecision;
+   const choiceId=decision.prompt.startsWith('Ephialtes: choose a mage')?'p2':String(assignedSlots.length+1);
+   result=choose(result,choiceId);
+   if(decision.prompt.startsWith('Assign an Umbra'))assignedSlots.push(Number(choiceId));
+  }
+
+  expect(result.evocations.filter(e=>e.playerId==='p2').map(e=>e.kind)).toEqual(['CADAVER','CADAVER','CADAVER']);
+  expect(result.evocations.filter(e=>e.kind==='UMBRA'&&e.assignedTo==='p2').map(e=>e.slot)).toEqual([1,2,3]);
+  expect(result.log.some(line=>line.includes('is removed'))).toBe(false);
  });
 });
