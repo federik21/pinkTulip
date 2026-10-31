@@ -390,9 +390,9 @@ test('Preparation permits powers in slots and explains permanent removal and ret
  expect(wire.commands).toHaveLength(1);
 });
 
-test('mage view controls show the own retinue and selected opponents, stable numbers and owner colors; opponents remain read-only',async ({page})=>{
+test('mage view controls show retinues, map icons, stable slot numbers and owner colors; opponents remain read-only',async ({page})=>{
  const game=fixtureState();
- game.evocations=[model('own-three','p1',3),model('own-one','p1',1),model('enemy-two','p2',2)];
+ game.evocations=[model('own-three','p1',3),model('own-one','p1',1),{...model('enemy-two','p2',2),archetype:'DEMON'}];
  const wire=await mount(page,game);
  await expect(page.locator('.evocations-panel:visible')).toHaveCount(0);
  await viewRetinue(page,'p1');
@@ -405,7 +405,7 @@ test('mage view controls show the own retinue and selected opponents, stable num
  await expect(page.locator('.evocations-panel:visible')).toHaveCount(2);
  for(const evoc of game.evocations) {
   const marker=page.locator(`.evocation-marker[data-evocation-id="${evoc.id}"]`),card=page.locator(`.evocation-card[data-evocation-id="${evoc.id}"]`);
-  await expect(marker.locator('text')).toHaveText(String(evoc.number));
+  await expect(marker.locator('text')).toHaveText(evoc.archetype==='DEMON'?'♆':'☠');
   await expect(marker.locator('circle')).toHaveCSS('fill','rgb(24, 18, 31)');
   await expect(marker.locator('circle')).toHaveCSS('stroke',colorFor(evoc.playerId));
   await expect(marker.locator('circle')).toHaveAttribute('r','5');
@@ -435,7 +435,7 @@ test('mage view controls show the own retinue and selected opponents, stable num
  // Losing #1 must never renumber the survivor.
  game.evocations=game.evocations.filter(e=>e.id!=='own-one');wire.update(game);
  await expect(page.locator('.evocation-card[data-evocation-id="own-three"] .evocation-number')).toHaveText('#3');
- await expect(page.locator('.evocation-marker[data-evocation-id="own-three"] text')).toHaveText('3');
+ await expect(page.locator('.evocation-marker[data-evocation-id="own-three"] text')).toHaveText('☠');
 });
 
 test('active own evocation can attack or finish with mage details and opponent retinues closed',async ({page})=>{

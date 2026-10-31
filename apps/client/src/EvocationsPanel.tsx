@@ -12,7 +12,7 @@ export function targetModels(game:GameState):TargetModel[] {
  ];
 }
 
-const portrait=(e:Evocation)=>getEvocationKind(e)==='COLOSSUS'?'♜':getEvocationKind(e)==='NIGREDO'?'☿':e.archetype==='DEMON'?'♆':'☠';
+export const evocationIcon=(e:Evocation)=>getEvocationKind(e)==='COLOSSUS'?'♜':getEvocationKind(e)==='NIGREDO'?'☿':e.archetype==='DEMON'?'♆':'☠';
 type Props={game:GameState;playerId:string;viewerId:string;enabled:boolean;pending:boolean;send:(action:GameAction)=>void};
 
 export function EvocationSupply({game}:{game:GameState}) {
@@ -45,7 +45,7 @@ export function EvocationsPanel({game,playerId,viewerId,enabled,pending,send}:Pr
    <p className="hint">Activates at the start of the Evocation phase: hits {owner.name} and the evocation in slot {n.slot}.</p></div>)}
   {!evocations.length&&<p>No evocations yet. Activate a Grey room to summon a Cadaver. Each mage may control up to three models; tokens activate existing models, not summon them.</p>}
   {evocations.map(e=><div className={`evocation-card ${e.id===active?.evocationId?'active-model':''}`} style={mageStyle(e.playerId)} data-owned={isOwn} data-owner-id={e.playerId} data-evocation-id={e.id} key={e.id}>
-    <strong className="evocation-heading"><span className={`evocation-portrait${getEvocationKind(e)==='COLOSSUS'?' big-portrait':''}`} aria-hidden="true">{portrait(e)}</span><span>{e.name} <span className="evocation-number">#{evocationNumber(game,e)}</span></span></strong>
+    <strong className="evocation-heading"><span className={`evocation-portrait${getEvocationKind(e)==='COLOSSUS'?' big-portrait':''}`} aria-hidden="true">{evocationIcon(e)}</span><span>{e.name} <span className="evocation-number">#{evocationNumber(game,e)}</span></span></strong>
    <small>{owner.name} · {e.archetype==='DEMON'?'Demon':e.archetype==='CONSTRUCT'?'Construct':'Undead'} · {roomNameAt(game,e.position)}</small>
   <ModelEffects game={game} viewerId={viewerId} modelId={e.id}/>
    <div className="model-stats"><span>↝ {evocationMovement(e)} movement</span><span>⚔ {evocationAttack(e)} attack</span></div>
@@ -70,7 +70,7 @@ export function ActiveEvocationControls({game,playerId,enabled,pending,send}:Omi
  if(!active||!acting||active.playerId!==playerId)return null;
  const targets=targetModels(game).filter(t=>t.playerId!==playerId&&t.id!==acting.id&&areInSameRoom(game,t.position,acting.position)&&!game.board.rooms.some(r=>r.startingFor&&r.tiles.some(h=>hexKey(h)===hexKey(t.position))));
  return <section className="evocation-controls" aria-label="Active evocation controls" style={mageStyle(acting.playerId)}>
-  <div className="evocation-control-heading"><h2><span className="evocation-portrait" aria-hidden="true">{portrait(acting)}</span>{acting.name} #{evocationNumber(game,acting)}</h2><p>{active.movesRemaining} movement remaining · {active.attackUsed?'Attack used':'One attack available'}.</p>
+  <div className="evocation-control-heading"><h2><span className="evocation-portrait" aria-hidden="true">{evocationIcon(acting)}</span>{acting.name} #{evocationNumber(game,acting)}</h2><p>{active.movesRemaining} movement remaining · {active.attackUsed?'Attack used':'One attack available'}.</p>
    {acting.upgrade&&<p className="hint" data-upgrade={acting.upgrade}><strong>{UPGRADE_LABELS[acting.upgrade]}</strong>: {UPGRADE_RULES[acting.upgrade]}</p>}</div>
   {!active.attackUsed&&targets.length>0&&<div className="evocation-attack-targets" role="group" aria-label="Evocation attack targets" tabIndex={0}>
    {targets.map(t=><button disabled={!enabled||pending||!!active.moving} key={t.id} onClick={()=>send({type:'EVOCATION_ATTACK',playerId,targetId:t.id})}>{acting.name} attack {t.name}<small>{evocationAttack(acting)} damage</small></button>)}
