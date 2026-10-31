@@ -24,7 +24,9 @@ import { EventBoard } from './EventBoard';
 import { ActivationConfirmation, ReactiveSpellPrompt } from './ReactiveSpellPrompt';
 import { ModelEffectMarkers, RoomTrapTokens } from './ModelEffects';
 import { MAGE_SYMBOLS as emoji, MAGE_COLOR_NAMES, SPELL_TYPE_LABELS, SPELL_TARGET_LABELS, SPELL_TARGET_DESCRIPTIONS, cubeSegments, evocationNumber, mageStyle, ownerColor, ownerName, roomModelLayout, roomNameLines, roomStatus } from './presentation';
+import { LegalPage, SiteFooter } from './LegalPages';
 import './style.css';
+import './legal.css';
 import './quick-access.css';
 import './preparation.css';
 import './soul-tithe.css';
@@ -500,9 +502,17 @@ function App() {
   <ChronicleDrawer open={chronicleOpen} entries={game.log} players={game.players} onClose={()=>setChronicleOpen(false)}/>
   {infoPopup==='reference'&&<InfoPopup id="quick-reference" title="Quick reference" onClose={()=>setInfoPopup(null)}><QuickReference game={game} me={me}/></InfoPopup>}
   {infoPopup==='lodge'&&<InfoPopup id="lodge-info" title="Lodge information" onClose={()=>setInfoPopup(null)}><p className="board-help">Select a chamber to inspect it or confirm a spell target. Scroll the board on smaller screens. Protected starting cells allow exits only. Segmented badges show instability / capacity by mage color; light gray is BR. Full rooms rebuild at Cleanup. Rebuilt rooms show READY / USED instead of returned cubes. Numbered circles are owner-colored evocations. Target models show shield, trap and ✧ ongoing-effect icons. Your hidden bindings are visible only to you; ongoing effects are public. Repeated effects show counts on mage and evocation cards.</p><div className="room-legend">{ROOM_COLORS.map(color=><span data-color={color} key={color}><i/>{color} · {game.board.rooms.filter(room=>room.color===color).length}</span>)}</div><div className="mage-legend" aria-label="Mage colors">{game.players.map(p=><span style={mageStyle(p.id)} data-player-id={p.id} key={p.id}><i aria-hidden="true"/>{emoji[p.id]} {p.name} · {MAGE_COLOR_NAMES[p.id]}</span>)}<span className="neutral-owner"><i aria-hidden="true"/>✺ BR · neutral</span></div><dl className="room-effect-reference">{ROOM_COLORS.map(color=><React.Fragment key={color}><dt>{color}</dt><dd>{ROOM_EFFECT_LABELS[game.board.rooms.find(room=>room.color===color)?.effect??'DRAW_POWERFUL']}</dd></React.Fragment>)}</dl><p>The central chamber grants a Forgotten spell for discarding 2 cards. Violet rooms place 1 cube and give you the first-player token. Room effects are optional within a physical action; rebuilt rooms double their special, once per Action phase.</p></InfoPopup>}
-  </main><footer>BRW BATTLES · Unofficial prototype · 2–4 mages · Original placeholder cards</footer>
+  </main><SiteFooter/>
   <QuickAccess selected={controlTab} expanded={quickControls} chronicleOpen={chronicleOpen} readyQuests={[me.quest,...me.additionalQuests].filter(quest=>quest?.completed&&!quest.claimed).length} evocationDue={evocationDue} onSelect={openQuickControls} onChronicle={()=>setChronicleOpen(true)}/>
  </div>;
 }
 
-createRoot(document.getElementById('root')!).render(<App/>);
+function Site() {
+ const page = location.pathname.replace(/\/+$/, '');
+ if(page === '/about')return <LegalPage page="about"/>;
+ if(page === '/terms')return <LegalPage page="terms"/>;
+ if(page === '/privacy')return <LegalPage page="privacy"/>;
+ return <App/>;
+}
+
+createRoot(document.getElementById('root')!).render(<Site/>);

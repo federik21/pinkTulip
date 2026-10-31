@@ -1732,7 +1732,7 @@ function finishEvocation(s:GameState) {
 function requireEvocation(s:GameState,id:string) {
  assert(s.phase==='ACTION'||s.phase==='EVOCATION'||(s.phase==='BLACK_ROSE'&&!!s.evocationActivation?.tendon),'Evocation activation unavailable in this phase');
  const active=s.evocationActivation;assert(active&&active.playerId===id&&s.currentPlayerId===id,'No active evocation for this player');
- const e=s.evocations.find(e=>e.id===active!.evocationId);assert(e&&(e.playerId===id||e.playerId===active!.borrowedFrom),'Evocation unavailable');
+ const e=s.evocations.find(e=>e.id===active!.evocationId);assert(e&&(e.playerId===id||e.playerId===active!.borrowedFrom)&&e.damageCubes<e.health,'Evocation unavailable');
  return {active:active!,e:e!};
 }
 
@@ -1785,6 +1785,7 @@ function activateEffectSummon(s:GameState,owner:Player,kind:EvocationKind,effect
 // economy. A model owned by another mage takes the controller's color for it.
 function beginSpellActivation(s:GameState,controller:Player,evocation:Evocation,opts:{endDamage?:number}={}) {
  assert(s.phase==='ACTION'||s.phase==='EVOCATION','Resolve the spell activation during the Action or Evocation phase');
+ assert(evocation.damageCubes<evocation.health,'Evocation is defeated');
  const resume=s.currentPlayerId!==controller.id||!!s.evocationActivation||s.phase==='EVOCATION'
   ? {currentPlayerId:s.currentPlayerId,evocationActivation:s.evocationActivation}:undefined;
  const borrowed=evocation.playerId!==controller.id;
@@ -2389,6 +2390,7 @@ function runAction(state: GameState, action: GameAction, answers: DecisionAnswer
   case 'ACTIVATE_EVOCATION': {
    assert(!s.evocationActivation,'Finish the active evocation first');
    const e=s.evocations.find(e=>e.id===action.evocationId);assert(e&&e.playerId===p.id,'You may activate only your own evocations');
+   assert(e!.damageCubes<e!.health,'This evocation is defeated');
    if(s.phase==='ACTION') {
     const a=requirePhysicalAction(s,p);assert(p.actionTokens>0,'No action tokens');
     assert(!isInStartingRoom(s,p),'Leave the starting room before activating evocations');p.actionTokens--;a.actionsUsed++;

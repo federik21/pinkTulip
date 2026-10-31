@@ -22,7 +22,7 @@ function models(s: GameState): Model[] {
  return [
   ...s.players.map(p => ({ id: p.id, playerId: p.id, kind: 'MAGE' as const, position: p.wizard.position,
    health: p.wizard.health, wounds: p.wizard.damageCubes, cubes: p.wizard.damageByPlayer })),
-  ...s.evocations.filter(e => e.archetype !== 'NIGHTMARE').map(e => ({ id: e.id, playerId: e.playerId, kind: 'EVOCATION' as const, position: e.position,
+  ...s.evocations.filter(e => e.archetype !== 'NIGHTMARE' && e.damageCubes < e.health).map(e => ({ id: e.id, playerId: e.playerId, kind: 'EVOCATION' as const, position: e.position,
    health: e.health, wounds: e.damageCubes, cubes: e.damageByPlayer })),
  ];
 }
@@ -181,7 +181,7 @@ function* physical(s: GameState, p: Player): Generator<GameAction> {
 function* evocation(s: GameState, p: Player): Generator<GameAction> {
  const active = s.evocationActivation;
  if (!active) {
-  for (const e of s.evocations.filter(e => e.playerId === p.id && !e.activated)) yield { type: 'ACTIVATE_EVOCATION', playerId: p.id, evocationId: e.id };
+  for (const e of s.evocations.filter(e => e.playerId === p.id && e.damageCubes < e.health && !e.activated)) yield { type: 'ACTIVATE_EVOCATION', playerId: p.id, evocationId: e.id };
   return;
  }
  const e = s.evocations.find(e => e.id === active.evocationId);
@@ -242,7 +242,7 @@ function* actionTurn(s: GameState, p: Player): Generator<GameAction> {
    for (const roomEffect of ['END', undefined] as const) yield { type: 'PUNCH', playerId: p.id, targetId: enemy.id, ...(roomEffect ? { roomEffect } : {}) };
   }
   // Paid model activations are worthwhile only if an attack is reachable this activation.
-  for (const e of s.evocations.filter(e => e.playerId === p.id)) {
+  for (const e of s.evocations.filter(e => e.playerId === p.id && e.damageCubes < e.health)) {
    const reachable = enemies(s, p).some(enemy => s.board.rooms.some(r => at(r, enemy.position) && r.tiles.some(h => hexDistance(e.position, h) <= e.movement)));
    if (reachable) yield { type: 'ACTIVATE_EVOCATION', playerId: p.id, evocationId: e.id };
   }

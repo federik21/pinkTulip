@@ -69,6 +69,21 @@ describe.each(['ACTION','EVOCATION'] as const)('%s evocation effects in either o
  });
 });
 
+describe('defeated evocations cannot activate or act',()=>{
+ it('rejects a defeated evocation both before and during activation',()=>{
+  const s=fixture(),e=summonEvocation(s,s.players[0],'CADAVER',origin)!;
+  e.damageCubes=e.health;
+  reject(s,{type:'ACTIVATE_EVOCATION',playerId:'p1',evocationId:e.id},/defeated/);
+
+  const ready=fixture(),readyEvocation=summonEvocation(ready,ready.players[0],'CADAVER',origin)!;
+  const active=applyAction(ready,{type:'ACTIVATE_EVOCATION',playerId:'p1',evocationId:readyEvocation.id});
+  const activeEvocation=active.evocations[0];
+  activeEvocation.damageCubes=activeEvocation.health;
+  reject(active,{type:'EVOCATION_ATTACK',playerId:'p1',targetId:'p2'},/Evocation unavailable/);
+  reject(active,{type:'EVOCATION_STEP',playerId:'p1',destination:{q:1,r:0}},/Evocation unavailable/);
+ });
+});
+
 describe('only printed SELF spells select the caster mage',()=>{
  it.each(['MAGE','MODEL'] as const)('rejects self-mage %s selections even with healing, conversion, Protection or ongoing effects',target=>{
   for(const effects of [[moment.heal(1)],[moment.convert(1)],[]]) {

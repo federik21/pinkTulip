@@ -203,6 +203,18 @@ describe('out-of-turn decisions and spell-granted continuations', () => {
 });
 
 describe('free and paid evocation control', () => {
+ it.each(['ACTION', 'EVOCATION'] as const)('does not activate a defeated evocation during %s', phase => {
+  const s = fixture();
+  s.phase = phase;
+  const e = summonEvocation(s, s.players[0], 'CADAVER', { q: 1, r: 0 })!;
+  e.damageCubes = e.health;
+  if (phase === 'EVOCATION') {
+   s.activation = null;
+   expect(chooseBotAction(s)).toBeNull();
+  } else {
+   expect(chooseBotAction(s)?.type).not.toBe('ACTIVATE_EVOCATION');
+  }
+ });
  it('finishes movement-only activations with no enemies outside cells', () => {
   let s = fixture(); s.phase = 'EVOCATION'; s.activation = null;
   s.players[1].wizard.position = { ...s.board.rooms.find(r => r.startingFor === 'p2')!.tiles[0] };
