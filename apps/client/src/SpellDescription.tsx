@@ -27,6 +27,16 @@ function MomentChip({moment,target}:{moment:Moment;target:Card['target']}) {
   case 'MOVE_DAMAGED':return <span>→ {prefix}Move a damaged model up to {moment.distance}</span>;
   case 'ACTIVATE_ROOM':return <span>⌖ {prefix}Activate that room</span>;
   case 'ACTIVATE_CHOICE':return <span className="summon-effect">↝ {prefix}Activate one of your evocations</span>;
+  case 'GAIN_VP':return <span>★ {prefix}Gain {moment.amount} VP</span>;
+  case 'GAIN_VP_PER_ALTAR':return <span>★ {prefix}Gain 1 VP per Altar · max {moment.max}</span>;
+  case 'COMPLETE_QUEST':return <span>☾ {prefix}Pay moon level in VP to complete an active quest</span>;
+  case 'RESHUFFLE_DRAW':return <span>✧ {prefix}Shuffle discard into grimoire · reveal and draw {moment.amount}</span>;
+  case 'DRAW_QUEST':return <span>☷ {prefix}Draw 1 quest</span>;
+  case 'ACTIVATE_TARGET_ROOM':return <span>⌖ {prefix}Activate the target room</span>;
+  case 'MOVE_MODEL':return <span>→ {prefix}Move any model to a room within range {moment.distance}</span>;
+  case 'PLACE_ALTAR_CUBES':return <span>◆ {prefix}Place cubes equal to the Altars in play</span>;
+  case 'PREVENT_SPELL':return <span>🛡 {prefix}Ignore that spell effect</span>;
+  case 'BLACK_ROSE_ALTAR_TITHE':return <span>🛡 {prefix}Optionally damage an Altar for 1 BR VP</span>;
  }
 }
 

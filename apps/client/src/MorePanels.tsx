@@ -27,6 +27,16 @@ function rewardMoment(moment:Moment):string {
   case 'INSTABILITY_PER_NIGHTMARE':return 'Instability per Nightmare';
   case 'DRAW_EVENT':return 'Draw an event';
   case 'GAIN_VP_PER_NIGHTMARE':return `Gain VP per Nightmare (max ${moment.max})`;
+  case 'GAIN_VP':return `Gain ${moment.amount} VP`;
+  case 'GAIN_VP_PER_ALTAR':return `Gain VP per Altar (max ${moment.max})`;
+  case 'COMPLETE_QUEST':return 'Pay moon level in VP to complete a quest';
+  case 'RESHUFFLE_DRAW':return `Reshuffle and draw ${moment.amount}`;
+  case 'DRAW_QUEST':return 'Draw a quest';
+  case 'ACTIVATE_TARGET_ROOM':return 'Activate the target room';
+  case 'MOVE_MODEL':return `Move any model ${moment.distance}`;
+  case 'PLACE_ALTAR_CUBES':return 'Place cubes per Altar';
+  case 'PREVENT_SPELL':return 'Ignore that spell effect';
+  case 'BLACK_ROSE_ALTAR_TITHE':return 'Optional Altar damage for BR VP';
   case 'IGNORE_DAMAGE':return `Ignore ${moment.amount} damage`;
   default:return `${{DAMAGE:'Damage',HEAL:'Heal',CONVERT:'Convert',BLACK_ROSE_CONVERT:'BR convert',INSTABILITY:'Instability',PAIN:'Pain'}[moment.effect]} ${moment.amount}`;
  }

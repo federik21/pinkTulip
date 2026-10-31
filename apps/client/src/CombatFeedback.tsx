@@ -64,7 +64,7 @@ function ProgressiveEffects({ event, outcomes }: { event: InterruptEvent; outcom
 
 export const TRIGGER_LABELS: Record<TriggerEvent, string> = {
  ENTER_ROOM: 'A model enters the room', DAMAGE_TAKEN: 'The target model takes damage',
- SPELL_CAST: 'A model casts a spell', ROOM_ACTIVATED: 'A model activates the room',
+ SPELL_CAST: 'A model casts a spell', SPELL_TARGETED: 'A combat spell targets this model', ROOM_ACTIVATED: 'A model activates the room',
  EVOCATION_ACTIVATED: 'An evocation activates', MAGE_ATTACK: 'A mage attacks',
  EVOCATION_ATTACK: 'An evocation attacks', DAMAGE_DEALT: 'A model inflicts damage',
  QUEST_SOLVED: 'A mage solves a quest', MAGE_DEFEATED: 'A mage is defeated', VP_CHANGED: 'Victory points change',

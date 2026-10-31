@@ -69,6 +69,23 @@ function targetValue(s: GameState, p: Player, card: Card, target: FeedbackTarget
    if (m.kind !== 'EVENT_MODEL' && getEvocationSupply(s)[m.kind] > 0 && s.evocations.filter(e => e.playerId === p.id).length < 3) value += 7;
    continue;
   }
+  if(m.effect==='GAIN_VP') { value+=3*m.amount;continue; }
+  if(m.effect==='GAIN_VP_PER_ALTAR') { value+=3*Math.min(m.max,s.evocations.filter(e=>e.archetype==='ALTAR').length);continue; }
+  if(m.effect==='COMPLETE_QUEST') {
+   if(p.victoryPoints>=(s.moon??1)&&quests(p).some(q=>!q.completed&&!q.claimed))value+=7;
+   continue;
+  }
+  if(m.effect==='RESHUFFLE_DRAW') {
+   if(p.personalDeck.length+p.discard.length)value+=2*Math.min(m.amount,p.personalDeck.length+p.discard.length);
+   continue;
+  }
+  if(m.effect==='DRAW_QUEST') { if(s.questDeck.length+s.questDiscard.length)value+=2;continue; }
+  if(m.effect==='ACTIVATE_TARGET_ROOM') { if(room?.effect&&room.effect!=='DRAW_POWERFUL')value+=2;continue; }
+  if(m.effect==='MOVE_MODEL') { if(models(s).some(model=>model.wounds>0))value+=3;continue; }
+  if(m.effect==='PLACE_ALTAR_CUBES') {
+   if(room&&!room.reconstructed)value+=2*Math.min(s.evocations.filter(e=>e.archetype==='ALTAR').length,room.instabilityLimit-room.instability,p.cubes.available);
+   continue;
+  }
   if (m.effect === 'ASSIGN_UPGRADE') {
    // Only upgrade friendly models, except when the printed spell grants a bonus anyway.
    value += selected.some(t => t.playerId === p.id) ? 3 : -1;
@@ -186,8 +203,14 @@ function* evocation(s: GameState, p: Player): Generator<GameAction> {
  }
  const e = s.evocations.find(e => e.id === active.evocationId);
  if (!e) return; // The engine normally releases destroyed models before returning a state.
- if (!active.attackUsed) for (const enemy of enemies(s, p)) if (areInSameRoom(s, e.position, enemy.position)) {
-  yield { type: 'EVOCATION_ATTACK', playerId: p.id, targetId: enemy.id };
+ if (!active.attackUsed) {
+  if(e.ability==='TOTEM') {
+   const targets=models(s).filter(model=>model.id!==e.id&&model.wounds>0&&hexDistance(e.position,model.position)<=1&&!roomAt(s,model.position)?.startingFor)
+    .sort((a,b)=>(a.playerId===p.id?0:1)-(b.playerId===p.id?0:1)||compareId(a.id,b.id));
+   for(const target of targets)yield {type:'EVOCATION_ATTACK',playerId:p.id,targetId:target.id};
+  } else for (const enemy of enemies(s, p)) if (areInSameRoom(s, e.position, enemy.position)) {
+   yield { type: 'EVOCATION_ATTACK', playerId: p.id, targetId: enemy.id };
+  }
  }
  if (active.movesRemaining > 0) for (const destination of route(s, p, e.position, true)) yield { type: 'EVOCATION_STEP', playerId: p.id, destination };
  yield { type: 'END_EVOCATION', playerId: p.id };

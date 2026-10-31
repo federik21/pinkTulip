@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -103,8 +104,8 @@ async function connect(url: string, canSave = false) {
  expect(await peer.next(message => message.type === 'CONNECTED')).toMatchObject({ canSave });
  return peer;
 }
-async function joinRoom(peer: Peer, roomId: string, playerName: string, create = false) {
- peer.send({ type: create ? 'CREATE_ROOM' : 'JOIN', roomId, playerName });
+async function joinRoom(peer: Peer, roomId: string, playerName: string, create = false, reconnectToken = '') {
+ peer.send({ type: create ? 'CREATE_ROOM' : 'JOIN', roomId, playerName, reconnectToken });
  const welcome = await peer.next(message => message.type === 'WELCOME');
  await peer.stateWhere(() => true); return welcome.playerId!;
 }
@@ -240,19 +241,22 @@ describe('real AI room transport', () => {
   game.phase = 'ACTION'; game.round = 1; game.currentPlayerId = 'p3'; game.firstPlayerId = 'p1';
   game.activation = { playerId: 'p3', actionsUsed: 0, exploring: 0, sequencedSpellUsed: false, spellsCast: 0, discardedExit: false, roomEffectUsed: false };
   for (const p of game.players) p.wizard.position = { q: 0, r: 0 };
-  const store = new SessionStore(file, () => [{ id: 'paused-bot', game }]); expect(store.flush()).toEqual(expect.any(String));
+  const reconnectSecrets = { p1: 'p1-fixture-reconnect-secret', p2: 'p2-fixture-reconnect-secret' };
+  const reconnectTokens = Object.fromEntries(Object.entries(reconnectSecrets).map(([id, token]) =>
+   [id, createHash('sha256').update(token).digest('hex')]));
+  const store = new SessionStore(file, () => [{ id: 'paused-bot', game, reconnectTokens }]); expect(store.flush()).toEqual(expect.any(String));
   const server = await startServer(file), first = await connect(server.url, true);
   // No joined clients: the saved authoritative state is unchanged.
     await expectQuiet(first);
   expect(new SessionStore(file, () => []).load()[0].game.log).toEqual(game.log);
-  expect(await joinRoom(first, 'paused-bot', game.players[0].name)).toBe('p1');
+  expect(await joinRoom(first, 'paused-bot', game.players[0].name, false, reconnectSecrets.p1)).toBe('p1');
   expect(first.state!.players.map(p => p.connected)).toEqual([true, false, true]);
   await first.rejected({ type: 'END_ACTIVATION', playerId: 'p1' }, /paused/);
     await expectQuiet(first);
   expect((await first.request({ type: 'SAVE_SESSION' })).type).toBe('SESSION_SAVED');
   expect(JSON.parse(readFileSync(file, 'utf8')).rooms[0].game.players[0].wizard.damageCubes).toBe(0);
   const second = await connect(server.url, true);
-  expect(await joinRoom(second, 'paused-bot', game.players[1].name)).toBe('p2');
+  expect(await joinRoom(second, 'paused-bot', game.players[1].name, false, reconnectSecrets.p2)).toBe('p2');
   const attacked = await first.stateWhere(state => state.players[0].wizard.damageByPlayer.p3 === 2);
   expect(attacked.players[2].actionTokens).toBe(1); expect(attacked.activation?.actionsUsed).toBe(1);
   expect(attacked.history).toEqual({ canUndo: false, canRedo: false });

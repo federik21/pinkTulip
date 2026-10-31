@@ -98,6 +98,7 @@ function describeTrigger(condition:TriggerCondition):string {
    : condition.relation==='ANY'?'When a model takes damage':`When a model takes damage from ${subject('model')}`;
   case 'DAMAGE_DEALT':return `When ${subject('model')} deals damage`;
   case 'SPELL_CAST':return `When ${subject('mage')} casts a spell`;
+  case 'SPELL_TARGETED':return `When a combat spell targets ${subject('model')}`;
   case 'ROOM_ACTIVATED':return `When ${subject('mage')} activates a room`;
   case 'EVOCATION_ACTIVATED':return `When ${subject('evocation')} activates`;
   case 'MAGE_ATTACK':return condition.relationTo==='EVENT_MODEL'&&condition.relation!=='ANY'
@@ -201,6 +202,7 @@ export const shuffle = <T>(items: T[], random:()=>number = Math.random): T[] => 
 // TODO: those are placeholders
 const AGONY_ELEMENTS: Element[] = ['evil', 'fire', 'stars', 'water', 'fire', 'evil', 'wild', 'earth', 'good', 'evil', 'air', 'water'];
 const TECHNOMANCY_ELEMENTS: Element[] = ['earth', 'water', 'air', 'stars', 'fire', 'evil', 'earth', 'wild', 'good', 'stars', 'air', 'fire'];
+const SHAMANIC_ELEMENTS: Element[] = ['good', 'good', 'earth', 'good', 'fire', 'water', 'good', 'wild', 'water', 'earth', 'fire', 'water'];
 
 export function createAgonyDeck(prefix: string, schoolId?: string): Card[] {
  const patterns: Omit<Card, 'id' | 'kind'>[] = [
@@ -359,12 +361,50 @@ export function createNightmareDeck(prefix: string, schoolId?: string): Card[] {
  return Array.from({ length: 36 }, (_, i) => ({ ...patterns[i % patterns.length], id: `${prefix}-${i + 1}`, kind: 'SPELL', ...(schoolId ? {schoolId} : {}) }));
 }
 
+export function createShamanicDeck(prefix: string, schoolId?: string): Card[] {
+ const m = moment;
+ const patterns: Omit<Card, 'id' | 'kind'>[] = [
+  { name: 'Binding Totem', spellType: 'CONTINGENCY', range: 1, target: 'ROOM', moments: [m.summon('TOTEM', 'TARGET'), { effect: 'GAIN_VP', amount: 1 }],
+   rulesText: 'Summon a Totem in the target room, then gain 1 VP.' },
+  { name: 'Astral Path', spellType: 'CONTINGENCY', instability: true, range: 0, target: 'SELF', moments: [{ effect: 'COMPLETE_QUEST' }],
+   rulesText: 'Choose one of your active quests. Lose VP equal to the moon level to complete it.' },
+  { name: 'Earth Totem', spellType: 'PROTECTION', range: 0, target: 'SELF', moments: [],
+   triggerText: 'When a combat spell targets you or you are about to suffer the effect of an ongoing combat spell',
+   trigger: { event: 'SPELL_TARGETED', relation: 'SELF', relationTo: 'EVENT_MODEL', scope: 'ANY', spellTypes: ['COMBAT'] },
+   triggerEffects: [{ effect: 'PREVENT_SPELL', target: 'EVENT_ACTOR' }, { effect: 'SUMMON', kind: 'TOTEM', position: 'CASTER', target: 'OWNER' }],
+   rulesText: 'Ignore that spell effect. Summon a Totem in your room.' },
+  { name: 'Wind Spirit', spellType: 'CONTINGENCY', instability: true, range: 0, target: 'SELF', moments: [{ effect: 'RESHUFFLE_DRAW', amount: 2 }],
+   rulesText: 'Shuffle your personal discard into your grimoire, then search and draw 2 cards from it. Reveal the cards in the log.' },
+  { name: 'Valor Totem', spellType: 'CONTINGENCY', range: 1, target: 'ROOM', element: 'fire', moments: [m.summon('TOTEM', 'TARGET'), { effect: 'GAIN_VP_PER_ALTAR', max: 5 }],
+   rulesText: 'Summon a Totem in the target room, then gain 1 VP for each Altar in play (maximum 5).' },
+  { name: 'River Spirit', spellType: 'CONTINGENCY', range: 3, target: 'ROOM', element: 'water', moments: [{ effect: 'DRAW_QUEST' }, { effect: 'ACTIVATE_TARGET_ROOM' }],
+   rulesText: 'Draw 1 quest, then activate the target room.' },
+  { name: 'Dominion Token', spellType: 'CONTINGENCY', range: 2, target: 'ROOM', element: 'good', moments: [m.summon('TOTEM', 'TARGET'), m.instability(2)],
+   rulesText: 'Summon a Totem in the target room, then place 2 cubes in that room.' },
+  { name: 'Channeling Energy', spellType: 'CONTINGENCY', range: 0, target: 'SELF', element: 'wild', moments: [],
+   rulesText: 'Ongoing: Each time a mage reveals a combat spell, choose whether BR may inflict 1 damage on one of your Altars to gain 1 VP.',
+   ongoing: { trigger: { event: 'SPELL_CAST', relation: 'ANY', scope: 'ANY', spellTypes: ['COMBAT'] }, effects: [{ effect: 'BLACK_ROSE_ALTAR_TITHE', target: 'OWNER' }] } },
+  { name: 'Rain Totem', spellType: 'CONTINGENCY', range: 2, target: 'ROOM', element: 'water', moments: [m.summon('TOTEM', 'TARGET'), { effect: 'PLACE_ALTAR_CUBES' }],
+   rulesText: 'Summon a Totem in the target room, then place cubes there equal to the number of Altars in play.' },
+  { name: 'Steppe Spirit', spellType: 'CONTINGENCY', range: 2, target: 'ROOM', element: 'earth', moments: [m.convert(3)],
+   rulesText: 'Convert up to 3 cubes in the target room.' },
+  { name: 'Pyre Spirit', spellType: 'CONTINGENCY', instability: true, range: 2, target: 'EVOCATION', element: 'fire',
+   targetFilter: { maxHealth: 3 }, moments: [{ effect: 'REMOVE_EVOCATION', chosen: true }, { effect: 'GAIN_VP', amount: 1, when: 'EVOCATION_REMOVED' }],
+   rulesText: 'Remove a target evocation with health 3 or less. If removed, gain 1 VP.' },
+  { name: 'Source of Life', spellType: 'CONTINGENCY', range: 2, target: 'ROOM', element: 'water',
+   moments: [{ effect: 'MOVE_MODEL', distance: 1 }, { effect: 'HEAL', amount: 2, scope: 'MOVED' }, { effect: 'GAIN_VP', amount: 1 }],
+   rulesText: 'Move any model to a room at range 1 from the target room, heal it 2, then gain 1 VP.' },
+ ];
+ return Array.from({ length: 36 }, (_, i) => ({ ...patterns[i % patterns.length], element: patterns[i % patterns.length].element ?? SHAMANIC_ELEMENTS[i % patterns.length], id: `${prefix}-${i + 1}`, kind: 'SPELL', ...(schoolId ? { schoolId } : {}) }));
+}
+
 export function createLibrary(): LibraryDeck[] {
  return [
   { id: 'agony', name: 'Agony', cards: shuffle(createAgonyDeck('agony', 'agony')), discard: [] },
   { id: 'technomancy', name: 'Technomancy', cards: shuffle(createTechnomancyDeck('technomancy', 'technomancy')), discard: [] },
   { id: 'alchemy', name: 'Alchemy', cards: shuffle(createAlchemyDeck('alchemy', 'alchemy')), discard: [] },
   { id: 'nightmare', name: 'Nightmare', cards: shuffle(createNightmareDeck('nightmare', 'nightmare')), discard: [] },
+  { id: 'shamanic', name: 'Shamanic', cards: shuffle(createShamanicDeck('shamanic', 'shamanic')), discard: [] },
  ];
 }
 

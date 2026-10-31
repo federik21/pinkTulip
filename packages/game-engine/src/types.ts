@@ -5,7 +5,7 @@ export type MageDraftId = 'tizio' | 'caio' | 'sempronio' | 'tiriki';
 export type Hex = { q: number; r: number };
 export type SpellTarget = 'SELF' | 'ROOM' | 'MAGE' | 'EVOCATION' | 'MODEL';
 export type SpellType = 'COMBAT' | 'CONTINGENCY' | 'TRAP' | 'PROTECTION';
-export type TriggerEvent = 'ENTER_ROOM' | 'DAMAGE_TAKEN' | 'DAMAGE_DEALT' | 'SPELL_CAST' | 'ROOM_ACTIVATED' | 'EVOCATION_ACTIVATED' | 'MAGE_ATTACK' | 'EVOCATION_ATTACK' | 'QUEST_SOLVED' | 'MAGE_DEFEATED' | 'VP_CHANGED' | 'EVOCATION_LOST';
+export type TriggerEvent = 'ENTER_ROOM' | 'DAMAGE_TAKEN' | 'DAMAGE_DEALT' | 'SPELL_CAST' | 'SPELL_TARGETED' | 'ROOM_ACTIVATED' | 'EVOCATION_ACTIVATED' | 'MAGE_ATTACK' | 'EVOCATION_ATTACK' | 'QUEST_SOLVED' | 'MAGE_DEFEATED' | 'VP_CHANGED' | 'EVOCATION_LOST';
 export type UpgradeName = 'CEREBRAL_IMPLANT' | 'CORROSIVE_PLASMA' | 'MUSCULAR_IMPLANT' | 'REGENERATING_ICHOR' | 'REINFORCED_DERMIS' | 'TENDON_IMPLANT';
 export type Element = 'air' | 'fire' | 'water' | 'earth' | 'evil' | 'good' | 'stars' | 'wild';
 export type DamageOrigin = 'MAGE_PHYSICAL' | 'SPELL' | 'EVOCATION' | 'ROOM' | 'QUEST' | 'NEUTRAL';
@@ -17,7 +17,7 @@ export type GameFeedbackEvent = { id: string; round: number; interruptId?: strin
  | { kind: 'MAGE_DEFEATED'; target: FeedbackTarget; sourceId: string; contributions: Record<string, number>; awards: Array<{ playerId: string; cubes: number; rank: number; tied: boolean; points: number }>; bonusPlayerId?: string; returnedCubes: Record<string, number>; respawnRoomId: string }
  | { kind: 'SPELL_TRIGGERED'; activeSpellId: string; ownerId: string; cardName: string; spellType: SpellType; trigger: TriggerEvent; target?: FeedbackTarget; roomId?: string; ongoing: boolean; effects?: string[] }
 );
-export type TriggerCondition = { event: TriggerEvent; relation: 'ENEMY' | 'SELF' | 'ANY'; scope: 'BOUND_MODEL' | 'BOUND_ROOM' | 'BOUND_COLOR' | 'ANY'; relationTo?: 'EVENT_ACTOR' | 'EVENT_MODEL'; damageOrigins?: DamageOrigin[]; roomColors?: RoomColor[]; modelKind?: 'MAGE' | 'EVOCATION' };
+export type TriggerCondition = { event: TriggerEvent; relation: 'ENEMY' | 'SELF' | 'ANY'; scope: 'BOUND_MODEL' | 'BOUND_ROOM' | 'BOUND_COLOR' | 'ANY'; relationTo?: 'EVENT_ACTOR' | 'EVENT_MODEL'; damageOrigins?: DamageOrigin[]; roomColors?: RoomColor[]; modelKind?: 'MAGE' | 'EVOCATION'; spellTypes?: SpellType[] };
 // One step of an effect. A Moment is a tagged union (the TypeScript equivalent of
 // a Swift enum with associated values): add a variant with its own payload to
 // teach the engine a new kind of step. A card resolves its moments in array
@@ -70,9 +70,19 @@ export type Moment = (
  | { effect: 'INSTABILITY_PER_NIGHTMARE' }
  | { effect: 'DRAW_EVENT' }
  | { effect: 'GAIN_VP_PER_NIGHTMARE'; max: number }
+ | { effect: 'GAIN_VP'; amount: number }
+ | { effect: 'GAIN_VP_PER_ALTAR'; max: number }
+ | { effect: 'COMPLETE_QUEST' }
+ | { effect: 'RESHUFFLE_DRAW'; amount: number }
+ | { effect: 'DRAW_QUEST' }
+ | { effect: 'ACTIVATE_TARGET_ROOM' }
+ | { effect: 'MOVE_MODEL'; distance: number }
+ | { effect: 'PLACE_ALTAR_CUBES' }
+ | { effect: 'PREVENT_SPELL' }
+ | { effect: 'BLACK_ROSE_ALTAR_TITHE' }
  // Ignore up to `amount` of the damage just suffered; each ignored point is inflicted on the damage's source.
  | { effect: 'IGNORE_DAMAGE'; amount: number }
-) & { scope?: 'CASTER' | 'CASTER_ROOM' | 'TARGET_ROOM' | 'ALL_MAGES' | 'DAMAGED'; when?: MomentCondition; area?: { range: number }; magesOnly?: boolean };
+) & { scope?: 'CASTER' | 'CASTER_ROOM' | 'TARGET_ROOM' | 'ALL_MAGES' | 'DAMAGED' | 'MOVED'; when?: MomentCondition; area?: { range: number }; magesOnly?: boolean };
 export type MomentEffect = Moment['effect'];
 export type TriggeredInstruction = Moment & { target: 'BOUND_MODEL' | 'BOUND_ROOM' | 'EVENT_MODEL' | 'EVENT_ACTOR' | 'EVENT_ROOM' | 'OWNER' };
 // Enhancement: if the caster's other revealed spells show `requires` symbols, the
@@ -101,11 +111,11 @@ export type PreparedCard = { card: Card; used: boolean };
 export type PreparedCards = { rapid: PreparedCard | null; slot1: PreparedCard | null; slot2: PreparedCard | null; slot3: PreparedCard | null };
 // health is the authoritative maximum HP; damageCubes tracks current wounds.
 export type Wizard = { id: string; playerId: PlayerId; health: number; attack: number; movement: number; damageCubes: number; blackDamage: number; damageByPlayer: Record<PlayerId, number>; damageOrder: PlayerId[]; position: Hex; startingRoomId: RoomId; alive: boolean };
-export type EvocationKind = 'CADAVER' | 'SUCCUBUS' | 'COLOSSUS' | 'NIGREDO' | 'UMBRA';
+export type EvocationKind = 'CADAVER' | 'SUCCUBUS' | 'COLOSSUS' | 'NIGREDO' | 'UMBRA' | 'TOTEM';
 export type Evocation = {
  // At most one attached upgrade; health already includes its bonus.
  upgrade?: UpgradeName;
- id: string; playerId: PlayerId; name: string; archetype: 'UNDEAD' | 'DEMON' | 'CONSTRUCT' | 'NIGHTMARE'; movement: number; attack: number; health: number;
+ id: string; playerId: PlayerId; name: string; archetype: 'UNDEAD' | 'DEMON' | 'CONSTRUCT' | 'NIGHTMARE' | 'ALTAR'; movement: number; attack: number; health: number;
  // Nightmares belong to the Black Rose and attach to a mage; `slot` is the assigned mage's evocation slot (1-3) they strike.
  assignedTo?: PlayerId; slot?: number;
  // Optional for snapshots predating finite model supplies; infer from archetype.
@@ -115,7 +125,7 @@ export type Evocation = {
  passive?: 'WOUNDED_FURY'; position: Hex; damageCubes: number; damageByPlayer: Record<PlayerId, number>; activated: boolean;
  // Triggered ability. SOUL_TITHE: when the owner's mage takes damage, one of those
  // damage cubes may go on this model instead. autoAbility skips the owner's prompt.
- ability?: 'SOUL_TITHE' | 'ENTRY_SHOCK' | 'ALCHEMY'; autoAbility?: boolean;
+ ability?: 'SOUL_TITHE' | 'ENTRY_SHOCK' | 'ALCHEMY' | 'TOTEM'; autoAbility?: boolean;
  // Extra attack on the next/current activation only; cleared when that activation ends.
  bonusAttack?: number;
 };

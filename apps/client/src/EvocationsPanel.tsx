@@ -1,5 +1,5 @@
 import React from 'react';
-import { areInSameRoom, evocationAttack, evocationMovement, UPGRADE_LABELS, UPGRADE_RULES, Evocation, EVOCATION_MODEL_LIMITS, getEvocationKind, getEvocationSupply, getMageEvocationCount, getUpgradeSupply, GameAction, GameState, Hex, isInStartingRoom, hexKey } from '@brw/game-engine';
+import { areInSameRoom, evocationAttack, evocationMovement, UPGRADE_LABELS, UPGRADE_RULES, Evocation, EVOCATION_MODEL_LIMITS, getEvocationKind, getEvocationSupply, getMageEvocationCount, getUpgradeSupply, GameAction, GameState, Hex, hexDistance, isInStartingRoom, hexKey } from '@brw/game-engine';
 import { evocationNumber, mageStyle, ownerName, roomNameAt } from './presentation';
 import { DamageBar } from './DamageBar';
 import { ModelEffects } from './ModelEffects';
@@ -12,7 +12,7 @@ export function targetModels(game:GameState):TargetModel[] {
  ];
 }
 
-export const evocationIcon=(e:Evocation)=>getEvocationKind(e)==='COLOSSUS'?'♜':getEvocationKind(e)==='NIGREDO'?'☿':e.archetype==='DEMON'?'♆':'☠';
+export const evocationIcon=(e:Evocation)=>getEvocationKind(e)==='COLOSSUS'?'♜':getEvocationKind(e)==='NIGREDO'?'☿':getEvocationKind(e)==='TOTEM'?'♟':e.archetype==='DEMON'?'♆':'☠';
 type Props={game:GameState;playerId:string;viewerId:string;enabled:boolean;pending:boolean;send:(action:GameAction)=>void};
 
 export function EvocationSupply({game}:{game:GameState}) {
@@ -24,6 +24,7 @@ export function EvocationSupply({game}:{game:GameState}) {
    <span data-evocation-kind="COLOSSUS">♜ Colossi <b>{supply.COLOSSUS}/{EVOCATION_MODEL_LIMITS.COLOSSUS}</b> available</span>
    <span data-evocation-kind="NIGREDO">☿ Nigredo <b>{supply.NIGREDO}/{EVOCATION_MODEL_LIMITS.NIGREDO}</b> available</span>
    <span data-evocation-kind="UMBRA">☾ Umbra <b>{supply.UMBRA}/{EVOCATION_MODEL_LIMITS.UMBRA}</b> available</span>
+   <span data-evocation-kind="TOTEM">♟ Totems <b>{supply.TOTEM}/{EVOCATION_MODEL_LIMITS.TOTEM}</b> available</span>
   </div><p className="hint">Destroyed models return to this supply. Each mage may control at most 3 evocations. Umbras share slots with evocations. Summoning into a full retinue replaces the chosen evocation without it counting as removed.</p>
   <p className="hint" data-upgrade-supply>Upgrade cards left: {Object.entries(getUpgradeSupply(game)).map(([name,count])=>`${UPGRADE_LABELS[name as keyof typeof UPGRADE_LABELS]} ${count}/3`).join(' · ')}</p>
  </section>;
@@ -46,7 +47,7 @@ export function EvocationsPanel({game,playerId,viewerId,enabled,pending,send}:Pr
   {!evocations.length&&<p>No evocations yet. Activate a Grey room to summon a Cadaver. Each mage may control up to three models; tokens activate existing models, not summon them.</p>}
   {evocations.map(e=><div className={`evocation-card ${e.id===active?.evocationId?'active-model':''}`} style={mageStyle(e.playerId)} data-owned={isOwn} data-owner-id={e.playerId} data-evocation-id={e.id} key={e.id}>
     <strong className="evocation-heading"><span className={`evocation-portrait${getEvocationKind(e)==='COLOSSUS'?' big-portrait':''}`} aria-hidden="true">{evocationIcon(e)}</span><span>{e.name} <span className="evocation-number">#{evocationNumber(game,e)}</span></span></strong>
-   <small>{owner.name} · {e.archetype==='DEMON'?'Demon':e.archetype==='CONSTRUCT'?'Construct':'Undead'} · {roomNameAt(game,e.position)}</small>
+   <small>{owner.name} · {e.archetype==='DEMON'?'Demon':e.archetype==='CONSTRUCT'?'Construct':e.archetype==='ALTAR'?'Altar':e.archetype==='NIGHTMARE'?'Nightmare':'Undead'} · {roomNameAt(game,e.position)}</small>
   <ModelEffects game={game} viewerId={viewerId} modelId={e.id}/>
    <div className="model-stats"><span>↝ {evocationMovement(e)} movement</span><span>⚔ {evocationAttack(e)} attack</span></div>
    {e.upgrade&&<p className="hint" data-upgrade={e.upgrade}><strong>{UPGRADE_LABELS[e.upgrade]}</strong>: {UPGRADE_RULES[e.upgrade]}</p>}
@@ -54,7 +55,8 @@ export function EvocationsPanel({game,playerId,viewerId,enabled,pending,send}:Pr
     {getEvocationKind(e)==='SUCCUBUS'&&e.passive==='WOUNDED_FURY'&&<p className="hint">Wounded Fury: +1 attack per damage taken.</p>}
     {e.ability==='ENTRY_SHOCK'&&<p className="hint">Entry shock: inflicts 3 damage on each other mage that enters its room.</p>}
     {e.ability==='ALCHEMY'&&<p className="hint">Alchemy: instead of damaging its target, its controller may place 1 instability or convert 1 cube in its room.</p>}
-    <p className="hint">Attack one enemy model in the same room.</p>
+    {e.ability==='TOTEM'&&<p className="hint">Altar: when activated, heal 1 damage or convert 1 damage on another model within range 1.</p>}
+    {e.ability!=='TOTEM'&&<p className="hint">Attack one enemy model in the same room.</p>}
    {e.ability==='SOUL_TITHE'&&<div className="soul-tithe"><p className="hint">Soul Tithe: when {owner.name} takes damage, one of those damage cubes may go on this model instead, wherever it stands.</p>
     <label className="auto-switch"><input type="checkbox" role="switch" aria-label={`Auto Soul Tithe for ${e.name} #${evocationNumber(game,e)}`} checked={!!e.autoAbility} disabled={!isOwn||!enabled||pending} onChange={event=>send({type:'SET_EVOCATION_AUTO',playerId:viewerId,evocationId:e.id,auto:event.target.checked})}/><span>Auto <small>{e.autoAbility?'Takes a cube without asking':'Asks before taking a cube'}</small></span></label></div>}
    {isOwn&&<button disabled={!canActivate||(game.phase==='EVOCATION'&&e.activated)} onClick={()=>send({type:'ACTIVATE_EVOCATION',playerId:viewerId,evocationId:e.id})}>Activate {e.name} #{evocationNumber(game,e)} <small>{game.phase==='EVOCATION'?(e.activated?'Already activated':'Free · once this phase'):'1 token · extra activation'}</small></button>}
@@ -68,14 +70,22 @@ export function ActiveEvocationControls({game,playerId,enabled,pending,send}:Omi
  const active=game.evocationActivation;
  const acting=game.evocations.find(e=>e.id===active?.evocationId);
  if(!active||!acting||active.playerId!==playerId)return null;
- const targets=targetModels(game).filter(t=>t.playerId!==playerId&&t.id!==acting.id&&areInSameRoom(game,t.position,acting.position)&&!game.board.rooms.some(r=>r.startingFor&&r.tiles.some(h=>hexKey(h)===hexKey(t.position))));
+ const targets=targetModels(game).filter(t=>{
+  if(t.id===acting.id||game.board.rooms.some(r=>r.startingFor&&r.tiles.some(h=>hexKey(h)===hexKey(t.position))))return false;
+  if(acting.ability==='TOTEM') {
+   if(game.evocations.some(e=>e.id===t.id&&e.archetype==='NIGHTMARE'))return false;
+   const wounds=game.players.find(p=>p.id===t.id)?.wizard.damageCubes??game.evocations.find(e=>e.id===t.id)?.damageCubes??0;
+   return wounds>0&&hexDistance(t.position,acting.position)<=1;
+  }
+  return t.playerId!==playerId&&areInSameRoom(game,t.position,acting.position);
+ });
  return <section className="evocation-controls" aria-label="Active evocation controls" style={mageStyle(acting.playerId)}>
-  <div className="evocation-control-heading"><h2><span className="evocation-portrait" aria-hidden="true">{evocationIcon(acting)}</span>{acting.name} #{evocationNumber(game,acting)}</h2><p>{active.movesRemaining} movement remaining · {active.attackUsed?'Attack used':'One attack available'}.</p>
+  <div className="evocation-control-heading"><h2><span className="evocation-portrait" aria-hidden="true">{evocationIcon(acting)}</span>{acting.name} #{evocationNumber(game,acting)}</h2><p>{active.movesRemaining} movement remaining · {active.attackUsed?(acting.ability==='TOTEM'?'Ability used':'Attack used'):acting.ability==='TOTEM'?'Altar ability available':'One attack available'}.</p>
    {acting.upgrade&&<p className="hint" data-upgrade={acting.upgrade}><strong>{UPGRADE_LABELS[acting.upgrade]}</strong>: {UPGRADE_RULES[acting.upgrade]}</p>}</div>
-  {!active.attackUsed&&targets.length>0&&<div className="evocation-attack-targets" role="group" aria-label="Evocation attack targets" tabIndex={0}>
-   {targets.map(t=><button disabled={!enabled||pending||!!active.moving} key={t.id} onClick={()=>send({type:'EVOCATION_ATTACK',playerId,targetId:t.id})}>{acting.name} attack {t.name}<small>{evocationAttack(acting)} damage</small></button>)}
+  {!active.attackUsed&&targets.length>0&&<div className="evocation-attack-targets" role="group" aria-label={acting.ability==='TOTEM'?'Totem targets':'Evocation attack targets'} tabIndex={0}>
+   {targets.map(t=><button disabled={!enabled||pending||!!active.moving} key={t.id} onClick={()=>send({type:'EVOCATION_ATTACK',playerId,targetId:t.id})}>{acting.ability==='TOTEM'?`${acting.name} heal or convert on ${t.name}`:`${acting.name} attack ${t.name}`}<small>{acting.ability==='TOTEM'?'Choose heal or convert 1':`${evocationAttack(acting)} damage`}</small></button>)}
   </div>}
-  {!active.attackUsed&&targets.length===0&&<p className="evocation-no-targets hint">No enemy models in this room. {active.movesRemaining>0?'Move into an enemy’s room to attack, or finish the activation.':'Finish the activation to skip the attack.'}</p>}
+  {!active.attackUsed&&targets.length===0&&<p className="evocation-no-targets hint">{acting.ability==='TOTEM'?'No damaged model is within range 1. Finish the activation.':`No enemy models in this room. ${active.movesRemaining>0?'Move into an enemy’s room to attack, or finish the activation.':'Finish the activation to skip the attack.'}`}</p>}
   {active.attackUsed&&<p className="evocation-no-targets hint">Move to an adjacent room, stop movement early, or finish.</p>}
   <div className="evocation-finish-actions" role="group" aria-label="Evocation completion">
    {active.movesRemaining>0&&!active.moving&&<button className="primary" disabled={!enabled||pending} onClick={()=>send({type:'BEGIN_EVOCATION_MOVEMENT',playerId})}>Start movement<small>{active.movesRemaining} spaces, all in one go</small></button>}

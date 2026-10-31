@@ -36,7 +36,7 @@ Each joined mage receives a separate starting room, grimoire, cube pool, color, 
 - Create a room, click **Add AI opponent**, then **Mark ready**. No second browser or external AI service is needed. The creator can remove AI seats before the battle starts; adding/removing AI resets readiness.
 - AI seats choose their school, study and prepare automatically. During play they pursue exposed enemies, cast prepared spells, activate hidden spells, use free quest rewards, attack and control evocations, and answer their own reaction/Soul Tithe decisions. This is a simple deterministic heuristic, not a difficulty-tuned or learning opponent.
 - AI commands use the same authoritative rules and costs as human commands, one command approximately every 450 ms. Decisions use the AI's own cards and public board facts, not opponents' hidden cards or future draw identities. The creator still continues **B** and **Cleanup** normally.
-- Friends and AI may share a room. With the current single-school **Agony** library (36 shared cards), AI rooms are capped at **three total mages** so every mage can complete the first mandatory Study. No extra cards are created.
+- Friends and AI may share a room. The five-school library has 180 shared cards; AI rooms remain capped at **three total mages**. No extra cards are created.
 - AI waits whenever a human turn/decision is pending, a human is disconnected, or nobody is viewing the room. AI seats survive saved-session restores and cannot be claimed by a joining human. AI commitments clear the human Undo/Redo window.
 - Focused checks: `npx vitest run apps/server/test/ai.test.ts apps/server/test/bot-room.test.ts apps/server/test/bot-network.test.ts`; browser flow: `npx playwright test e2e/ai-opponent.spec.ts`.
 
@@ -54,7 +54,7 @@ The server scripts (`npm run dev -w @brw/server`, `npm run start -w @brw/server`
 - Each school draft adds six actual, randomly ordered physical cards from that school's shared 36-card supply. After the mage pick, the seven-card grimoire is shuffled, its top card is placed in the public personal discard, and the remaining six stay in the personal deck. The hand begins empty, then the normal first Black Rose and Study phases begin.
 - When any mage or the Black Rose first reaches 5 VP, every mage adds their second signature spell to hand; the same happens with the third spell the first time any score reaches 15 VP. Each threshold is a one-time transition, and the game announces **Entering second moon** or **Entering third moon**.
 - `Player.startingSchoolId`, `Player.mageId`, the randomized `GameState.setupOrder`, and the current `setupStage` track public draft results. Draft actions are accepted only from the current drafter, and neither a school nor a mage can be drafted twice. School-card identities and future deck order remain masked from players; a personal discard is public.
-- The school and mage cards are physically distinct from shared-library cards. The six school cards come from the existing 108-card school supply; signature spells are their own three-copy mage supplies. Forgotten spells remain a separate 12-card supply.
+- The school and mage cards are physically distinct from shared-library cards. The six school cards come from the shared 180-card school supply; signature spells are their own three-copy mage supplies. Forgotten spells remain a separate 12-card supply.
 
 For a second device on the same Wi-Fi, open the Vite Network URL (for example `http://192.168.1.5:5173`). The client connects to port 8080 on that same host. Allow the ports through the firewall. `VITE_WS_URL` can override the WebSocket endpoint; the server port can be changed with `PORT`.
 
@@ -248,6 +248,13 @@ Room activation is unavailable in starting rooms and for a reconstructed special
 - The **Colossus** (undead, move 2, attack 3, health 4, three models, larger icon) joins the shared supply. Entry shock: it inflicts 3 damage on each other mage that enters its room (not its owner, not other summons, and not when the Colossus itself moves).
 - Tendon implant models may move their speed at the end of the Black Rose phase (optional, before Study; bots skip it).
 - Pick-one decisions (upgrade replacement, removed evocation, library look) use the `CHOICE` pending decision and `RESPOND_CHOICE`.
+
+### Shamanic school
+
+- The 36-card shared Shamanic library adds Binding Totem, Astral Path, Earth Totem, Wind Spirit, Valor Totem, River Spirit, Dominion Token, Channeling Energy, Rain Totem, Steppe Spirit, Pyre Spirit, and Source of Life.
+- Totems are Altar evocations (movement 0, attack 0, health 3) with a shared supply of five. When activated, a Totem can heal 1 damage or convert 1 damage on another model within range 1.
+- Earth Totem can prevent an incoming combat spell's effect on its owner, including a combat effect from an ongoing spell, and summons a Totem in the owner's room. Channeling Energy lets its owner optionally allow BR to damage one of their Altars when a mage casts a combat spell, in exchange for 1 BR VP.
+- The other Shamanic effects include quest completion at the moon-level VP cost, reshuffling and drawing from the grimoire, room activation, moving a model, placing instability cubes, and removing low-health evocations. The game log reveals cards drawn by Wind Spirit.
 
 ### Rooms and Cleanup
 
