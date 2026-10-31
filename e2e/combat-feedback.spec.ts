@@ -178,7 +178,7 @@ async function command(page: Page, wire: Wire, click: () => Promise<unknown>, ac
 }
 async function dismiss(page: Page, name: string) {
   const dialog = popup(page, name);
-  await expect(dialog).toBeVisible(); await expect(dialog).toHaveAttribute('aria-modal', 'false');
+  await expect(dialog).toBeVisible(); await expect(dialog).toHaveAttribute('aria-modal', 'true');
   await dialog.getByRole('button', { name: 'Dismiss event', exact: true }).click(); await settle(page);
 }
 async function silent(page: Page) {
@@ -294,7 +294,7 @@ async function separated(labels: Locator) {
 async function recapText(page: Page, game: GameState, event: Event<'MAGE_DEFEATED'>) {
   const dialog = popup(page, 'Mage defeated');
   await expect(notifications(page)).toBeVisible(); await expect(dialog).toBeVisible();
-  await expect(dialog).toHaveAttribute('aria-modal', 'false');
+  await expect(dialog).toHaveAttribute('aria-modal', 'true');
   await expect(dialog).toContainText(event.target.name);
   await expect(dialog).toContainText(ownerName(game, event.sourceId));
   await expect(dialog).toContainText(room(game, event.respawnRoomId).name);

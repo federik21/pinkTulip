@@ -24,12 +24,12 @@ npm run dev -w @brw/client -- --host 0.0.0.0
 
 Open **http://localhost:5173** in one tab to play against AI, or in separate tabs, browser windows, or devices for multiplayer. The WebSocket address `ws://localhost:8080` is not a website to open in a tab.
 
-1. The first mage creates a room and invites up to three other mages to join it.
+1. The first mage creates a room and invites up to three other mages to join it. A room password is optional; when set, use at least eight characters and share it only with invited mages.
 2. In the lobby, each human mage chooses a **starting magic school** from the available list. Multiple mages may choose the same school. For solo play, the creator clicks **Add AI opponent**.
 3. The creator can choose **Rooms per color**: **Automatic**, **1**, **2**, or **3**. Automatic uses **1 for two mages, 2 for three, and 3 for four** when the battle starts. Changing this setting clears everyone's readiness; only the creator can change it. Wait for everyone to join and choose a school, then each mage clicks **Mark ready**. A valid school is required before marking ready; changing it cancels that mage's ready status.
 4. The battle **starts automatically as soon as all joined mages are ready**, with a minimum of two. A lone ready creator waits for at least one other person. Unused seats do not block a two- or three-mage battle. Invite everyone before the final ready; new seats cannot join a running battle.
 
-Each joined mage receives a separate starting room, grimoire, cube pool, color, and turn. A fifth participant is rejected. Leaving a lobby removes that participant and transfers creator duties if necessary; leaving a running battle preserves the seat and pauses the game until reconnection. Rejoining a disconnected running seat is supported, but is not authenticated.
+Each joined mage receives a separate starting room, grimoire, cube pool, color, and turn. A fifth participant is rejected. Mage names are unique within a room, ignoring case and Unicode compatibility differences. Leaving a lobby removes that participant and transfers creator duties if necessary; leaving a running battle preserves the seat and pauses the game until reconnection. A browser receives a private reconnect token for its seat; keep using that browser to resume, since entering another mage's public name is not enough to claim their seat. Reconnect tokens and room-password verifiers are included in saved battle data, but never sent to other players. Use HTTPS/WSS on untrusted networks; the development WebSocket connection is unencrypted.
 
 ### Playing against basic AI
 
@@ -46,7 +46,7 @@ The server scripts (`npm run dev -w @brw/server`, `npm run start -w @brw/server`
 
 - A battle is saved automatically after every change. The header **Save session** button (shown during a running battle when saving is on) writes the file immediately and confirms it. Lobbies and finished games are not saved.
 - When every human mage leaves, the battle is kept instead of being deleted, and the room list shows it as **saved** with the mage names. A server restart (including the dev watcher) restores it with humans disconnected and AI seats still server-controlled.
-- To resume, each mage joins the room (**Join room**, not **Create room**) using the same **mage name**; a matching name takes that mage's own seat, otherwise the first open seat. The game stays paused until all mages are back. Undo/Redo history is not saved. The file holds every hidden hand and deck, so treat it as private; there is no authentication.
+- To resume, each mage joins the room (**Join room**, not **Create room**) from the browser that originally joined. Enter the same room password if one was set. The browser's private reconnect token restores only its own seat; the game stays paused until all mages are back. Undo/Redo history is not saved. The file holds hidden hands, decks, room-password verifiers, and reconnect-token verifiers, so treat it as private. Older saved battles created before reconnect tokens were introduced do not contain the credentials needed for authenticated reconnects.
 
 ### Starting-school setup
 
@@ -356,4 +356,4 @@ Dummy-target regressions cover canonical Mage/Evocation support, protection and 
 - `apps/server`: in-memory room authority, readiness, action validation, hidden spells and draw piles, private bounded undo/redo history, state broadcasts.
 - `apps/client`: phase-aware lobby and gameplay, spell selection/targeting, hex board, quest tracking, log, animations.
 
-This implementation supports **two to four mages with Cadaver evocations, starting-school selection, Trap/Protection activation, and ongoing spells end-to-end**. It does not claim full official rulebook fidelity, other summon archetypes, official card/room text, authentication, or durable persistence. Reloading can reclaim a disconnected running seat by joining the same room; that seat is not authenticated. A battle disconnect pauses actions until the vacant seat is filled. Lobby departures instead free a seat and transfer creator duties if necessary. Rooms are deleted when all participants disconnect or the server restarts.
+This implementation supports **two to four mages with Cadaver evocations, starting-school selection, Trap/Protection activation, and ongoing spells end-to-end**. It does not claim full official rulebook fidelity, other summon archetypes, official card/room text, account authentication, or guaranteed durable persistence. Optional room passwords restrict room entry; private reconnect tokens bind running seats to the browser that joined them, but are not a replacement for user accounts. A battle disconnect pauses actions until the same mage reconnects or the room becomes unavailable. Lobby departures instead free a seat and transfer creator duties if necessary. Without session saving, rooms are deleted when all participants disconnect or the server restarts.

@@ -29,6 +29,7 @@ test('creating and joining a room renders the lobby without React hook errors', 
       await expect.poll(async () => errors.length > 0 || await page.locator('.lobby-panel').isVisible()).toBe(true);
       expect(errors, 'Room entry must not throw an uncaught render error').toEqual([]);
       await expect(page.getByRole('heading', { name: 'Gather the mages', exact: true })).toBeVisible();
+      if (button === 'Create room') await expect(page.locator('.lobby-seats .seat')).toHaveCount(1);
       await expect(page.locator('.header-meta .badge')).toHaveText(roomId);
       await expect(page.getByRole('button', { name: 'Mark ready', exact: true })).toBeDisabled();
       const school = page.getByRole('combobox', { name: 'Starting magic school', exact: true });
@@ -73,6 +74,66 @@ test('creating and joining a room renders the lobby without React hook errors', 
   } finally {
     await hostContext.close();
     await guestContext.close();
+  }
+});
+
+test('password-protected rooms reject impostors and reconnect tokens restore only their mage seat', async ({ browser }) => {
+  const hostContext = await browser.newContext();
+  const guestContext = await browser.newContext();
+  const impostorContext = await browser.newContext();
+  const host = await hostContext.newPage();
+  const guest = await guestContext.newPage();
+  const impostor = await impostorContext.newPage();
+  const roomId = `private-room-${Date.now()}`;
+  const password = 'rosebud-room';
+
+  try {
+    await host.goto('/');
+    await host.getByLabel('Mage name').fill('Private Host');
+    await host.getByLabel('Room name').fill(roomId);
+    await host.getByLabel('Room password').fill(password);
+    await host.getByRole('button', { name: 'Create room', exact: true }).click();
+    await expect(host.locator('.lobby-panel')).toBeVisible();
+
+    await guest.goto('/');
+    await guest.getByLabel('Mage name').fill('Private Guest');
+    await guest.getByLabel('Room name').fill(roomId);
+    await guest.getByLabel('Room password').fill('wrong-password');
+    await guest.getByRole('button', { name: 'Join room', exact: true }).click();
+    await expect(guest.getByRole('alert')).toContainText('Incorrect room password');
+    await guest.getByLabel('Room password').fill(password);
+    await guest.getByRole('button', { name: 'Join room', exact: true }).click();
+    await expect(guest.locator('.lobby-seats .seat')).toHaveCount(2);
+
+    for (const page of [host, guest]) {
+      const school = page.getByRole('combobox', { name: 'Starting magic school', exact: true });
+      await school.selectOption(await school.locator('option:not([value=""])').first().getAttribute('value')!);
+      await page.getByRole('button', { name: 'Mark ready', exact: true }).click();
+    }
+    await expect(host.locator('.phase-track .current span')).toHaveText('Pink Tulip');
+    await guest.close();
+    await expect(host.getByText(/Game paused\. Waiting for the disconnected mage/)).toBeVisible();
+
+    await impostor.goto('/');
+    await impostor.getByLabel('Mage name').fill('private guest');
+    await impostor.getByLabel('Room name').fill(roomId);
+    await impostor.getByLabel('Room password').fill(password);
+    await impostor.getByRole('button', { name: 'Join room', exact: true }).click();
+    await expect(impostor.getByRole('alert')).toContainText('already in this room');
+
+    const resumedGuest = await guestContext.newPage();
+    await resumedGuest.goto('/');
+    await resumedGuest.getByLabel('Mage name').fill('Private Guest');
+    await resumedGuest.getByLabel('Room name').fill(roomId);
+    await resumedGuest.getByLabel('Room password').fill(password);
+    await resumedGuest.getByRole('button', { name: 'Join room', exact: true }).click();
+    await expect(resumedGuest.locator('.app')).toBeVisible();
+    await expect(host.locator('.player[data-player-id="p2"]')).toBeVisible();
+    await expect(resumedGuest.locator('.player[data-player-id="p2"]')).toBeVisible();
+  } finally {
+    await hostContext.close();
+    await guestContext.close();
+    await impostorContext.close();
   }
 });
 

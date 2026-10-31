@@ -101,11 +101,13 @@ it('treats unusable save files safely and only stores battles in progress', () =
 
  const dir = tempDir(), file = join(dir, 'sessions.json');
  const running = { ...lobby, phase:'ACTION' as const };
- const store = new SessionStore(file, () => [{ id:'ok', game:running }, { id:'x'.repeat(10), game:running }]);
+ const credentials = { passwordHash:`${'a'.repeat(32)}:${'c'.repeat(64)}`, reconnectTokens:{ p1:'b'.repeat(64) } };
+ const store = new SessionStore(file, () => [{ id:'ok', game:running, ...credentials }, { id:'x'.repeat(10), game:running }]);
  expect(store.load()).toEqual([]);
  expect(store.flush()).toEqual(expect.any(String));
  const loaded = store.load();
  expect(loaded.map(room => room.id)).toEqual(['ok', 'xxxxxxxxxx']);
+ expect(loaded[0]).toMatchObject(credentials);
  expect(loaded.every(room => room.game.players.every(player => !player.connected))).toBe(true);
 
  // Invalid entries (a lobby, a bad id, a broken game) are skipped; unreadable files are kept aside, not overwritten.

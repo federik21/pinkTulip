@@ -10,10 +10,10 @@ import { checkHealingFacts, checkPublicFeedback } from './public-feedback';
 
 // Standalone real-network coverage: ephemeral port, ordinary wire actions only,
 // no engine execution, imported fixtures, state injection, or existing server.
-type RoomSummary = { id: string; players: number; capacity: number; status: 'waiting' | 'playing' };
+type RoomSummary = { id: string; players: number; capacity: number; status: 'waiting' | 'playing'; passwordProtected: boolean };
 type Message = {
  type: string; state?: GameState; rooms?: RoomSummary[]; playerId?: string;
- roomId?: string; requestId?: string | null; message?: string;
+ roomId?: string; requestId?: string | null; message?: string; reconnectToken?: string;
 };
 const slots = ['slot1', 'slot2', 'slot3', 'rapid'] as const;
 const hiddenCard = (index: number): Card => ({
@@ -160,6 +160,8 @@ class Mage {
  readonly messages: Message[] = [];
  state: GameState | null = null;
  id: string | null = null;
+ name = 'Mage';
+ reconnectToken = '';
  private readonly listeners = new Set<() => void>();
  constructor(readonly ws: WebSocket) {
   ws.on('error', () => { /* Connection/open failures are handled by once(). */ });
@@ -189,9 +191,9 @@ class Mage {
  async sync(epoch: GameState): Promise<GameState> {
   return (await this.wait(m => m.type === 'STATE' && !!m.state && publicEpoch(m.state) === publicEpoch(epoch))).state!;
  }
- async join(roomId: string, create = false, error?: RegExp): Promise<GameState | null> {
+ async join(roomId: string, create = false, error?: RegExp, name=this.name, reconnectToken=this.reconnectToken): Promise<GameState | null> {
   const from = this.messages.length, before = this.state, requestId = crypto.randomUUID();
-  this.ws.send(JSON.stringify({ type: create ? 'CREATE_ROOM' : 'JOIN', roomId, playerName: 'Mage', requestId }));
+  this.ws.send(JSON.stringify({ type: create ? 'CREATE_ROOM' : 'JOIN', roomId, playerName: name, reconnectToken, requestId }));
   const reply = await this.wait(m => m.type === 'WELCOME' || m.type === 'ERROR' && m.requestId === requestId, from);
   assert.equal(reply.type, error ? 'ERROR' : 'WELCOME', reply.message ?? reply.type);
   if (error) {
@@ -200,7 +202,7 @@ class Mage {
    assert.ok(!this.messages.slice(from).some(m => m.type === 'WELCOME' || m.type === 'STATE'));
    return null;
   }
-  assert.equal(reply.roomId, roomId); assert.ok(reply.playerId); this.id = reply.playerId;
+  assert.equal(reply.roomId, roomId); assert.ok(reply.playerId); assert.ok(reply.reconnectToken); this.id = reply.playerId; this.name=name; this.reconnectToken=reply.reconnectToken;
   return (await this.wait(m => m.type === 'STATE', from)).state!;
  }
  async command(action: GameAction, error?: RegExp): Promise<GameState | null> {
@@ -254,7 +256,7 @@ async function main() {
    assert.ok(epoch.players.every(p => p.connected));
    assert.equal(new Set(epoch.players.map(p => p.id)).size, mages.length);
    const expected: RoomSummary = { id: roomId, players: epoch.players.length, capacity: 4,
-    status: epoch.phase === 'LOBBY' ? 'waiting' : 'playing' };
+    status: epoch.phase === 'LOBBY' ? 'waiting' : 'playing', passwordProtected:false };
    const owners: Player[] = [], readied: ActiveSpell[] = [];
    for (const mage of mages) {
     const state = await mage.sync(epoch); assert.ok(mage.id); checkPrivacy(state, mage.id);
@@ -305,7 +307,7 @@ async function main() {
   const newRoom = async (count: number, name: string) => {
    const mages: Mage[] = []; let epoch: GameState | null = null;
    for (let i = 0; i < count; i++) {
-    const mage = await connect(); mages.push(mage); epoch = await mage.join(name, i === 0);
+    const mage = await connect(); mages.push(mage); epoch = await mage.join(name, i === 0, undefined, `Mage ${i+1}`);
     assert.ok(epoch); assert.equal(epoch.phase, 'LOBBY'); assert.equal(epoch.round, 0);
     assert.deepEqual(epoch.players.map(p => p.id), ['p1', 'p2', 'p3', 'p4'].slice(0, i + 1));
     await roster(name, epoch, mages);
@@ -330,7 +332,7 @@ async function main() {
    await act(mages[1], { type: 'START_GAME', playerId: mages[1].id! }, /Only the creator/);
    const visitor = await connect();
    if (count === 4) {
-    await visitor.join(name, false, /^Room full \(4 mages\)$/);
+    await visitor.join(name, false, /^Room full \(4 mages\)$/, 'Visitor');
     await visitor.command({ type: 'SET_READY', playerId: 'p4', ready: true }, /Join a room first/);
     await roster(name, epoch, mages);
    }
@@ -352,7 +354,7 @@ async function main() {
     'Final SET_READY must never expose an all-ready lobby before auto-start');
   assert.equal(epoch.log.filter(line => line.startsWith('Round 1 · Pink Tulip —')).length, 1);
    await roster(name, epoch, mages);
-   await visitor.join(name, false, count === 4 ? /^Room full \(4 mages\)$/ : /battle already in progress/);
+   await visitor.join(name, false, count === 4 ? /^Room full \(4 mages\)$/ : /battle already in progress/, 'Visitor');
    await visitor.command({ type: 'ADVANCE_PHASE', playerId: 'p1', expectedPhase: epoch.phase, expectedRound: epoch.round }, /Join a room first/);
    await roster(name, epoch, mages);
    await visitor.close(); await closeRoom(name, mages);
@@ -436,13 +438,13 @@ async function main() {
    let epoch = await ready(a);
    assert.equal(epoch.phase, 'LOBBY'); assert.equal(epoch.round, 0); await roster(name, epoch, [a]);
    await act(a, { type: 'START_GAME', playerId: a.id! }, /At least 2 mages/);
-   const b = await connect(); epoch = (await b.join(name))!;
+   const b = await connect(); epoch = (await b.join(name, false, undefined, 'Mage 2'))!;
    assert.equal(epoch.phase, 'LOBBY'); assert.equal(player(epoch, 'p2').ready, false);
    await b.close();
    epoch = (await a.wait(m => m.type === 'STATE' && m.state!.players.length === 1 && m.state!.log.some(line => line.includes('left the lobby')))).state!;
    assert.equal(player(epoch, 'p1').ready, true); await roster(name, epoch, [a]);
    epoch = await ready(a); assert.equal(epoch.phase, 'LOBBY');
-   const replacement = await connect(); epoch = (await replacement.join(name))!;
+   const replacement = await connect(); epoch = (await replacement.join(name, false, undefined, 'Mage 3'))!;
    assert.equal(replacement.id, 'p2'); assert.equal(player(epoch, 'p2').ready, false);
   epoch = await choose(replacement);
    epoch = await ready(replacement); assert.equal(epoch.phase, 'BLACK_ROSE'); autoStarts++;
@@ -460,7 +462,7 @@ async function main() {
    await b.close();
    epoch = (await a.wait(m => m.type === 'STATE' && m.state!.players.length === 3 && !m.state!.players.some(p => p.id === 'p2'))).state!;
    assert.deepEqual(epoch.players.map(p => p.id), ['p1', 'p3', 'p4']); await roster(name, epoch, [a, c, d]);
-   const replacement = await connect(); epoch = (await replacement.join(name))!;
+   const replacement = await connect(); epoch = (await replacement.join(name, false, undefined, 'Mage 5'))!;
    assert.equal(replacement.id, 'p2'); assert.equal(player(epoch, 'p2').ready, false);
   // Compare the same viewer's projection: Study IDs are owner-only, even [] in Lobby.
   epoch = await a.sync(epoch);
@@ -614,10 +616,10 @@ async function main() {
     }
    };
    await pausedLists(mages.slice(0, 2));
-   const c = await connect(); epoch = (await c.join(name))!;
+   const c = await connect(); epoch = (await c.join(name, false, undefined, mages[2].name, mages[2].reconnectToken))!;
    assert.equal(c.id, 'p3'); assert.deepEqual(player(epoch, 'p3'), snapshots.get('p3')); reconnects++;
    assert.equal(player(epoch, 'p4').connected, false); await pausedLists([mages[0], mages[1], c]);
-   const d = await connect(); epoch = (await d.join(name))!;
+   const d = await connect(); epoch = (await d.join(name, false, undefined, mages[3].name, mages[3].reconnectToken))!;
    assert.equal(d.id, 'p4'); assert.deepEqual(player(epoch, 'p4'), snapshots.get('p4')); reconnects++;
   assert.equal(publicEpoch({ ...epoch, log: [] }), publicEpoch({ ...before, log: [] }));
    const active = [mages[0], mages[1], c, d]; await roster(name, epoch, active);
@@ -625,7 +627,7 @@ async function main() {
    await mages[0].close();
    epoch = (await c.wait(m => m.type === 'STATE' && !player(m.state!, 'p1').connected)).state!;
    assert.equal(epoch.hostId, 'p1'); await pausedLists([mages[1], c, d]);
-   const a = await connect(); epoch = (await a.join(name))!;
+   const a = await connect(); epoch = (await a.join(name, false, undefined, mages[0].name, mages[0].reconnectToken))!;
    assert.equal(a.id, 'p1'); assert.deepEqual(player(epoch, 'p1'), snapshots.get('p1')); reconnects++;
    await roster(name, epoch, [a, mages[1], c, d]);
    const tokens = player(epoch, 'p1').actionTokens;

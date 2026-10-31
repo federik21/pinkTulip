@@ -438,6 +438,22 @@ test('mage view controls show retinues, map icons, stable slot numbers and owner
  await expect(page.locator('.evocation-marker[data-evocation-id="own-three"] text')).toHaveText('☠');
 });
 
+test('map puts the active mage first, crowns the order marker, scales mages and shows public played cards',async ({page})=>{
+ const game=fixtureState();game.players[1].isBot=true;game.currentPlayerId='p2';
+ game.activation={playerId:'p2',actionsUsed:0,exploring:0,sequencedSpellUsed:false,spellsCast:0,discardedExit:false,roomEffectUsed:false,physicalAction:null};
+ game.players[1].wizard.position={q:0,r:0};game.turnRecapDraft={playerId:'p2',logStart:0,cards:[]};
+ const wire=await mount(page,game);
+ const order=page.locator('.map-player-order');
+ await expect(order.locator('li').first()).toHaveAttribute('data-player-id','p2');
+ await expect(order.locator('li').first().locator('.map-first-crown')).toBeVisible();
+ await expect(order.locator('li').first()).toHaveClass(/map-player-active/);
+ await expect(hex(page,'room-0,0').locator('[data-mage-id="p2"] .mage-token-disc')).toHaveAttribute('r',/^5\.6/);
+ game.turnRecapDraft={playerId:'p2',logStart:0,cards:[{at:1,role:'CAST',ownerId:'p2',card:preparedSpell}]};
+ wire.update(game);
+ await expect(page.locator('.map-played-card')).toContainText('Fixture Ember');
+ await expect(page.locator('.map-played-card')).toContainText('Blue Seer');
+});
+
 test('active own evocation can attack or finish with mage details and opponent retinues closed',async ({page})=>{
  const game=fixtureState();game.phase='EVOCATION';game.activation=null;
  game.players[1].wizard.position={q:0,r:0};

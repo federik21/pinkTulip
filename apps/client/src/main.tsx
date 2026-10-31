@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ACTIONS_PER_TURN, ELEMENT_GLYPHS, getEffectiveSpell, spellFilterAllows, spellReaches, getSpellType, getDiscardMoveCards, canUseSpellDummy, spellCanTargetModel, upgradeLegacyCards, getMageEvocationCount, Card, GameAction, GameState, Player, Room, MAX_MAGES, MIN_MAGES, ROOM_COLORS, ROOM_EFFECT_LABELS, isInStartingRoom, isWithinSpellRange, mustLeaveCell, hexDistance, hexKey } from '@brw/game-engine';
+import type { TurnRecapCard } from '@brw/game-engine';
 import { ActiveEvocationControls, EvocationSupply, EvocationsPanel, evocationIcon, targetModels } from './EvocationsPanel';
 import { PhysicalActionsPanel, PhysicalBannerActions, physicalContext } from './PhysicalActionsPanel';
 import { useBoardZoom, ZoomControls } from './BoardZoom';
@@ -126,8 +127,8 @@ function QuestLimitPanel({me,send}:{me:Player;send:Send}) {
 function App() {
  const [game,setGame]=useState<GameState|null>(null),[playerId,setPlayerId]=useState<string|null>(null);
  const [connected,setConnected]=useState(false),[error,setError]=useState('');
- const [roomId,setRoomId]=useState('demo'),[playerName,setPlayerName]=useState(randomName);
- const [roomList,setRoomList]=useState<Array<{id:string;players:number;status:string;mages?:string[]}>>([]);
+ const [roomId,setRoomId]=useState('demo'),[playerName,setPlayerName]=useState(randomName),[roomPassword,setRoomPassword]=useState('');
+ const [roomList,setRoomList]=useState<Array<{id:string;players:number;status:string;mages?:string[];passwordProtected?:boolean}>>([]);
  const [canSave,setCanSave]=useState(false);
  const [overlay,setOverlay]=useState<GameState['phase']|null>(null),[toast,setToast]=useState('');
  const [selectedSlot,setSelectedSlot]=useState<Slot|null>(null),[selectedRoom,setSelectedRoom]=useState<string|null>(null);
@@ -141,6 +142,8 @@ function App() {
  const [infoPopup,setInfoPopup]=useState<'lodge'|'reference'|null>(null);
  const [historyRevision,setHistoryRevision]=useState(0);
  const [slowAi,setSlowAi]=useState(()=>localStorage.getItem('slowAi')==='1');
+ const [playedCards,setPlayedCards]=useState<Array<{key:string;entry:TurnRecapCard}>>([]);
+ const playedCardCursor=useRef<{gameId:string;seen:Set<string>}|null>(null);
  const [momentToast,setMomentToast]=useState('');
  const momentQueue=useRef<string[]>([]),momentSeen=useRef<{gameId:string;len:number}|null>(null),momentBusy=useRef(false);
  const [effectTargetId,setEffectTargetId]=useState('');
@@ -152,14 +155,43 @@ function App() {
  const requestRef=useRef<string|null>(null),requestCount=useRef(0);
  const [pending,setPending]=useState(false);
  useEffect(()=>{
+  if(!game||!playerId)return;
+  const cursor=playedCardCursor.current;
+  if(!cursor||cursor.gameId!==game.gameId) {
+   setPlayedCards([]);
+   const seen=new Set<string>();
+   for(const recap of game.turnRecaps??[])for(const entry of recap.cards)seen.add(`${recap.id}:${entry.at}:${entry.role}:${entry.card.id}`);
+   const draft=game.turnRecapDraft;
+   if(draft)for(const entry of draft.cards)seen.add(`${game.round}:${draft.playerId}:${draft.logStart}:${entry.at}:${entry.role}:${entry.card.id}`);
+   playedCardCursor.current={gameId:game.gameId,seen};
+   return;
+  }
+  const entries:Array<{turnKey:string;entry:TurnRecapCard}>=[
+   ...(game.turnRecaps??[]).flatMap(recap=>recap.cards.map(entry=>({turnKey:recap.id,entry}))),
+   ...(game.turnRecapDraft?.cards??[]).map(entry=>({turnKey:`${game.round}:${game.turnRecapDraft!.playerId}:${game.turnRecapDraft!.logStart}`,entry})),
+  ];
+  const fresh=entries.filter(({turnKey,entry})=>{
+   const key=`${turnKey}:${entry.at}:${entry.role}:${entry.card.id}`;
+   if(playedCardCursor.current!.seen.has(key))return false;
+   playedCardCursor.current!.seen.add(key);
+   return entry.ownerId!==playerId&&(entry.role==='CAST'||entry.role==='TRIGGERED');
+  });
+  if(fresh.length)setPlayedCards(previous=>[...previous,...fresh.map(({turnKey,entry})=>({key:`${turnKey}:${entry.at}:${entry.role}:${entry.card.id}`,entry}))]);
+ },[game,playerId]);
+ useEffect(()=>{
+  if(!playedCards.length)return;
+  const timer=window.setTimeout(()=>setPlayedCards(previous=>previous.slice(1)),3000);
+  return()=>window.clearTimeout(timer);
+ },[playedCards[0]?.key]);
+ useEffect(()=>{
   const ws=new WebSocket(WS_URL); wsRef.current=ws;
   ws.onopen=()=>setConnected(true);ws.onerror=()=>setError('Cannot reach the WebSocket server. Check that it is running on port 8080.');
     ws.onclose=()=>{setConnected(false);requestRef.current=null;setPending(false);setError('Connection closed. Reload to reconnect to your room.');};
   ws.onmessage=e=>{
    const msg=JSON.parse(e.data);
    if(msg.type==='CONNECTED')setCanSave(!!msg.canSave);
-   if(msg.type==='WELCOME'){setPlayerId(msg.playerId);setRoomId(msg.roomId);}
-   if(msg.type==='SESSION_SAVED'){setError('');setToast(`Session saved. Rejoin room "${msg.roomId}" with your mage name to resume.`);}
+   if(msg.type==='WELCOME'){setPlayerId(msg.playerId);setRoomId(msg.roomId);if(typeof msg.reconnectToken==='string')localStorage.setItem(`pinkTulip:reconnect:${msg.roomId}`,msg.reconnectToken);setRoomPassword('');}
+   if(msg.type==='SESSION_SAVED'){setError('');setToast(`Session saved. Rejoin room "${msg.roomId}" from this browser to resume your mage seat.`);}
   if(msg.type==='STATE'){upgradeLegacyCards(msg.state);setGame(msg.state);setError('');}
    if(msg.type==='ROOM_LIST')setRoomList(msg.rooms);
     if(msg.type==='ERROR'){setError(msg.message);requestRef.current=null;setPending(false);}
@@ -192,7 +224,7 @@ function App() {
  },[phase,myActivation,actionsUsed,exploring,activeEvocationId,physicalKind]);
  useEffect(()=>{if(!toast)return;const t=window.setTimeout(()=>setToast(''),3200);return()=>window.clearTimeout(t);},[toast]);
  const dismissToasts=()=>{setToast('');setMomentToast('');momentQueue.current=[];momentBusy.current=false;};
- // Tell the server our AI pacing preference (per room; last writer wins).
+ // Tell the server our AI pacing preferences (per room; last writer wins).
  useEffect(()=>{localStorage.setItem('slowAi',slowAi?'1':'0');if(playerId&&wsRef.current?.readyState===WebSocket.OPEN)wsRef.current.send(JSON.stringify({type:'SET_AI_SPEED',slow:slowAi}));},[slowAi,playerId]);
  // Moments of another mage's turn: queue new log lines, show one toast at a time.
  const logLen=game?.log.length,gameKey=game?.gameId;
@@ -227,9 +259,9 @@ function App() {
  const continuePhase=()=>{if(game&&playerId)send({type:'ADVANCE_PHASE',playerId,expectedPhase:game.phase,expectedRound:game.round});};
  const join=(create:boolean)=>{
   if(wsRef.current?.readyState!==WebSocket.OPEN){setError('Wait for the server connection.');return;}
-  setError('');wsRef.current.send(JSON.stringify({type:create?'CREATE_ROOM':'JOIN',roomId,playerName}));
+  setError('');wsRef.current.send(JSON.stringify({type:create?'CREATE_ROOM':'JOIN',roomId,playerName,password:roomPassword,reconnectToken:localStorage.getItem(`pinkTulip:reconnect:${roomId}`)??''}));
  };
- if(!game || !playerId)return <div className="entry"><div className="entry-decoration">✺</div><div className="entry-card"><span className="eyebrow">A lodge of ambition and ruin</span><h1>BRW<br/><em>BATTLES</em></h1><p>A {MIN_MAGES}–{MAX_MAGES} mage online battle. Build your grimoire. Shape the lodge. Claim BRW.</p><label>Mage name<input value={playerName} maxLength={32} onChange={e=>setPlayerName(e.target.value)}/></label><label>Room name<input value={roomId} maxLength={48} onChange={e=>setRoomId(e.target.value)}/></label><div className="button-row"><button disabled={!connected} onClick={()=>join(false)}>Join room</button><button className="primary" disabled={!connected} onClick={()=>join(true)}>Create room</button></div><span className="hint">{connected?'● Connected to the lodge':'○ Connecting to server…'}</span>{error&&<p className="error" role="alert">{error}</p>}{roomList.length>0&&<div className="room-list"><h3>Open lodges</h3>{roomList.map(r=><button key={r.id} onClick={()=>setRoomId(r.id)}><b>{r.id}</b><span>{r.players}/{MAX_MAGES} · {r.status}{r.mages?`: ${r.mages.join(', ')}`:''}</span></button>)}</div>}</div></div>;
+ if(!game || !playerId)return <div className="entry"><div className="entry-decoration">✺</div><div className="entry-card"><span className="eyebrow">A lodge of ambition and ruin</span><h1>BRW<br/><em>BATTLES</em></h1><p>A {MIN_MAGES}–{MAX_MAGES} mage online battle. Build your grimoire. Shape the lodge. Claim BRW.</p><label>Mage name<input value={playerName} maxLength={32} onChange={e=>setPlayerName(e.target.value)}/></label><label>Room name<input value={roomId} maxLength={48} onChange={e=>setRoomId(e.target.value)}/></label><label>Room password<input type="password" autoComplete="current-password" value={roomPassword} maxLength={128} onChange={e=>setRoomPassword(e.target.value)}/></label><span className="hint">Optional for public rooms. Password-protected rooms require a password of at least 8 characters.</span><div className="button-row"><button disabled={!connected} onClick={()=>join(false)}>Join room</button><button className="primary" disabled={!connected} onClick={()=>join(true)}>Create room</button></div><span className="hint">{connected?'● Connected to the lodge':'○ Connecting to server…'}</span>{error&&<p className="error" role="alert">{error}</p>}{roomList.length>0&&<div className="room-list"><h3>Open lodges</h3>{roomList.map(r=><button key={r.id} onClick={()=>setRoomId(r.id)}><b>{r.passwordProtected?'🔒 ':''}{r.id}</b><span>{r.players}/{MAX_MAGES} · {r.status}{r.mages?`: ${r.mages.join(', ')}`:''}</span></button>)}</div>}</div></div>;
  const me=game.players.find(p=>p.id===playerId)!;
  const isHost=game.hostId===me.id;
  const paused=game.phase!=='LOBBY'&&!game.players.every(p=>p.connected);
@@ -241,6 +273,9 @@ function App() {
  const activeEvocation=game.evocations.find(e=>e.id===game.evocationActivation?.evocationId);
  const movingEvocation=enabled&&game.evocationActivation?.playerId===me.id&&!!game.evocationActivation?.moving&&(game.evocationActivation?.movesRemaining??0)>0&&activeEvocation;
  const actingPlayer=enabled&&(game.phase==='ACTION'||game.phase==='EVOCATION')?game.players.find(p=>p.id===game.currentPlayerId):undefined;
+ const orderStartId=(game.phase==='ACTION'||game.phase==='EVOCATION')?game.currentPlayerId:game.firstPlayerId;
+ const orderStartIndex=Math.max(0,game.players.findIndex(player=>player.id===orderStartId));
+ const mapPlayerOrder=[...game.players.slice(orderStartIndex),...game.players.slice(0,orderStartIndex)];
  // The free Evocation-phase activation is mine to make, or my activated model still needs finishing.
  const evocationDue=game.evocationActivation?game.evocationActivation.playerId===me.id:game.phase==='EVOCATION'&&game.currentPlayerId===me.id&&game.evocations.some(e=>e.playerId===me.id&&!e.activated);
  const turnActionsUsed=active?.actionsUsed??0;
@@ -385,6 +420,10 @@ function App() {
     quests={<QuestsPanel game={game} me={me} disabled={!enabled||pending} send={send}/>}
     />
     <section className="board-panel"><div className="section-heading"><div><span className="eyebrow">The lodge</span><h2>{mapPick?'Choose a highlighted room':movingEvocation&&activeEvocation?`${activeEvocation.name} #${evocationNumber(game,activeEvocation)} · choose an adjacent space`:exitCardId&&myTurn?'Discard to move · choose an adjacent space':spell?`Target: ${spell.name}${dummy?' · dummy':''}`:active?.exploring&&myTurn?'Explore · choose an adjacent space':'Chambers of the BR'}</h2></div><div className="board-tools"><ZoomControls zoom={boardZoom.zoom} onZoomIn={boardZoom.zoomIn} onZoomOut={boardZoom.zoomOut} onReset={boardZoom.resetZoom}/><button type="button" className="info-button" aria-label="Lodge information" onClick={()=>setInfoPopup('lodge')}>ⓘ Info</button></div></div>
+      {game.phase!=='LOBBY'&&<ol className="map-player-order" aria-label={`Turn order, ${mapPlayerOrder[0]?.name} first`}>
+       {mapPlayerOrder.map((player,index)=><li className={player.id===actingPlayer?.id?'map-player-active':''} data-player-id={player.id} aria-label={`${player.name}${index===0?', first in turn order':''}${player.id===actingPlayer?.id?', acting now':''}`} title={player.name} style={mageStyle(player.id)} key={player.id}><span className="map-player-icon" aria-hidden="true">{index===0&&<span className="map-first-crown">♛</span>}{emoji[player.id]}</span></li>)}
+      </ol>}
+      {playedCards[0]&&<aside className="map-played-card" role="status" aria-label={`Card played by ${ownerName(game,playedCards[0].entry.ownerId)}`}><span className="eyebrow">Played by {ownerName(game,playedCards[0].entry.ownerId)}</span><SpellCard card={playedCards[0].entry.card} label={playedCards[0].entry.role==='TRIGGERED'?'Revealed card':'Card played'} disabled/></aside>}
       <div className="board-viewport" ref={boardZoom.setViewport} style={boardZoom.viewportStyle} tabIndex={0} role="region" aria-label="Scrollable lodge board"><svg className="board" style={boardZoom.boardStyle} viewBox="-210 -165 420 330" role="group" aria-label="Hexagonal lodge board">{game.board.rooms.map(r=>{
       const h=r.tiles[0],x=(h.q+h.r/2)*62,y=h.r*54;
       const occupants=game.players.filter(p=>r.tiles.some(tile=>hexKey(p.wizard.position)===hexKey(tile)));
@@ -410,7 +449,7 @@ function App() {
           <FeedbackPulse feedback={feedback} kind="ROOM" targetId={r.id} svg/>
           <RoomTrapTokens game={game} viewerId={me.id} roomId={r.id}/>
       <text className="room-name" aria-hidden="true">{roomNameLines(r.name).map((line,i)=><tspan x={0} y={-21+i*7} key={i}>{line}{i===0?' ':''}</tspan>)}</text>
-          {occupants.length?occupants.map((p,i)=>{const token=modelLayout(i);return <g key={p.id} transform={`translate(${token.x},${token.y})`}><FeedbackPulse feedback={feedback} kind="MAGE" targetId={p.id} svg/><g className={p.id===actingPlayer?.id?'acting-mage-token':''} data-mage-id={p.id} style={mageStyle(p.id)}><title>{p.name} · {MAGE_COLOR_NAMES[p.id]}</title><circle className="mage-token-disc" r={token.radius}/><text className="occupants" style={{fontSize:token.radius*1.8}} y={token.radius*.6}>{emoji[p.id]}</text></g><ModelEffectMarkers game={game} viewerId={me.id} modelId={p.id} radius={token.radius}/></g>;}):!summons.length&&<text className="empty-room-icon" y={0}>{r.startingFor?'⌂':r.reconstructed?'❖':r.id==='room-0,0'?'✺':'·'}</text>}
+          {occupants.length?occupants.map((p,i)=>{const token=modelLayout(i),radius=token.radius*1.12;return <g key={p.id} transform={`translate(${token.x},${token.y})`}><FeedbackPulse feedback={feedback} kind="MAGE" targetId={p.id} svg/><g className={p.id===actingPlayer?.id?'acting-mage-token':''} data-mage-id={p.id} style={mageStyle(p.id)}><title>{p.name} · {MAGE_COLOR_NAMES[p.id]}</title><circle className="mage-token-disc" r={radius}/><text className="occupants" style={{fontSize:radius*1.8}} y={radius*.6}>{emoji[p.id]}</text></g><ModelEffectMarkers game={game} viewerId={me.id} modelId={p.id} radius={radius}/></g>;}):!summons.length&&<text className="empty-room-icon" y={0}>{r.startingFor?'⌂':r.reconstructed?'❖':r.id==='room-0,0'?'✺':'·'}</text>}
           {summons.length>0&&<g className="evocation-markers">{summons.map((e,i)=>{const token=modelLayout(occupants.length+i);const big=e.kind==='COLOSSUS',tr=big?token.radius*1.35:token.radius,nightmare=e.archetype==='NIGHTMARE',colorOwner=nightmare?e.assignedTo??e.playerId:e.playerId;return <g className={`evocation-marker${big?' big-evocation':''}${nightmare?' nightmare-marker':''}`} data-evocation-id={e.id} data-owner-id={colorOwner} style={mageStyle(colorOwner)} transform={`translate(${token.x},${token.y})`} key={e.id}><title>{ownerName(game,colorOwner)} · {e.name} #{evocationNumber(game,e)}</title><FeedbackPulse feedback={feedback} kind="EVOCATION" targetId={e.id} svg/>{nightmare?<path className="nightmare-crescent" d="M 0 -5 A 5 5 0 1 0 0 5 A 3 5 0 1 1 0 -5 Z" transform={`rotate(${((e.slot??1)-1)*90}) scale(${tr/5})`}/>:<circle className="mage-token-disc evocation-token-disc" r={tr}/>}<text aria-hidden="true" style={{fontSize:tr*1.2}} y={tr*.4}>{evocationIcon(e)}</text><ModelEffectMarkers game={game} viewerId={me.id} modelId={e.id} radius={tr}/></g>;})}</g>}
       {r.startingFor?<text className="start-label" y={17}>START</text>:r.reconstructed?<g className={`rebuilt-badge ${r.specialUsed?'used':'ready'}`}><rect x={-18} y={10} width={36} height={12} rx={3}/><text y={18.5}>{roomStatus(r)}</text></g>:<g className="capacity-badge">
       <rect className="capacity-background" x={-18} y={10} width={36} height={12} rx={3}/>

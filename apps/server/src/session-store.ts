@@ -2,18 +2,20 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { upgradeLegacyCards, type GameState } from '@brw/game-engine';
 
-export type SavedRoom = { id: string; savedAt: string; game: GameState };
-type SaveFile = { version: 1; rooms: SavedRoom[] };
+export type SavedRoom = { id: string; savedAt: string; game: GameState; passwordHash?: string; reconnectTokens?: Record<string,string> };
+type SaveFile = { version: 2; rooms: SavedRoom[] };
 
 // Only a started, unfinished battle is worth resuming; lobbies and finished games are not saved.
 export const isSavable = (game: GameState) => game.phase !== 'LOBBY' && game.phase !== 'GAME_OVER';
 
 function isSavedRoom(value: unknown): value is SavedRoom {
  if (!value || typeof value !== 'object') return false;
- const { id, game } = value as { id?: unknown; game?: Partial<GameState> | null };
+ const { id, game, passwordHash, reconnectTokens } = value as { id?: unknown; game?: Partial<GameState> | null; passwordHash?: unknown; reconnectTokens?: unknown };
+ const validPasswordHash=passwordHash===undefined||(typeof passwordHash==='string'&&/^[a-f0-9]{32}:[a-f0-9]{64}$/i.test(passwordHash));
+ const validReconnectTokens=reconnectTokens===undefined||(!!reconnectTokens&&typeof reconnectTokens==='object'&&!Array.isArray(reconnectTokens)&&Object.values(reconnectTokens).every(token=>typeof token==='string'&&/^[a-f0-9]{64}$/i.test(token)));
  return typeof id === 'string' && id.length > 0 && id.length <= 48 && !!game && typeof game === 'object'
   && typeof game.phase === 'string' && Array.isArray(game.players) && game.players.length > 0
-  && Array.isArray(game.log) && !!game.board && Array.isArray(game.board.rooms);
+  && Array.isArray(game.log) && !!game.board && Array.isArray(game.board.rooms) && validPasswordHash && validReconnectTokens;
 }
 
 /** Resolves the SAVE_FILE environment value: unset, empty or "off" disables saving. */
@@ -39,8 +41,8 @@ export class SessionStore {
    return [];
   }
   try {
-   const parsed = JSON.parse(raw) as Partial<SaveFile>;
-   if (parsed.version !== 1 || !Array.isArray(parsed.rooms)) throw new Error('Unsupported save file format');
+   const parsed = JSON.parse(raw) as { version?: unknown; rooms?: unknown };
+   if ((parsed.version !== 1 && parsed.version !== 2) || !Array.isArray(parsed.rooms)) throw new Error('Unsupported save file format');
    const rooms = parsed.rooms.filter(isSavedRoom).filter(room => isSavable(room.game));
    if (rooms.length !== parsed.rooms.length) console.error(`Session store: skipped ${parsed.rooms.length - rooms.length} invalid saved room(s).`);
    for (const room of rooms) {
@@ -67,7 +69,7 @@ export class SessionStore {
  flush(): string | null {
   if (this.timer) { clearTimeout(this.timer); this.timer = null; }
   const savedAt = new Date().toISOString();
-  const data: SaveFile = { version: 1, rooms: this.snapshot().map(room => ({ ...room, savedAt })) };
+  const data: SaveFile = { version: 2, rooms: this.snapshot().map(room => ({ ...room, savedAt })) };
   const temp = `${this.file}.tmp`;
   try {
    mkdirSync(dirname(this.file), { recursive: true });

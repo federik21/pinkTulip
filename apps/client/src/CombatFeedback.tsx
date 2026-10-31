@@ -149,10 +149,32 @@ function roomName(game: GameState, id?: string) {
 
 export function CombatFeedback({ game, feedback }: { game: GameState; feedback: Feedback }) {
  const event = feedback.queue[0];
+ const dialog = useRef<HTMLElement>(null);
+ const returnFocus = useRef<HTMLElement|null>(null);
  const title = !event ? '' : event.kind === 'MAGE_DEFEATED' ? 'Mage defeated' : event.spellType === 'PROTECTION' ? 'Protection triggered' : 'Trap triggered';
- return <div className="combat-feedback" role="region" aria-label="Combat notifications" data-queue-count={feedback.queue.length}>
+ useEffect(()=>{
+  if(!event) {
+   returnFocus.current?.focus();
+   returnFocus.current=null;
+   return;
+  }
+  if(!returnFocus.current&&document.activeElement instanceof HTMLElement)returnFocus.current=document.activeElement;
+  dialog.current?.focus();
+  const handleKeyDown=(key:KeyboardEvent)=>{
+   if(key.key==='Escape'){key.preventDefault();feedback.dismiss();return;}
+   if(key.key!=='Tab'||!dialog.current)return;
+   const focusable=[...dialog.current.querySelectorAll<HTMLElement>('button:not(:disabled),[href],input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex]:not([tabindex="-1"])')];
+   if(!focusable.length){key.preventDefault();dialog.current.focus();return;}
+   const first=focusable[0],last=focusable[focusable.length-1];
+   if(key.shiftKey&&(document.activeElement===first||document.activeElement===dialog.current)){key.preventDefault();last.focus();}
+   else if(!key.shiftKey&&document.activeElement===last){key.preventDefault();first.focus();}
+  };
+  document.addEventListener('keydown',handleKeyDown);
+  return()=>document.removeEventListener('keydown',handleKeyDown);
+ },[event?.id]);
+ return <div className={`combat-feedback${event?' modal-active':''}`} role="region" aria-label="Combat notifications" data-queue-count={feedback.queue.length}>
   <div className="feedback-announcement" role="status" aria-live="polite" aria-atomic="true">{event && `${title}: ${event.kind === 'MAGE_DEFEATED' ? event.target.name : event.cardName}. ${feedback.queue.length} events to review. `}{feedback.announcement}</div>
-  {event && <section key={event.id} className={`combat-popup ${event.kind === 'MAGE_DEFEATED' ? 'defeat-popup' : 'trigger-popup'}`} role="dialog" aria-modal="false" aria-label={title}>
+  {event && <section ref={dialog} key={event.id} tabIndex={-1} className={`combat-popup ${event.kind === 'MAGE_DEFEATED' ? 'defeat-popup' : 'trigger-popup'}`} role="dialog" aria-modal="true" aria-label={title}>
   <div className="combat-popup-heading"><span className="eyebrow">{title} · Round {event.round}</span>{' '}<span className="hint">{feedback.queue.length} event{feedback.queue.length === 1 ? '' : 's'} to review</span></div>
    {event.kind === 'MAGE_DEFEATED' ? <>
     <h2>{event.target.name} is defeated</h2>
