@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { addPlayerToLobby, applyAction, canPlayerAct, createGame, getDefaultRoomsPerColor, getRoomRewards, hexDistance, hexKey, ROOM_COLORS } from '../src';
+import { addPlayerToLobby, applyAction, canPlayerAct, createGame, getDefaultRoomsPerColor, getRoomRewards, hexDistance, hexKey, ROOM_COLORS, MAGE_DRAFT_POOL } from '../src';
 import type { GameAction, GameState, RoomColor, RoomEffect } from '../src';
 
 const player=(s:GameState,id='p1')=>s.players.find(p=>p.id===id)!;
@@ -20,14 +20,14 @@ function lobby(count=2) {
  s.eventDeck=[{id:'quiet',name:'Quiet',description:'No effect',kind:'INSTABILITY',amount:0,rooms:0}];return s;
 }
 function ready(s:GameState) {
- for(const p of s.players) {
-  s=applyAction(s,{type:'SELECT_STARTING_SCHOOL',playerId:p.id,schoolId:'cantrip'});
-  s=applyAction(s,{type:'SET_READY',playerId:p.id,ready:true});
- }
+ for(const p of s.players)s=applyAction(s,{type:'SET_READY',playerId:p.id,ready:true});
  return s;
 }
 function study() {
- return advance(applyAction(ready(lobby()),{type:'START_GAME',playerId:'p1'}));
+ let s=applyAction(ready(lobby()),{type:'START_GAME',playerId:'p1'});
+ for(const [index,id] of s.setupOrder!.entries())s=applyAction(s,{type:'DRAFT_SCHOOL',playerId:id,schoolId:s.library[index].id});
+ for(const [index,id] of [...s.setupOrder!].reverse().entries())s=applyAction(s,{type:'DRAFT_MAGE',playerId:id,mageId:MAGE_DRAFT_POOL[index].id});
+ return advance(s);
 }
 
 describe('two to four unique prepared spells with optional flexible slot',()=>{

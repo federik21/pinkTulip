@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { selectControlTab, viewRetinue } from './layout-ui';
+import { completeSetupDraft, selectControlTab, viewRetinue } from './layout-ui';
 
 test('creating and joining a room renders the lobby without React hook errors', async ({ browser }) => {
   const hostContext = await browser.newContext();
@@ -31,12 +31,6 @@ test('creating and joining a room renders the lobby without React hook errors', 
       await expect(page.getByRole('heading', { name: 'Gather the mages', exact: true })).toBeVisible();
       if (button === 'Create room') await expect(page.locator('.lobby-seats .seat')).toHaveCount(1);
       await expect(page.locator('.header-meta .badge')).toHaveText(roomId);
-      await expect(page.getByRole('button', { name: 'Mark ready', exact: true })).toBeDisabled();
-      const school = page.getByRole('combobox', { name: 'Starting magic school', exact: true });
-      await expect(school).toHaveValue('');
-      const schoolId = await school.locator('option:not([value=""])').first().getAttribute('value');
-      expect(schoolId).toBeTruthy();
-      await school.selectOption(schoolId!);
       await expect(page.getByRole('button', { name: 'Mark ready', exact: true })).toBeEnabled();
 
       // The state that caused the hook-order crash must remain usable after entry.
@@ -63,9 +57,11 @@ test('creating and joining a room renders the lobby without React hook errors', 
     await host.getByRole('button', { name: 'Mark ready', exact: true }).click();
     await expect(guest.locator('.lobby-count')).toHaveText('2 / 4 mages · 1 ready');
     await guest.getByRole('button', { name: 'Mark ready', exact: true }).click();
+    await expect(host.locator('.setup-panel')).toBeVisible();
+    await completeSetupDraft([host,guest]);
 
     for (const { page } of mages) {
-      await expect(page.locator('.phase-track .current span')).toHaveText('Pink Tulip');
+      await expect(page.locator('.phase-track .current span')).toHaveText('BR');
       await expect(page.locator('.app')).toBeVisible();
       await expect(page.locator('.lobby-panel')).toHaveCount(0);
       await expect(page.getByRole('alert')).toHaveCount(0);
@@ -105,12 +101,10 @@ test('password-protected rooms reject impostors and reconnect tokens restore onl
     await guest.getByRole('button', { name: 'Join room', exact: true }).click();
     await expect(guest.locator('.lobby-seats .seat')).toHaveCount(2);
 
-    for (const page of [host, guest]) {
-      const school = page.getByRole('combobox', { name: 'Starting magic school', exact: true });
-      await school.selectOption(await school.locator('option:not([value=""])').first().getAttribute('value')!);
-      await page.getByRole('button', { name: 'Mark ready', exact: true }).click();
-    }
-    await expect(host.locator('.phase-track .current span')).toHaveText('Pink Tulip');
+    for (const page of [host, guest]) await page.getByRole('button', { name: 'Mark ready', exact: true }).click();
+    await expect(host.locator('.setup-panel')).toBeVisible();
+    await completeSetupDraft([host,guest]);
+    await expect(host.locator('.phase-track .current span')).toHaveText('BR');
     await guest.close();
     await expect(host.getByText(/Game paused\. Waiting for the disconnected mage/)).toBeVisible();
 

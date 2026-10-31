@@ -1,5 +1,5 @@
 import React from 'react';
-import { BLACK_ROSE_ID, GameState, getMageEvocationCount, getSpellType } from '@brw/game-engine';
+import { BLACK_ROSE_ID, GameState, getMageEvocationCount, getSpellType, MAGE_DRAFT_POOL } from '@brw/game-engine';
 import { DamageBar } from './DamageBar';
 import { ModelEffects } from './ModelEffects';
 import { MAGE_SYMBOLS, MAGE_COLOR_NAMES, mageStyle } from './presentation';
@@ -25,7 +25,7 @@ export function MageRoster({game,viewerId,actingPlayerId,onViewRetinue}: Props) 
   const evocationCount=getMageEvocationCount(game,p.id);
     return <details open className={`player mage-disclosure ${acting?'active-player':''}`} style={mageStyle(p.id)} data-player-id={p.id} aria-current={acting?'true':undefined} key={p.id}>
     <summary className="mage-summary">
-     <div className="player-heading"><span><span className={acting?'acting-mage-icon':''} aria-hidden="true">{MAGE_SYMBOLS[p.id]}</span> {p.name} {p.id===game.firstPlayerId&&<span className="first-player" role="img" aria-label="First player" title="First-player token · +1 VP at endgame">♛</span>} {own&&<small>(you)</small>}<small className="mage-color-name">{MAGE_COLOR_NAMES[p.id]}</small></span><b>{p.victoryPoints}<small> VP</small></b></div>
+     <div className="player-heading"><span><span className={acting?'acting-mage-icon':''} aria-hidden="true">{MAGE_SYMBOLS[p.id]}</span> {p.name} {p.id===game.firstPlayerId&&<span className="first-player" role="img" aria-label="First player" title="First-player token · +1 VP at endgame">♛</span>} {own&&<small>(you)</small>}<small className="mage-color-name">{MAGE_COLOR_NAMES[p.id]}{p.mageId?` · ${MAGE_DRAFT_POOL.find(mage=>mage.id===p.mageId)?.name??p.mageId}`:''}</small></span><b>{p.victoryPoints}<small> VP</small></b></div>
      <DamageBar game={game} name={p.name} {...p.wizard}/>
     <ModelEffects game={game} viewerId={viewerId} modelId={p.id}/>
      <div className="mage-critical-stats"><dl className="mage-attributes critical-attributes"><div><dt>Cards</dt><dd>{p.hand.length}/{p.cardLimit}</dd></div></dl><span className="player-stats">⚡ {p.actionTokens} tokens</span></div>

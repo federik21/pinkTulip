@@ -1,6 +1,7 @@
 export type PlayerId = string;
 export type RoomId = string;
-export type Phase = 'LOBBY' | 'BLACK_ROSE' | 'STUDY' | 'PREPARATION' | 'ACTION' | 'EVOCATION' | 'CLEANUP' | 'GAME_OVER';
+export type Phase = 'LOBBY' | 'SETUP' | 'BLACK_ROSE' | 'STUDY' | 'PREPARATION' | 'ACTION' | 'EVOCATION' | 'CLEANUP' | 'GAME_OVER';
+export type MageDraftId = 'tizio' | 'caio' | 'sempronio' | 'tiriki';
 export type Hex = { q: number; r: number };
 export type SpellTarget = 'SELF' | 'ROOM' | 'MAGE' | 'EVOCATION' | 'MODEL';
 export type SpellType = 'COMBAT' | 'CONTINGENCY' | 'TRAP' | 'PROTECTION';
@@ -154,6 +155,8 @@ export type Player = {
  // Server-controlled seat; omitted on older saves and human players.
  isBot?: boolean;
  startingSchoolId?: string | null;
+ mageId?: MageDraftId | null;
+ mageSpellSupply?: Card[];
  wizard: Wizard; personalDeck: Card[]; hand: Card[]; discard: Card[]; prepared: PreparedCards;
  cubes: { available: number; onWizard: number; onBoard: number; onEvocations: number }; actionTokens: number; victoryPoints: number;
  questsCompleted: number; kills: number; trophies: PlayerId[]; quest: Quest | null; additionalQuests: Quest[]; studyDrawn: boolean; studyDone: boolean;
@@ -181,6 +184,10 @@ export type GameState = {
  gameId: string; hostId: PlayerId; round: number; phase: Phase; players: Player[]; board: Board;
  // Undefined selects the roster-based default at START_GAME, not during play.
  roomsPerColor?: 1 | 2 | 3;
+ setupOrder?: PlayerId[];
+ setupStage?: 'SCHOOL' | 'MAGE' | null;
+ moon?: 1 | 2 | 3;
+ moonEvents?: (2 | 3)[];
  blackRose: { victoryPoints: number; kills: number }; firstPlayerId: PlayerId | null; endgameScored: boolean;
  // Server-owned, per-viewer metadata only. Undo/redo snapshots are private to the
  // server and must never be added to this shared/wire schema.
@@ -209,7 +216,8 @@ export type GameAction =
  | { type: 'REMOVE_BOT'; playerId: PlayerId; botId: PlayerId }
  | { type: 'UNDO_ACTION'; playerId: PlayerId }
  | { type: 'REDO_ACTION'; playerId: PlayerId }
- | { type: 'SELECT_STARTING_SCHOOL'; playerId: PlayerId; schoolId: string }
+ | { type: 'DRAFT_SCHOOL'; playerId: PlayerId; schoolId: string }
+ | { type: 'DRAFT_MAGE'; playerId: PlayerId; mageId: MageDraftId }
  | { type: 'SET_READY'; playerId: PlayerId; ready: boolean }
  | { type: 'SET_ROOM_COUNT'; playerId: PlayerId; roomsPerColor: 1 | 2 | 3 | null }
  | { type: 'START_GAME'; playerId: PlayerId }

@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import type { GameState } from '../packages/game-engine/src';
-import { assignPreparationCard, closeControls, selectControlTab, selectStudyDraw } from './layout-ui';
+import { assignPreparationCard, closeControls, completeSetupDraft, selectControlTab, selectStudyDraw } from './layout-ui';
 
 function observe(page: Page) {
  let latest: GameState;
@@ -36,17 +36,17 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
   const ai = page.locator('.seat[data-player-id="p2"]');
   await expect(ai).toContainText('Basic AI');
   await expect(ai).toContainText('✓ Ready');
-  await expect(ai).toContainText('Agony');
   expect(wire.state.players[1]).toMatchObject({ isBot: true, connected: true, ready: true });
   await ai.getByRole('button', { name: 'Remove AI Mage 2', exact: true }).click();
   await expect(page.locator('.lobby-seats .seat')).toHaveCount(1);
   await add.click();
   await expect(ai).toContainText('✓ Ready');
-  await page.getByRole('combobox', { name: 'Starting magic school' }).selectOption('agony');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await info.attach(`ai-lobby-${viewport.width}`, { body: await page.locator('.lobby-panel').screenshot(), contentType: 'image/png' });
   await page.getByRole('button', { name: 'Mark ready', exact: true }).click();
-  await dismissPhase(page, 'Pink Tulip');
+  await expect(page.locator('.setup-panel')).toBeVisible();
+  await completeSetupDraft([page]);
+  await dismissPhase(page, 'BR');
   expect(wire.state.players[1].isBot).toBe(true);
   await page.getByRole('button', { name: /^Receive quests & begin Study/ }).click();
   await dismissPhase(page, 'Study');

@@ -28,6 +28,7 @@ export function publicState(game: GameState, viewer: PlayerId | null, history: A
   // The school choice and personal discard are public. Future personal cards
   // stay hidden even from their owner; only the owner's hand is private-visible.
   p.personalDeck=p.personalDeck.map((_,i)=>hiddenCard(i));
+  if(p.mageSpellSupply)p.mageSpellSupply=p.mageSpellSupply.map((_,i)=>hiddenCard(i));
   if(p.id===viewer) continue;
   // All four library eligibility IDs remain private, even after Study ends.
   delete p.studyCardIds;

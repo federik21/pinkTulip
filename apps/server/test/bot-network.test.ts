@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
-import { areAdjacent, createGame, getDiscardMoveCards, hexDistance, hexKey } from '@brw/game-engine';
+import { areAdjacent, createGame, getDiscardMoveCards, hexDistance, hexKey, MAGE_DRAFT_POOL } from '@brw/game-engine';
 import type { GameAction, GameState, Hex } from '@brw/game-engine';
 import { configureBot } from '../src/bot-room';
 import { SessionStore } from '../src/session-store';
@@ -113,10 +113,28 @@ async function startHumanAndBot(host: Peer, roomId: string) {
  await host.action({ type: 'ADD_BOT', playerId: 'p1' });
  await host.stateWhere(game => game.players[1].ready);
  expect(host.state!.phase).toBe('LOBBY');
- expect(host.state!.players[1]).toMatchObject({ id: 'p2', isBot: true, connected: true, startingSchoolId: 'agony', ready: true });
- await host.action({ type: 'SELECT_STARTING_SCHOOL', playerId: 'p1', schoolId: 'agony' });
+ expect(host.state!.players[1]).toMatchObject({ id: 'p2', isBot: true, connected: true, startingSchoolId: null, ready: true });
  await host.action({ type: 'SET_READY', playerId: 'p1', ready: true });
- return host.stateWhere(game => game.phase === 'BLACK_ROSE');
+ await host.stateWhere(game=>game.phase==='SETUP');
+ for(let i=0;i<10&&host.state!.phase==='SETUP';i++) {
+  const game=host.state!,order=game.setupOrder??[];
+  const draftOrder=game.setupStage==='MAGE'?[...order].reverse():order;
+  const drafter=draftOrder.map(id=>game.players.find(p=>p.id===id)).find(p=>p&&(game.setupStage==='SCHOOL'?p.startingSchoolId==null:p.mageId==null));
+  if(!drafter)throw new Error('No current setup drafter');
+  if(drafter.id==='p1') {
+   if(game.setupStage==='SCHOOL') {
+    const school=game.library.find(deck=>!game.players.some(p=>p.startingSchoolId===deck.id))!;
+    await host.action({type:'DRAFT_SCHOOL',playerId:'p1',schoolId:school.id});
+   } else {
+    const mage=MAGE_DRAFT_POOL.find(candidate=>!game.players.some(p=>p.mageId===candidate.id))!;
+    await host.action({type:'DRAFT_MAGE',playerId:'p1',mageId:mage.id});
+   }
+  } else await host.stateWhere(next=>next.phase!=='SETUP'||(()=> {
+   const nextOrder=next.setupStage==='MAGE'?[...(next.setupOrder??[])].reverse():next.setupOrder??[];
+   return nextOrder.map(id=>next.players.find(p=>p.id===id)).find(p=>p&&(next.setupStage==='SCHOOL'?p.startingSchoolId==null:p.mageId==null))?.id!==drafter.id;
+  })());
+ }
+ return host.stateWhere(game=>game.phase==='BLACK_ROSE');
 }
 async function reachAction(host: Peer, roomId: string) {
  const started = await startHumanAndBot(host, roomId);
@@ -176,8 +194,6 @@ describe('real AI room transport', () => {
   expect(await joinRoom(host, 'roster', 'Host', true)).toBe('p1');
   expect(await joinRoom(guest, 'roster', 'Guest')).toBe('p2');
   await host.stateWhere(game => game.players.length === 2);
-  await host.action({ type: 'SELECT_STARTING_SCHOOL', playerId: 'p1', schoolId: 'agony' });
-  await guest.action({ type: 'SELECT_STARTING_SCHOOL', playerId: 'p2', schoolId: 'agony' });
   await host.action({ type: 'SET_READY', playerId: 'p1', ready: true });
   const before = structuredClone(host.state!);
   await guest.rejected({ type: 'ADD_BOT', playerId: 'p2' }, /Only the creator/);
@@ -185,12 +201,12 @@ describe('real AI room transport', () => {
   expect(host.state).toEqual(before);
   await host.action({ type: 'ADD_BOT', playerId: 'p1' });
   expect(host.state!.players.map(p => p.ready)).toEqual([false, false, false]);
-  expect(host.state!.players.slice(0, 2).map(p => p.startingSchoolId)).toEqual(['agony', 'agony']);
+  expect(host.state!.players.slice(0, 2).every(p=>p.startingSchoolId==null)).toBe(true);
   await host.stateWhere(game => game.players[2].ready);
   await guest.rejected({ type: 'REMOVE_BOT', playerId: 'p2', botId: 'p3' }, /Only the creator/);
   for (const peer of [host, guest]) for (const action of [
    { type: 'SET_READY', playerId: 'p3', ready: false },
-   { type: 'SELECT_STARTING_SCHOOL', playerId: 'p3', schoolId: 'agony' },
+   { type: 'DRAFT_SCHOOL', playerId: 'p3', schoolId: 'agony' },
    { type: 'REMOVE_BOT', playerId: 'p3', botId: 'p3' },
   ] as const) await peer.rejected(action, /another player/);
   await host.rejected({ type: 'REMOVE_BOT', playerId: 'p1', botId: 'p2' }, /AI opponent not found/);

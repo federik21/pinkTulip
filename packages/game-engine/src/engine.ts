@@ -1,4 +1,4 @@
-import { Activation, ActiveSpell, Board, Card, DamageOrigin, DecisionAnswer, DecisionDetails, EventCard, Evocation, EvocationKind, FeedbackTarget, GameAction, GameFeedbackEvent, GameState, Hex, Moment, Player, PlayerId, Room, RoomId, RoomColor, RoomEffect, TriggerCondition, TriggerEvent, TriggeredInstruction, TurnRecapCard, UpgradeName } from './types';
+import { Activation, ActiveSpell, Board, Card, DamageOrigin, DecisionAnswer, DecisionDetails, EventCard, Evocation, EvocationKind, FeedbackTarget, GameAction, GameFeedbackEvent, GameState, Hex, MageDraftId, Moment, Player, PlayerId, Room, RoomId, RoomColor, RoomEffect, TriggerCondition, TriggerEvent, TriggeredInstruction, TurnRecapCard, UpgradeName } from './types';
 import { createEvents, createLibrary, createPowerfulDeck, createQuests, getEffectiveSpell, getSpellType, hasMoment, shuffle } from './cards';
 
 export class GameRuleError extends Error {}
@@ -6,7 +6,11 @@ export const PHYSICAL_TOKENS_PER_ROUND = 2;
 export const ACTIONS_PER_TURN = 2;
 export const MIN_MAGES = 2;
 export const MAX_MAGES = 4;
-export const STARTING_SCHOOL_CARDS = 7;
+export const STARTING_SCHOOL_CARDS = 6;
+export const MAGE_SPELL_COPIES=3;
+export const MAGE_DRAFT_POOL:readonly {id:MageDraftId;name:string}[]=[
+ {id:'tizio',name:'Tizio'},{id:'caio',name:'Caio'},{id:'sempronio',name:'Sempronio'},{id:'tiriki',name:'Tiriki'},
+];
 export const BLACK_ROSE_ID = 'black-rose';
 export const FEEDBACK_EVENT_LIMIT = 512;
 export const EVENT_BOARD_SIZE = 3;
@@ -193,12 +197,13 @@ export function createDemoBoard(roomsPerColor:1|2|3=3,random:()=>number=Math.ran
   'Obsidian Study','Dreaming Atrium','Frost Conservatory','Sunken Treasury','Twilight Court','Waning Sanctum',
   'Raven Belfry','Glass Labyrinth','Ivied Vestibule','Candlelit Refuge',
  ],random);
- const startingRooms = [
-  {playerId:'p1',position:roomsPerColor===1?{q:2,r:-1}:{q:3,r:-2}},
-  {playerId:'p2',position:roomsPerColor===1?{q:-2,r:1}:{q:-3,r:2}},
-  {playerId:'p3',position:roomsPerColor===1?{q:-1,r:-1}:{q:-1,r:-2}},
-  {playerId:'p4',position:roomsPerColor===1?{q:1,r:1}:{q:1,r:2}},
+ const startingPositions=[
+  roomsPerColor===1?{q:2,r:-1}:{q:3,r:-2},
+  roomsPerColor===1?{q:-2,r:1}:{q:-3,r:2},
+  roomsPerColor===1?{q:-1,r:-1}:{q:-1,r:-2},
+  roomsPerColor===1?{q:1,r:1}:{q:1,r:2},
  ];
+ const startingRooms=shuffle(['p1','p2','p3','p4'],random).map((playerId,index)=>({playerId,position:startingPositions[index]}));
  const tiles: Hex[] = [];
  for (let r=-2;r<=2;r++) for(let q=-2;q<=2;q++) {
   const distance=hexDistance({q,r},{q:0,r:0});
@@ -230,7 +235,7 @@ function createMage(board:Board,id:PlayerId):Player {
  const start=board.rooms.find(r=>r.startingFor===id)!;
  const names:Record<string,string>={p1:'Crimson Mage',p2:'Azure Mage',p3:'Amber Mage',p4:'Emerald Mage'};
  return {
-  id, name:names[id], connected: false, ready: false, startingSchoolId: null,
+  id, name:names[id], connected: false, ready: false, startingSchoolId: null, mageId:null,
   wizard: { id: `${id}-wizard`, playerId: id, health: 10, attack: 2, movement: 2, damageCubes: 0, blackDamage: 0, damageByPlayer: {}, damageOrder: [], position: {...start.tiles[0]}, startingRoomId: start.id, alive: true },
   personalDeck: [], hand: [], discard: [], prepared: emptyPrepared(),
   cubes: { available:25, onWizard:0, onBoard:0, onEvocations:0 }, actionTokens:PHYSICAL_TOKENS_PER_ROUND, victoryPoints:0,
@@ -238,23 +243,42 @@ function createMage(board:Board,id:PlayerId):Player {
  };
 }
 
-function hasStartingSchoolSupply(s:GameState):boolean {
- const required=new Map<string,number>();
- for(const p of s.players) {
-  if(p.startingSchoolId==null)continue;
-  if(!s.library.some(d=>d.id===p.startingSchoolId))return false;
-  required.set(p.startingSchoolId,(required.get(p.startingSchoolId)??0)+STARTING_SCHOOL_CARDS);
- }
- return [...required].every(([id,count])=>{
-  const deck=s.library.find(d=>d.id===id)!;
-  return deck.cards.length+deck.discard.length>=count;
- });
-}
-
 export function canStartGame(s:GameState):boolean {
  return s.phase==='LOBBY' && s.players.length>=MIN_MAGES && s.players.length<=MAX_MAGES
-  && s.players.every(p=>p.connected&&p.ready&&typeof p.startingSchoolId==='string'&&s.library.some(d=>d.id===p.startingSchoolId))
-  && hasStartingSchoolSupply(s);
+  && s.players.every(p=>p.connected&&p.ready);
+}
+
+function setupDrafter(s:GameState):Player|null {
+ const order=s.setupOrder??[];
+ const draftOrder=s.setupStage==='MAGE'?[...order].reverse():order;
+ for(const id of draftOrder) {
+  const player=s.players.find(p=>p.id===id);
+  if(player&&(s.setupStage==='SCHOOL'?player.startingSchoolId==null:player.mageId==null))return player;
+ }
+ return null;
+}
+
+function finishSetup(s:GameState) {
+ for(const mage of s.players) {
+  const grimoire=shuffle(mage.personalDeck,()=>resolutionRandom(s));
+  const top=grimoire.shift();
+  if(!top)throw new GameRuleError('Every mage needs a complete grimoire before the game begins');
+  mage.personalDeck=grimoire;
+  mage.discard.push(top);
+ }
+ s.setupStage=null;
+ startBlackRose(s);
+}
+
+function mageSpellCopies(mageId:MageDraftId):Card[] {
+ const data:Record<MageDraftId,{name:string;range:number;target:Card['target'];moments:Moment[]}>={
+  tizio:{name:'Tizio’s Quick Strike',range:1,target:'MODEL',moments:[{effect:'DAMAGE',amount:2}]},
+  caio:{name:'Caio’s Arcane Bolt',range:2,target:'MODEL',moments:[{effect:'DAMAGE',amount:1}]},
+  sempronio:{name:'Sempronio’s Ward',range:0,target:'SELF',moments:[{effect:'HEAL',amount:1}]},
+  tiriki:{name:'Tiriki’s Spark',range:1,target:'ROOM',moments:[{effect:'DAMAGE',amount:1},{effect:'INSTABILITY',amount:1}]},
+ };
+ const spell=data[mageId];
+ return Array.from({length:MAGE_SPELL_COPIES},(_,index)=>({id:`mage-${mageId}-${index+1}`,schoolId:`mage-${mageId}`,name:spell.name,kind:'SPELL' as const,spellType:'COMBAT' as const,range:spell.range,target:spell.target,moments:spell.moments}));
 }
 
 export function addPlayerToLobby(state:GameState):GameState {
@@ -272,11 +296,11 @@ export function createGame(playerCount=2): GameState {
  const players=['p1','p2','p3','p4'].slice(0,playerCount).map(id=>createMage(board,id));
  return {
   gameId:crypto.randomUUID(), hostId:'p1', round:0, phase:'LOBBY', players, board, library:createLibrary(),
-  blackRose:{victoryPoints:0,kills:0}, firstPlayerId:null, endgameScored:false,
+  blackRose:{victoryPoints:0,kills:0}, firstPlayerId:null, endgameScored:false, moon:1, moonEvents:[],
   eventDeck:createEvents(), eventDiscard:[], questDeck:createQuests(), questDiscard:[],
   powerfulDeck:createPowerfulDeck(), removedCards:[], readiedSpells:[], ongoingSpells:[], activeSpellOrder:[],
   evocations:[], evocationActivation:null, feedbackEvents:[],
-  currentPlayerId:null, activation:null, winner:null, log:['Room created. Join, choose a starting school, and mark yourself ready.'], usedEvent:null, blackRoseResolved:false, eventBoard:Array.from({length:EVENT_BOARD_SIZE},()=>null),
+  currentPlayerId:null, activation:null, winner:null, log:['Room created. Join the room and mark yourself ready; the game begins with a school and mage draft.'], usedEvent:null, blackRoseResolved:false, eventBoard:Array.from({length:EVENT_BOARD_SIZE},()=>null),
  };
 }
 
@@ -302,7 +326,12 @@ export function getContributionAwards(cubes:Record<PlayerId,number>,rewards:read
 
 function awardVictoryPoints(s:GameState,id:PlayerId,points:number):string {
  // General rule: victory points never go below zero.
- if(id===BLACK_ROSE_ID){s.blackRose.victoryPoints=Math.max(0,s.blackRose.victoryPoints+points);return 'BR';}
+ const previousLeader=Math.max(s.blackRose.victoryPoints,...s.players.map(player=>player.victoryPoints));
+ if(id===BLACK_ROSE_ID){
+  s.blackRose.victoryPoints=Math.max(0,s.blackRose.victoryPoints+points);
+  advanceMoon(s,previousLeader);
+  return 'BR';
+ }
  const p=getPlayer(s,id);
  const before=p.victoryPoints; p.victoryPoints=Math.max(0,p.victoryPoints+points);
  if(p.victoryPoints!==before) {
@@ -310,7 +339,28 @@ function awardVictoryPoints(s:GameState,id:PlayerId,points:number):string {
   if(ref) modelEvent(s,'VP_CHANGED',ref,ref,roomAt(s,p.wizard.position)?.id);
   s.log.push(`${p.name} ${p.victoryPoints>=before?`gains`:`loses`} ${Math.abs(p.victoryPoints-before)} VP (${before} → ${p.victoryPoints}).`);
  }
+ advanceMoon(s,previousLeader);
  return p.name;
+}
+
+function advanceMoon(s:GameState,previousLeader:number) {
+ const stage=s.moon??(previousLeader>=15?3:previousLeader>=5?2:1);
+ s.moon=stage;
+ const leader=Math.max(s.blackRose.victoryPoints,...s.players.map(player=>player.victoryPoints));
+ while(s.moon<3&&leader>=(s.moon===1?5:15)) {
+  const nextMoon=(s.moon+1) as 2|3;
+  s.moon=nextMoon;
+  for(const player of s.players) {
+   if(!player.mageId)continue;
+   player.mageSpellSupply??=mageSpellCopies(player.mageId).slice(1);
+   const cardId=`mage-${player.mageId}-${nextMoon}`;
+   const index=player.mageSpellSupply.findIndex(card=>card.id===cardId);
+   if(index<0)continue;
+   player.hand.push(player.mageSpellSupply.splice(index,1)[0]);
+  }
+  (s.moonEvents??=[]).push(nextMoon);
+  s.log.push(`Entering ${nextMoon===2?'second':'third'} moon: every mage gains their next signature spell.`);
+ }
 }
 
 function completeQuest(s: GameState, p: Player, kind: NonNullable<Player['quest']>['kind'], amount=1) {
@@ -2184,15 +2234,36 @@ function runAction(state: GameState, action: GameAction, answers: DecisionAnswer
  const p=getPlayer(s,action.playerId);
  switch(action.type) {
   case 'UNDO_ACTION': case 'REDO_ACTION': throw new GameRuleError('History commands must be intercepted by the server; the engine does not process undo/redo');
-  case 'SELECT_STARTING_SCHOOL':
-   requirePhase(s,'LOBBY');assert(p.connected,'Join the room first');
-   assert(typeof action.schoolId==='string' && s.library.some(d=>d.id===action.schoolId),'School not found');
-   if(p.startingSchoolId!==action.schoolId) {p.startingSchoolId=action.schoolId;p.ready=false;}
-   assert(hasStartingSchoolSupply(s),`Not enough school supply for ${STARTING_SCHOOL_CARDS} starting spells per mage`);
+  case 'DRAFT_SCHOOL': {
+   requirePhase(s,'SETUP');assert(s.setupStage==='SCHOOL','The school draft is complete');
+   assert(p.connected,'Join the room first');
+   assert(setupDrafter(s)?.id===p.id,'Wait for your turn to draft a school');
+   assert(typeof action.schoolId==='string'&&s.library.some(d=>d.id===action.schoolId),'School not found');
+   assert(!s.players.some(mage=>mage.startingSchoolId===action.schoolId),'That school has already been drafted');
+   const deck=s.library.find(d=>d.id===action.schoolId)!;
+   assert(deck.cards.length+deck.discard.length>=STARTING_SCHOOL_CARDS,'Not enough cards remain in that school');
+   deck.cards=shuffle(deck.cards,()=>resolutionRandom(s));
+   p.startingSchoolId=action.schoolId;
+   for(let i=0;i<STARTING_SCHOOL_CARDS;i++)p.personalDeck.push(drawOne(s,deck.cards,deck.discard));
+   if(s.players.every(mage=>mage.startingSchoolId))s.setupStage='MAGE';
    break;
+  }
+  case 'DRAFT_MAGE': {
+   requirePhase(s,'SETUP');assert(s.setupStage==='MAGE','The mage draft is not active');
+   assert(p.connected,'Join the room first');
+   assert(setupDrafter(s)?.id===p.id,'Wait for your turn to draft a mage');
+   assert(MAGE_DRAFT_POOL.some(mage=>mage.id===action.mageId),'Mage not found');
+   assert(!s.players.some(mage=>mage.mageId===action.mageId),'That mage has already been drafted');
+   p.mageId=action.mageId;
+   const spells=mageSpellCopies(action.mageId);
+   p.personalDeck.push(spells[0]);
+   p.mageSpellSupply=spells.slice(1);
+   p.wizard.health=10;p.wizard.attack=2;p.wizard.movement=2;
+   if(s.players.every(mage=>mage.mageId))finishSetup(s);
+   break;
+  }
   case 'SET_READY':
    requirePhase(s,'LOBBY');assert(p.connected,'Join the room first');
-   if(action.ready)assert(typeof p.startingSchoolId==='string' && s.library.some(d=>d.id===p.startingSchoolId),'Choose a valid starting school before becoming ready');
    p.ready=action.ready;break;
   case 'SET_ROOM_COUNT': {
    requirePhase(s,'LOBBY');assert(p.id===s.hostId,'Only the creator can configure rooms');assert(p.connected,'Join the room first');
@@ -2206,22 +2277,18 @@ function runAction(state: GameState, action: GameAction, answers: DecisionAnswer
   }
   case 'START_GAME':
    requirePhase(s,'LOBBY'); assert(p.id===s.hostId,'Only the creator can start');
-   assert(canStartGame(s),'At least 2 mages must join and everyone must be ready with a valid starting school and enough school supply');
+   assert(canStartGame(s),'At least 2 mages must join and everyone must be ready');
     s.board=createDemoBoard(s.roomsPerColor??getDefaultRoomsPerColor(s.players.length),()=>resolutionRandom(s));
     for(const mage of s.players) {
      const start=s.board.rooms.find(r=>r.startingFor===mage.id)!;
      mage.wizard.startingRoomId=start.id;mage.wizard.position={...start.tiles[0]};
     }
-   for(const mage of s.players) {
-    const deck=s.library.find(d=>d.id===mage.startingSchoolId)!;
-    // These seven physical school cards are the entire starting grimoire.
-    // Keep the last card in personal discard; normal Study draws fill the hand.
-    for(let i=0;i<STARTING_SCHOOL_CARDS;i++) {
-    const card=drawOne(s,deck.cards,deck.discard);
-     (i===STARTING_SCHOOL_CARDS-1?mage.discard:mage.personalDeck).push(card);
-    }
-   }
-   s.firstPlayerId=s.players[0].id;startBlackRose(s);break;
+   s.phase='SETUP';
+   s.setupOrder=shuffle(s.players.map(mage=>mage.id),()=>resolutionRandom(s));
+   s.setupStage='SCHOOL';
+   s.firstPlayerId=s.setupOrder[0];
+   s.log.push(`${s.players.find(mage=>mage.id===s.firstPlayerId)!.name} is first. School draft begins.`);
+   break;
   case 'ADVANCE_PHASE':
    assert(p.id===s.hostId,'Only the creator can continue the phase');
     assert(action.expectedPhase===s.phase && action.expectedRound===s.round,'Stale phase command; wait for the current phase');

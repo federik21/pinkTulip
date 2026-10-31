@@ -1,7 +1,7 @@
 import {
  applyAction, areAdjacent, areInSameRoom, canStartGame, canUseSpellDummy,
  GameRuleError, getDiscardMoveCards, getEffectiveSpell, getEvocationSupply, getQuestRewardTargets, getSpellType,
- hexDistance, hexKey, isInStartingRoom, isWithinSpellRange, STARTING_SCHOOL_CARDS,
+ hexDistance, hexKey, isInStartingRoom, isWithinSpellRange, MAGE_DRAFT_POOL,
 } from '@brw/game-engine';
 import type { Card, FeedbackTarget, GameAction, GameState, Hex, Moment, Player, Room } from '@brw/game-engine';
 
@@ -271,22 +271,26 @@ function* candidates(s: GameState): Generator<GameAction> {
   return;
  }
  if (s.phase === 'LOBBY') {
-  for (const p of s.players.filter(bot)) {
-   if (!p.startingSchoolId) {
-    const options = [...s.library]
-     .map(deck => ({ deck, reserved: s.players.filter(other => other.id !== p.id && other.startingSchoolId === deck.id).length * STARTING_SCHOOL_CARDS }))
-     .filter(({ deck, reserved }) => deck.cards.length + deck.discard.length >= reserved + STARTING_SCHOOL_CARDS)
-     .map(({ deck }) => deck.id);
-    if (options.length) {
-     const schoolId = options[Math.floor(Math.random() * options.length)];
-     yield { type: 'SELECT_STARTING_SCHOOL', playerId: p.id, schoolId };
-    }
-   } else if (!p.ready) yield { type: 'SET_READY', playerId: p.id, ready: true };
-  }
+  for (const p of s.players.filter(bot))if(!p.ready)yield {type:'SET_READY',playerId:p.id,ready:true};
   // Normal transport history auto-starts on the last SET_READY. This fallback is
   // only for direct engine callers / an already-ready lobby with a BOT host.
   const host = s.players.find(p => p.id === s.hostId);
   if (host && bot(host) && canStartGame(s)) yield { type: 'START_GAME', playerId: host.id };
+  return;
+ }
+ if(s.phase==='SETUP') {
+  const order=s.setupOrder??[];
+  const draftOrder=s.setupStage==='MAGE'?[...order].reverse():order;
+  const drafter=draftOrder.map(id=>s.players.find(p=>p.id===id)).find(p=>p&&(s.setupStage==='SCHOOL'?p.startingSchoolId==null:p.mageId==null));
+  if(drafter&&bot(drafter)) {
+   if(s.setupStage==='SCHOOL') {
+    const options=s.library.filter(deck=>!s.players.some(p=>p.startingSchoolId===deck.id)&&deck.cards.length+deck.discard.length>=6);
+    if(options.length)yield {type:'DRAFT_SCHOOL',playerId:drafter.id,schoolId:options[Math.floor(Math.random()*options.length)].id};
+   } else if(s.setupStage==='MAGE') {
+    const options=MAGE_DRAFT_POOL.filter(mage=>!s.players.some(p=>p.mageId===mage.id));
+    if(options.length)yield {type:'DRAFT_MAGE',playerId:drafter.id,mageId:options[Math.floor(Math.random()*options.length)].id};
+   }
+  }
   return;
  }
  if (s.phase === 'BLACK_ROSE' && s.evocationActivation?.tendon) {

@@ -112,24 +112,24 @@ describe('bot ownership and phase policy', () => {
 });
 
 describe('blind setup and preparation', () => {
- it('supports direct engine startup only for an all-ready bot host', () => {
+ it('starts the randomized setup only after every bot is ready', () => {
   let s = lobby();
-  for (let i = 0; i < 4; i++) s = step(s);
+  for(const p of s.players)p.ready=true;
   expect(next(s)).toEqual({ type: 'START_GAME', playerId: 'p1' });
-  setBot(s.players[0], false); expect(chooseBotAction(s)).toBeNull();
+  s=applyAction(s,{type:'START_GAME',playerId:'p1'});
+  expect(next(s).type).toBe('DRAFT_SCHOOL');
+  setBot(s.players[0], false); setBot(s.players[1], false);
+  expect(chooseBotAction(s)).toBeNull();
  });
- it('picks a random valid starting school when the bot must choose', () => {
+ it('marks a bot ready in the lobby and picks a valid school during setup', () => {
   const s = lobby(2, ['p2']);
-  const validSchools = [...s.library].map(deck => deck.id).sort();
   const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0.99);
 
-  const action = chooseBotAction(s);
-
-  expect(action).toMatchObject({
-   type: 'SELECT_STARTING_SCHOOL',
-   playerId: 'p2',
-  });
-  expect(validSchools).toContain(action!.schoolId);
+  expect(chooseBotAction(s)).toEqual({type:'SET_READY',playerId:'p2',ready:true});
+  s.phase='SETUP';s.setupOrder=['p2','p1'];s.setupStage='SCHOOL';
+  const action=chooseBotAction(s);
+  expect(action).toMatchObject({type:'DRAFT_SCHOOL',playerId:'p2'});
+  if(action?.type==='DRAFT_SCHOOL')expect(s.library.map(deck=>deck.id)).toContain(action.schoolId);
   expect(randomSpy).toHaveBeenCalled();
  });
  it('last bot discard/preparation automatically synchronizes a human who already finished', () => {

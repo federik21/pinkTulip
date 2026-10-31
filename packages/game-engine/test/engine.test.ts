@@ -1,28 +1,27 @@
 import { moment, momentTotal } from '../src/cards';
 import { describe, expect, it, vi } from 'vitest';
-import { applyAction, createGame, GameState, Card, Quest, RoomEffect, ROOM_COLORS, hexDistance } from '../src';
+import { applyAction, createGame, GameState, Card, Quest, RoomEffect, ROOM_COLORS, hexDistance, MAGE_DRAFT_POOL } from '../src';
 
 const advance=(g:GameState)=>applyAction(g,{type:'ADVANCE_PHASE',playerId:'p1',expectedPhase:g.phase,expectedRound:g.round});
 
-function readyGame(count=2,schoolId='cantrip') {
+function readyGame(count=2) {
  let g=createGame(count);
  for(const p of g.players) p.connected=true;
  // Legacy movement/effect fixtures deliberately use the full board; default sizing has dedicated tests.
  g=applyAction(g,{type:'SET_ROOM_COUNT',playerId:'p1',roomsPerColor:3});
- for(const p of g.players) {
-  g=applyAction(g,{type:'SELECT_STARTING_SCHOOL',playerId:p.id,schoolId});
-  g=applyAction(g,{type:'SET_READY',playerId:p.id,ready:true});
- }
+ for(const p of g.players)g=applyAction(g,{type:'SET_READY',playerId:p.id,ready:true});
  expect(g.phase).toBe('LOBBY');expect(g.round).toBe(0); // Only the server auto-starts after readiness.
  return g;
 }
-function studyGame(count=2,schoolId='cantrip') {
- let g=readyGame(count,schoolId); g=applyAction(g,{type:'START_GAME',playerId:'p1'});
+function studyGame(count=2) {
+ let g=applyAction(readyGame(count),{type:'START_GAME',playerId:'p1'});
+ for(const [index,id] of g.setupOrder!.entries())g=applyAction(g,{type:'DRAFT_SCHOOL',playerId:id,schoolId:g.library[index].id});
+ for(const [index,id] of [...g.setupOrder!].reverse().entries())g=applyAction(g,{type:'DRAFT_MAGE',playerId:id,mageId:MAGE_DRAFT_POOL[index].id});
  return advance(g);
 }
 function actionGame(g=studyGame(),p1Cards?:string[]) {
  for(const id of ['p1','p2']) {
-  g=applyAction(g,{type:'DRAW_STUDY',playerId:id,deckId:'cantrip'});
+  g=applyAction(g,{type:'DRAW_STUDY',playerId:id,deckId:g.library[0].id});
   g=applyAction(g,{type:'DISCARD_STUDY',playerId:id,cardIds:g.players.find(p=>p.id===id)!.studyCardIds!.filter(cardId=>id!=='p1'||!p1Cards?.includes(cardId)).slice(0,2)});
  }
  for(const id of ['p1','p2']) {
@@ -93,18 +92,19 @@ const physicalCards=(g:GameState)=>[...g.powerfulDeck,...g.removedCards,...g.lib
 function expectConserved(g:GameState,ids:string[]) {
  const cards=physicalCards(g);expect(cards).toHaveLength(120);expect(new Set(cards.map(c=>c.id)).size).toBe(cards.length);
  expect(cards.filter(c=>!c.powerful)).toHaveLength(108);expect(cards.filter(c=>c.powerful)).toHaveLength(12);
- for(const schoolId of ['cantrip','transmutation','enchantment'])expect(cards.filter(c=>c.schoolId===schoolId)).toHaveLength(36);
+ for(const schoolId of g.library.map(deck=>deck.id))expect(cards.filter(c=>c.schoolId===schoolId)).toHaveLength(36);
  expect(cards.map(c=>c.id).sort()).toEqual([...ids].sort());
 }
 
 describe('lobby and decks',()=>{
- it('places four protected starting rooms at the requested coordinates around 19 playable rooms',()=>{
+ it('randomly assigns protected starting rooms around 19 playable rooms',()=>{
   const g=createGame();const starts=g.board.rooms.filter(r=>r.startingFor);
   expect(starts.map(r=>r.tiles[0])).toEqual(expect.arrayContaining([{q:-1,r:-2},{q:3,r:-2},{q:-3,r:2},{q:1,r:2}]));
   expect(starts).toHaveLength(4);expect(g.board.rooms.filter(r=>!r.startingFor)).toHaveLength(19);
   expect(g.board.tiles).toHaveLength(23);expect(new Set(g.board.tiles.map(h=>`${h.q},${h.r}`)).size).toBe(23);
   expect(g.board.tiles).not.toContainEqual({q:-2,r:3});
-  expect(g.players.map(p=>p.wizard.position)).toEqual([{q:3,r:-2},{q:-3,r:2}]);
+  expect(new Set(g.players.map(p=>p.wizard.startingRoomId)).size).toBe(g.players.length);
+  for(const p of g.players)expect(g.board.rooms.find(room=>room.startingFor===p.id)?.tiles[0]).toEqual(p.wizard.position);
   expect(starts.every(r=>r.color===null && r.effect===null)).toBe(true);
   for(const start of starts)expect(g.board.rooms.some(r=>!r.startingFor && hexDistance(start.tiles[0],r.tiles[0])===1)).toBe(true);
  });

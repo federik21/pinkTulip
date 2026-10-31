@@ -253,20 +253,23 @@ describe('turn ownership, branching, validation and phase barriers', () => {
   reject(history, game, redo, /No action available/);
  });
 
- it.each(['SELECT_STARTING_SCHOOL', 'SET_ROOM_COUNT', 'SET_READY', 'DRAW_STUDY', 'DISCARD_STUDY', 'DISCARD_HAND_LIMIT', 'PREPARE_CARDS', 'DISCARD_QUESTS', 'ADVANCE_PHASE'] as const)(
+ it.each(['DRAFT_SCHOOL', 'DRAFT_MAGE', 'SET_ROOM_COUNT', 'SET_READY', 'DRAW_STUDY', 'DISCARD_STUDY', 'DISCARD_HAND_LIMIT', 'PREPARE_CARDS', 'DISCARD_QUESTS', 'ADVANCE_PHASE'] as const)(
   'treats successful %s as a barrier even without a phase change', type => {
    const history = new ActionHistory(); let initial = fixture();
    if (type === 'SET_READY') {
     initial.phase = 'LOBBY';
-    initial = apply(history, initial, { type:'SELECT_STARTING_SCHOOL', playerId:'p1', schoolId:initial.library[0].id });
     initial.phase = 'ACTION';
    }
    let game = apply(history, initial, begin);
    expect(available(history, game).canUndo).toBe(true);
    let action: GameAction;
    switch (type) {
-    case 'SELECT_STARTING_SCHOOL':
-     game.phase = 'LOBBY'; action = { type, playerId:'p1', schoolId:game.library[0].id }; break;
+    case 'DRAFT_SCHOOL':
+     game.phase = 'SETUP'; game.setupStage = 'SCHOOL'; game.setupOrder = ['p1','p2'];
+     action = { type, playerId:'p1', schoolId:game.library[0].id }; break;
+    case 'DRAFT_MAGE':
+     game.phase = 'SETUP'; game.setupStage = 'MAGE'; game.setupOrder = ['p2','p1'];
+     action = { type, playerId:'p1', mageId:'tizio' }; break;
     case 'SET_ROOM_COUNT':
      game.phase = 'LOBBY'; action = { type, playerId:'p1', roomsPerColor:2 }; break;
     case 'SET_READY':
@@ -400,8 +403,9 @@ describe('public projection and private storage', () => {
   game.players[1].hand.push(game.players[1].personalDeck.shift()!);
   game.players[0].quest = game.questDeck.shift()!;
   game.players[1].quest = game.questDeck.shift()!;
+  game.players[1].mageSpellSupply = [{ ...game.library[0].cards[0], id:'hidden-mage-supply-card' }];
   const hiddenIds = [...game.eventDeck, ...game.questDeck, ...game.powerfulDeck,
-   ...game.library.flatMap(d => d.cards), ...game.players.flatMap(p => p.personalDeck)].map(c => c.id);
+   ...game.library.flatMap(d => d.cards), ...game.players.flatMap(p => [...p.personalDeck, ...(p.mageSpellSupply??[])])].map(c => c.id);
   game = apply(history, game, cast); game = apply(history, game, command('END_ACTIVATION'));
   const authoritative = structuredClone(game);
   const payload = publicState(game, 'p1', history);
@@ -410,8 +414,9 @@ describe('public projection and private storage', () => {
   expect(publicState(game, null, history).history).toEqual({ canUndo:false, canRedo:false });
   const json = JSON.stringify({ type:'STATE', state:payload });
   for (const id of hiddenIds) expect(json).not.toContain(`"${id}"`);
-  expect(json).not.toContain(game.players[1].hand[0].id);
-  expect(json).not.toContain(game.players[1].quest!.id);
+  expect(json).not.toContain('"hidden-mage-supply-card"');
+  expect(json).not.toContain(`"${game.players[1].hand[0].id}"`);
+  expect(json).not.toContain(`"${game.players[1].quest!.id}"`);
   expect(Object.keys(payload).sort()).toEqual([...Object.keys(game), 'history'].sort());
   expect(Object.keys(payload.history!).sort()).toEqual(['canRedo', 'canUndo', 'undoLabel']);
   for (const key of ['before', 'after', 'snapshots', 'undoStack', 'redoStack', 'owner']) expect(json).not.toContain(`"${key}":`);

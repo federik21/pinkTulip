@@ -16,6 +16,7 @@ import { SpellTypeIcon } from './SpellTypeIcon';
 import { SpellDescription } from './SpellDescription';
 import { SchoolIcon } from './SchoolIcon';
 import { LobbyPanel } from './LobbyPanel';
+import { SetupPanel } from './SetupPanel';
 import { InfoPopup } from './InfoPopup';
 import { SoulTithePrompt } from './SoulTithePrompt';
 import { ChoicePrompt, isRoomChoice } from './ChoicePrompt';
@@ -31,7 +32,8 @@ import './event-board.css';
 
 const WS_URL=import.meta.env.VITE_WS_URL??`${location.protocol==='https:'?'wss':'ws'}://${location.hostname}:8080`;
 const phaseInfo={
- LOBBY:['✦','Gather the mages','2–4 mages. Choose a school: start with 6 cards in your personal deck, 1 in personal discard, and an empty hand.'],
+ LOBBY:['✦','Gather the mages','2–4 mages. Once everyone is ready, randomize starting player and rooms, then draft schools and mages.'],
+ SETUP:['✧','Draft schools and mages','Draft a school in starting-player order, then draft a mage in reverse order. Add 6 school cards and the mage’s signature spell to your grimoire. Shuffle it and discard the top card.'],
  BLACK_ROSE:['✺','BR','An event reshapes the lodge. Personal quests follow.'],
  STUDY:['▤','Study','Draw 2 personal spells, then 4 from any mix of schools. Discard 2 of those 4 library cards only.'],
  PREPARATION:['✧','Preparation','Choose a card, then tap its numbered or Quick slot. Place at least 2 spells, then tap Done.'],
@@ -130,7 +132,7 @@ function App() {
  const [roomId,setRoomId]=useState('demo'),[playerName,setPlayerName]=useState(randomName),[roomPassword,setRoomPassword]=useState('');
  const [roomList,setRoomList]=useState<Array<{id:string;players:number;status:string;mages?:string[];passwordProtected?:boolean}>>([]);
  const [canSave,setCanSave]=useState(false);
- const [overlay,setOverlay]=useState<GameState['phase']|null>(null),[toast,setToast]=useState('');
+ const [overlay,setOverlay]=useState<GameState['phase']|null>(null),[moonOverlay,setMoonOverlay]=useState<2|3|null>(null),[toast,setToast]=useState('');
  const [selectedSlot,setSelectedSlot]=useState<Slot|null>(null),[selectedRoom,setSelectedRoom]=useState<string|null>(null);
  const [selectedModelId,setSelectedModelId]=useState('');
  const [dummy,setDummy]=useState(false),[exitCardId,setExitCardId]=useState('');
@@ -146,6 +148,7 @@ function App() {
  const playedCardCursor=useRef<{gameId:string;seen:Set<string>}|null>(null);
  const [momentToast,setMomentToast]=useState('');
  const momentQueue=useRef<string[]>([]),momentSeen=useRef<{gameId:string;len:number}|null>(null),momentBusy=useRef(false);
+ const moonQueue=useRef<Array<2|3>>([]),moonEventCursor=useRef<{gameId:string;seen:number}|null>(null);
  const [effectTargetId,setEffectTargetId]=useState('');
  const [pickingEmerald,setPickingEmerald]=useState(false);
  const [choicePick,setChoicePick]=useState<{key:string;roomId:string}|null>(null);
@@ -206,6 +209,27 @@ function App() {
   if(!phase||phase==='LOBBY')return;
   setOverlay(phase);const timer=window.setTimeout(()=>setOverlay(null),2400);return()=>window.clearTimeout(timer);
  },[phase,round]);
+ useEffect(()=>{
+  if(!game)return;
+  const events=game.moonEvents??[];
+  const cursor=moonEventCursor.current;
+  if(!cursor||cursor.gameId!==game.gameId) {
+   moonEventCursor.current={gameId:game.gameId,seen:events.length};
+   moonQueue.current=[];
+   setMoonOverlay(null);
+   return;
+  }
+  if(events.length<cursor.seen)cursor.seen=events.length;
+  if(events.length===cursor.seen)return;
+  moonQueue.current.push(...events.slice(cursor.seen));
+  cursor.seen=events.length;
+  if(moonOverlay===null&&moonQueue.current.length)setMoonOverlay(moonQueue.current.shift()!);
+ },[game,moonOverlay]);
+ useEffect(()=>{
+  if(moonOverlay===null)return;
+  const timer=window.setTimeout(()=>setMoonOverlay(moonQueue.current.shift()??null),2400);
+  return()=>window.clearTimeout(timer);
+ },[moonOverlay]);
  const pendingChoiceKey=game?.pendingDecision?.kind==='CHOICE'?game.pendingDecision.key:'';
  useEffect(()=>{if(pendingChoiceKey)setQuickControls(false);},[pendingChoiceKey]);
  const myActivation=game?.activation?.playerId===playerId;
@@ -375,7 +399,7 @@ function App() {
     {powerfulCards.length>0&&<section className="powerful-panel"><span className="eyebrow">The central chamber's gift · saved in hand</span><h2>Forgotten spells</h2><p>Prepare in a later round; never cast directly from hand. Casting permanently removes the card. Unused prepared forgotten spells return to hand next round.</p><div className="cards">{powerfulCards.map(card=><SpellCard key={card.id} card={card} label="✺ Prepare in a later round" disabled/>)}</div><p className="hint">Supply: {game.powerfulDeck.length} remaining · {game.removedCards.length} permanently removed</p></section>}
  </>;
  return <div className="app"><header><a className="brand" href="/">✺ <span>BRW BATTLES <small>ONLINE LODGE</small></span></a><div className="header-meta">{canSave&&game.phase!=='LOBBY'&&game.phase!=='GAME_OVER'&&<button type="button" className="info-button" onClick={()=>wsRef.current?.send(JSON.stringify({type:'SAVE_SESSION'}))}>Save session</button>}<button type="button" className="info-button" aria-pressed={slowAi} title="Pace AI turns so each move is shown as a toast" onClick={()=>setSlowAi(v=>!v)}>Slow AI: {slowAi?'on':'off'}</button><button type="button" className="info-button" onClick={()=>setInfoPopup('reference')}>Quick reference</button><span className="badge">{roomId}</span><span>Round {game.round}</span><span className={connected?'online':'error'}>{connected?'● Live':'○ Offline'}</span></div></header>
-  <nav className="phase-track">{(['BLACK_ROSE','STUDY','PREPARATION','ACTION','EVOCATION','CLEANUP'] as const).map((phase,i)=><div key={phase} className={game.phase===phase?'current':''}><small>0{i+1}</small><span>{phaseInfo[phase][1]}</span></div>)}</nav>
+  <nav className="phase-track">{(['SETUP','BLACK_ROSE','STUDY','PREPARATION','ACTION','EVOCATION','CLEANUP'] as const).map((phase,i)=><div key={phase} className={game.phase===phase?'current':''}><small>0{i+1}</small><span>{phaseInfo[phase][1]}</span></div>)}</nav>
   {actingPlayer&&<div className="turn-banner" style={mageStyle(actingPlayer.id)}><span className="acting-mage-icon" aria-hidden="true">{emoji[actingPlayer.id]}</span><div className="turn-banner-text" role="status" aria-live="polite"><span className="eyebrow">{actingPlayer.id===me.id?'Your turn':'Mage acting'}</span><strong>{actingPlayer.name}</strong><small>{game.evocationActivation?'Controlling an evocation':game.phase==='EVOCATION'?'Choosing an evocation':'Taking an Action turn'}</small></div>
   {(showHistory||myTurn)&&<div className="turn-banner-controls">
     {myTurn&&active?.physicalAction&&<PhysicalBannerActions game={game} me={me} pending={pending} effectTargetId={effectTargetId} beginRoomPick={beginRoomPick} send={send}/>}
@@ -387,7 +411,8 @@ function App() {
     {pickBar}
   </div>}
   {!actingPlayer&&pickBar&&<div className="turn-banner">{pickBar}</div>}
-  {overlay&&<div className="phase-overlay" role="status" onClick={()=>setOverlay(null)}><span>{phaseInfo[overlay][0]}</span><small>ROUND {game.round}</small><h1>{phaseInfo[overlay][1]}</h1><p>{phaseInfo[overlay][2]}</p><small>Click to continue</small></div>}
+  {moonOverlay!==null&&<div className="phase-overlay" role="dialog" aria-modal="true" aria-label={`Entering ${moonOverlay===2?'second':'third'} moon`} onClick={()=>setMoonOverlay(moonQueue.current.shift()??null)}><h1>Entering {moonOverlay===2?'second':'third'} moon</h1><small>Click to continue</small></div>}
+  {moonOverlay===null&&overlay&&<div className="phase-overlay" role="status" onClick={()=>setOverlay(null)}><span>{phaseInfo[overlay][0]}</span><small>ROUND {game.round}</small><h1>{phaseInfo[overlay][1]}</h1><p>{phaseInfo[overlay][2]}</p><small>Click to continue</small></div>}
   {toast&&!momentToast&&<div className="toast" role="status" onClick={dismissToasts}>{toast}</div>}
   {momentToast&&<div className="toast moment-toast" role="status" aria-live="polite" onClick={dismissToasts}>{momentToast}</div>}
   <CombatFeedback game={game} feedback={feedback}/>
@@ -400,6 +425,7 @@ function App() {
     {error&&<div className="error notice" role="alert">{error}</div>}
     {paused&&<div className="notice">Game paused. Waiting for the disconnected mage to rejoin room <b>{roomId}</b>.</div>}
     {game.phase==='LOBBY'&&<LobbyPanel game={game} me={me} connected={connected} pending={pending} send={send}/>}
+    {game.phase==='SETUP'&&<SetupPanel game={game} me={me} connected={connected} pending={pending} send={send}/>}
     {game.phase==='BLACK_ROSE'&&<section className="phase-panel event-panel"><span className="eyebrow">Event revealed · Round {game.round}</span><h2>✺ {game.usedEvent?.name}</h2><p>{game.usedEvent?.description}</p><div className="notice">{game.usedEvent?.kind==='ONGOING'?`Ongoing event: enters the event board, BR gains ${game.usedEvent.ongoing?.entryPoints??0} VP now and ${game.usedEvent.ongoing?.exitPoints??0} VP when it shifts out.`:game.usedEvent?.kind==='BLACK_DAMAGE'?`${game.usedEvent.amount} black damage to every mage.`:`${game.usedEvent?.amount} neutral instability in ${game.usedEvent?.rooms} random unfinished rooms.`} See the log for resolved effects.</div><p className="hint">At the end of BR, discard excess quests to meet your limit of {me.questLimit}. Study and its 2 grimoire draws wait until all mages meet their limits.</p>{game.blackRoseResolved?<fieldset disabled={!enabled||pending}><QuestLimitPanel key={`quests-${game.round}`} me={me} send={send}/></fieldset>:isHost?<button className="primary" disabled={!enabled||pending} onClick={continuePhase}>Receive quests & begin Study →</button>:<p className="waiting">Waiting for the creator to begin Study…</p>}</section>}
     {game.phase==='STUDY'&&<fieldset disabled={!enabled||pending}><StudyPanel key={`study-${game.round}`} game={game} me={me} send={send}/></fieldset>}
     {game.phase==='PREPARATION'&&<fieldset disabled={!enabled||pending}><PreparationPanel key={`prep-${game.round}`} me={me} send={send}/></fieldset>}

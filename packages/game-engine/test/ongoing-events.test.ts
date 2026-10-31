@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyAction, createEvents, createGame, EVENT_BOARD_SIZE, EventCard, GameState } from '../src';
+import { applyAction, createEvents, createGame, EVENT_BOARD_SIZE, EventCard, GameState, MAGE_DRAFT_POOL } from '../src';
 
 const ongoing = (id: string, entryPoints: number, exitPoints: number): EventCard =>
  ({ id, name: id, description: id, kind: 'ONGOING', amount: 0, rooms: 0, ongoing: { entryPoints, exitPoints } });
@@ -8,12 +8,12 @@ const quiet = (id: string): EventCard => ({ id, name: id, description: id, kind:
 function started(deck: EventCard[]) {
  let g = createGame(2);
  for (const p of g.players) p.connected = true;
- for (const p of g.players) {
-  g = applyAction(g, { type: 'SELECT_STARTING_SCHOOL', playerId: p.id, schoolId: g.library[0].id });
-  g = applyAction(g, { type: 'SET_READY', playerId: p.id, ready: true });
- }
+ for (const p of g.players)g=applyAction(g,{type:'SET_READY',playerId:p.id,ready:true});
  g.eventDeck = deck;
- return applyAction(g, { type: 'START_GAME', playerId: 'p1' });
+ g=applyAction(g,{type:'START_GAME',playerId:'p1'});
+ for(const [index,id] of g.setupOrder!.entries())g=applyAction(g,{type:'DRAFT_SCHOOL',playerId:id,schoolId:g.library[index].id});
+ for(const [index,id] of [...g.setupOrder!].reverse().entries())g=applyAction(g,{type:'DRAFT_MAGE',playerId:id,mageId:MAGE_DRAFT_POOL[index].id});
+ return g;
 }
 // Fixture: jump to Cleanup of an early round, then begin the next BR for real.
 function nextRound(g: GameState, deck?: EventCard[]) {

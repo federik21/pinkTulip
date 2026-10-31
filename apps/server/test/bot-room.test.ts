@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { applyAction, createGame, GameRuleError, summonEvocation } from '@brw/game-engine';
+import { applyAction, createGame, GameRuleError, summonEvocation, MAGE_DRAFT_POOL } from '@brw/game-engine';
 import type { Card, GameAction, GameState } from '@brw/game-engine';
 import * as policy from '../src/ai';
 import { ActionHistory } from '../src/action-history';
@@ -39,13 +39,13 @@ function unchangedRejection(game: GameState, action: BotCommand, message: RegExp
 
 describe('AI lobby roster configuration', () => {
 
- it.each(['ADD_BOT', 'REMOVE_BOT'] as const)('%s resets all readiness but preserves school choices and never starts a previously ready lobby', type => {
+ it.each(['ADD_BOT', 'REMOVE_BOT'] as const)('%s resets readiness and never starts a previously ready lobby', type => {
   const game = configureBot(lobby(), add);
-  for (const p of game.players) { p.startingSchoolId = 'agony'; p.ready = true; }
+  for (const p of game.players)p.ready=true;
   const before = structuredClone(game), next = configureBot(game, { type, playerId: 'p1', botId: 'p2' });
   expect(game).toEqual(before); expect(next.phase).toBe('LOBBY'); expect(next.round).toBe(0);
   expect(next.players.every(p => !p.ready)).toBe(true);
-  expect(next.players.filter(p => before.players.some(old => old.id === p.id)).every(p => p.startingSchoolId === 'agony')).toBe(true);
+  expect(next.players.every(p=>p.startingSchoolId==null&&p.mageId==null)).toBe(true);
   expect(next.players.every(p => p.hand.length + p.personalDeck.length + p.discard.length === 0)).toBe(true);
   expect(next.library).toEqual(before.library);
  });
@@ -85,10 +85,9 @@ describe('AI lobby roster configuration', () => {
  it.each([2, 3])('the admitted %s-seat roster really completes first Study from the same physical supply', count => {
   let game = lobby(); while (game.players.length < count) game = configureBot(game, add);
   const history = new ActionHistory();
-  for (const p of game.players) {
-   game = history.apply(game, { type: 'SELECT_STARTING_SCHOOL', playerId: p.id, schoolId: 'agony' }, p.id);
-   game = history.apply(game, { type: 'SET_READY', playerId: p.id, ready: true }, p.id);
-  }
+  for(const p of game.players)game=history.apply(game,{type:'SET_READY',playerId:p.id,ready:true},p.id);
+  for(const [index,id] of game.setupOrder!.entries())game=history.apply(game,{type:'DRAFT_SCHOOL',playerId:id,schoolId:game.library[index].id},id);
+  for(const [index,id] of [...game.setupOrder!].reverse().entries())game=history.apply(game,{type:'DRAFT_MAGE',playerId:id,mageId:MAGE_DRAFT_POOL[index].id},id);
   expect(game.phase).toBe('BLACK_ROSE');
   game = history.apply(game, { type: 'ADVANCE_PHASE', playerId: 'p1', expectedPhase: 'BLACK_ROSE', expectedRound: 1 }, 'p1');
   for (const p of game.players) {
@@ -110,14 +109,14 @@ describe('paced authoritative BotRunner', () => {
  }
  const beat = () => vi.advanceTimersByTime(450);
 
- it('auto-starts through history only after human consent, then waits for explicit Pink Tulip continuation', () => {
+ it('auto-starts setup through history only after human consent', () => {
   const h = harness(configureBot(lobby(), add));
-  h.room.game = h.room.history.apply(h.room.game, { type: 'SELECT_STARTING_SCHOOL', playerId: 'p1', schoolId: 'agony' }, 'p1');
-  h.room.game = h.room.history.apply(h.room.game, { type: 'SET_READY', playerId: 'p1', ready: true }, 'p1');
   h.runner.wake(); beat(); expect(h.room.game.phase).toBe('LOBBY'); beat();
-  expect(h.room.game).toMatchObject({ phase: 'BLACK_ROSE', round: 1 });
-  expect(h.room.game.players.map(p => p.personalDeck.length)).toEqual([6, 6]);
-  beat(); expect(vi.getTimerCount()).toBe(0); expect(h.changed).toHaveBeenCalledTimes(2);
+  expect(h.room.game.players[1].ready).toBe(true);
+  h.room.game=h.room.history.apply(h.room.game,{type:'SET_READY',playerId:'p1',ready:true},'p1');
+  expect(h.room.game).toMatchObject({phase:'SETUP',round:0});
+  expect(h.room.game.phase).toBe('SETUP');
+  expect(h.changed).toHaveBeenCalledTimes(1);
  });
 
  it('draws/discards/prepares with real cards while the human controls phase completion and the first turn', () => {
@@ -251,8 +250,9 @@ describe('paced authoritative BotRunner', () => {
  });
 
  it('logs an invalid policy action once without mutation, broadcast, history loss, or unbounded retry', () => {
-  const h = harness(), before = structuredClone(h.room.game), error = vi.spyOn(console, 'error').mockImplementation(() => {});
-  h.choose.mockReturnValue({ type: 'SELECT_STARTING_SCHOOL', playerId: 'p2', schoolId: 'missing' });
+  const game=battle();game.phase='SETUP';game.setupStage='SCHOOL';game.setupOrder=['p1','p2'];game.players[0].startingSchoolId='agony';
+  const h = harness(game), before = structuredClone(h.room.game), error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  h.choose.mockReturnValue({ type: 'DRAFT_SCHOOL', playerId: 'p2', schoolId: 'missing' });
   const clear = vi.spyOn(h.room.history, 'clear'); h.runner.wake(); vi.advanceTimersByTime(45000);
   expect(error).toHaveBeenCalledTimes(1); expect(h.choose).toHaveBeenCalledTimes(1); expect(h.changed).not.toHaveBeenCalled();
   expect(clear).not.toHaveBeenCalled(); expect(h.room.game).toEqual(before); expect(vi.getTimerCount()).toBe(0);

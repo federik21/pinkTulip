@@ -22,6 +22,31 @@ export async function selectControlTab(page: Page, name: ControlTab) {
   await expect(page.getByRole('region', { name: label, exact: true })).toBeVisible();
 }
 
+export async function completeSetupDraft(pages:Page[]) {
+ for(let picks=0;picks<8;picks++) {
+  const setupPages:Page[]=[];
+  for(const page of pages)if(await page.locator('.setup-panel').count())setupPages.push(page);
+  if(!setupPages.length)return;
+  for(const page of setupPages) {
+   const overlay=page.locator('.phase-overlay');
+   if(await overlay.isVisible())await overlay.click();
+  }
+  let picker:Page|undefined;
+  for(const page of setupPages)if((await page.locator('.setup-panel .notice').textContent())?.includes('It is your pick.'))picker=page;
+  if(picker) {
+   const before=await Promise.all(setupPages.map(page=>page.locator('.setup-panel').innerText()));
+   const option=picker.locator('.setup-panel .schools button:enabled').first();
+   await expect(option).toBeVisible();
+   await option.click();
+   await expect.poll(()=>Promise.all(setupPages.map(page=>page.locator('.setup-panel').innerText()))).not.toEqual(before);
+  } else {
+   const before=await Promise.all(setupPages.map(page=>page.locator('.setup-panel').innerText()));
+   await expect.poll(()=>Promise.all(setupPages.map(page=>page.locator('.setup-panel').innerText()))).not.toEqual(before);
+  }
+ }
+ throw new Error('Setup draft did not finish within eight picks');
+}
+
 export const selectSpells = (page: Page) => selectControlTab(page, 'Spells');
 
 // The controls only exist as the dock-opened dashboard; dismiss it to reach the map and roster.

@@ -2,7 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { applyAction, createGame, type Card, type GameAction, type GameState } from '../packages/game-engine/src/index';
 import { ActionHistory } from '../apps/server/src/action-history';
 import { publicState } from '../apps/server/src/public-state';
-import { assignPreparationCard, closeChronicle, closeControls, closeQuickReference, expectPanelSelected, openChronicle, openQuickReference, selectControlTab, selectSpells } from './layout-ui';
+import { assignPreparationCard, closeChronicle, closeControls, closeQuickReference, completeSetupDraft, expectPanelSelected, openChronicle, openQuickReference, selectControlTab, selectSpells } from './layout-ui';
 import { expectSchoolIcon } from './spell-ui';
 
 const faults = new WeakMap<Page, string[]>();
@@ -486,7 +486,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       await openQuickReference(page); await expect(page.locator('.reference')).toContainText('Hand 1/7'); await closeQuickReference(page);
       expect(wire.state.feedbackEvents?.filter(event => event.kind === 'SPELL_TRIGGERED') ?? []).toEqual([]);
       await page.getByRole('button', { name: /^Begin round 3/ }).click();
-      await expect(page.locator('.phase-track .current span')).toHaveText('Pink Tulip'); await dismissOverlay(page);
+      await expect(page.locator('.phase-track .current span')).toHaveText('BR'); await dismissOverlay(page);
       expect(wire.commands).toEqual([
         { type: 'END_ACTIVATION', playerId: 'p1' },
         { type: 'ADVANCE_PHASE', playerId: 'p1', expectedPhase: 'CLEANUP', expectedRound: 2 },
@@ -523,15 +523,16 @@ for (const { count, override } of realBoards) {
         const size = page.getByRole('combobox', { name: 'Rooms per color', exact: true });
         await expect(size).toHaveValue('auto');
         if (index) await expect(size).toBeDisabled(); else await expect(size).toBeEnabled();
-        await page.getByRole('combobox', { name: 'Starting magic school', exact: true }).selectOption('cantrip');
       }
       if (override) {
         await pages[0].getByRole('combobox', { name: 'Rooms per color', exact: true }).selectOption(override);
         for (const page of pages) await expect(page.getByRole('combobox', { name: 'Rooms per color', exact: true })).toHaveValue(override);
       }
       for (const page of pages) await page.getByRole('button', { name: 'Mark ready', exact: true }).click();
+      await expect(pages[0].locator('.setup-panel')).toBeVisible();
+      await completeSetupDraft(pages);
       for (const [index, page] of pages.entries()) {
-        await expect(page.locator('.phase-track .current span')).toHaveText('Pink Tulip'); await dismissOverlay(page);
+        await expect(page.locator('.phase-track .current span')).toHaveText('BR'); await dismissOverlay(page);
         await expect(page.locator('.board .hex')).toHaveCount(roomsPerColor * 6 + 5);
         await expect(page.locator('.board .hex.start-room')).toHaveCount(4);
         for (const color of ['crimson', 'azure', 'emerald', 'amber', 'violet', 'grey']) {
