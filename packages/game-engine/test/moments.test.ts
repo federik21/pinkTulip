@@ -25,6 +25,15 @@ function cast(s: GameState, card: Card, extra: { targetPlayerId?: string; roomId
  s.players[0].prepared.rapid = { card, used: false };
  return applyAction(s, { type: 'CAST_SPELL', playerId: 'p1', slot: 'rapid', ...extra });
 }
+function choose(s:GameState,choiceId:string) {
+ const decision=s.pendingDecision;
+ if(decision?.kind!=='CHOICE')throw new Error('Expected a choice');
+ return applyAction(s,{type:'RESPOND_CHOICE',playerId:decision.playerId,key:decision.key,choiceId});
+}
+function resolveChoices(s:GameState) {
+ while(s.pendingDecision?.kind==='CHOICE')s=choose(s,s.pendingDecision.options[0].id);
+ return s;
+}
 const hits = (s: GameState, name: string) => (s.feedbackEvents ?? []).filter(e => e.kind === 'DAMAGE' && e.target.id === name).map(e => (e as { amount: number }).amount);
 const kinds = (s: GameState) => (s.feedbackEvents ?? []).map(e => e.kind);
 
@@ -44,7 +53,7 @@ describe('moments are an ordered, repeatable list of effect steps', () => {
 
  it('lets the card decide the sequence: heal before damage differs from damage before heal', () => {
   const healFirst = fixture(); wound(healFirst, 1, { p3: 5 });
-  const a = cast(healFirst, spell([moment.heal(3), moment.damage(5)]));
+  const a = resolveChoices(cast(healFirst, spell([moment.heal(3), moment.damage(5)])));
   expect(a.players[1].wizard.damageCubes).toBe(7);
   expect(a.players[1].wizard.damageByPlayer).toEqual({ p3: 2, p1: 5 });
 
@@ -92,6 +101,35 @@ describe('moments are an ordered, repeatable list of effect steps', () => {
   expect(after.players[1].wizard.damageByPlayer).toEqual({ p3: 1 });
   expect(after.players[1].wizard.blackDamage).toBe(2);
   expect(after.players[1].wizard.damageOrder).toEqual(['p3', 'black-rose', 'black-rose']);
+ });
+
+ it('lets the caster choose which wound to heal',()=>{
+  const s=fixture();wound(s,1,{p3:2,p4:1});s.players[1].wizard.damageOrder=['p3','p4','p3'];
+  const paused=cast(s,spell([moment.heal(1)]));
+  expect(paused.pendingDecision?.kind).toBe('CHOICE');
+  const after=choose(paused,'source:p4');
+  expect(after.players[1].wizard.damageByPlayer).toEqual({p3:2});
+  expect(after.players[1].wizard.damageOrder).toEqual(['p3','p3']);
+ });
+
+ it('lets the caster choose which wound to convert',()=>{
+  const s=fixture();wound(s,1,{p3:2,p4:1});s.players[1].wizard.damageOrder=['p3','p4','p3'];
+  const paused=cast(s,spell([moment.convert(1)]));
+  expect(paused.pendingDecision?.kind).toBe('CHOICE');
+  const after=choose(paused,'source:p4');
+  expect(after.players[1].wizard.damageByPlayer).toEqual({p1:1,p3:2});
+  expect(after.players[1].wizard.damageOrder).toEqual(['p3','p1','p3']);
+ });
+
+ it('converts the newest eligible room instability cubes automatically',()=>{
+  const s=fixture(),room=s.board.rooms.find(r=>r.id==='room-0,0')!;
+  room.instability=3;room.cubesByPlayer={p3:2,p4:1};room.instabilityOrder=['p3','p4','p3'];
+  s.players[2].cubes.available-=2;s.players[2].cubes.onBoard+=2;
+  s.players[3].cubes.available--;s.players[3].cubes.onBoard++;
+  const after=cast(s,spell([moment.convert(1)],'ROOM'),{roomId:room.id});
+  expect(after.pendingDecision).toBeUndefined();
+  expect(after.board.rooms.find(r=>r.id===room.id)!.cubesByPlayer).toEqual({p1:1,p3:1,p4:1});
+  expect(after.board.rooms.find(r=>r.id===room.id)!.instabilityOrder).toEqual(['p3','p4','p1']);
  });
 
  it('summons and activates a Succubus as a card moment', () => {

@@ -31,7 +31,14 @@ function prepare(s:GameState,spell:Card|string,slot:Cast['slot']='rapid') {
  s.players[0].prepared[slot]={card:spell,used:false};
  return spell;
 }
-const cast=(s:GameState,selection:Selection={},slot:Cast['slot']='rapid')=>applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot,...selection});
+function cast(s:GameState,selection:Selection={},slot:Cast['slot']='rapid') {
+ let result=applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot,...selection});
+ while(result.pendingDecision?.kind==='CHOICE') {
+  const decision=result.pendingDecision;
+  result=applyAction(result,{type:'RESPOND_CHOICE',playerId:decision.playerId,key:decision.key,choiceId:decision.options[0].id});
+ }
+ return result;
+}
 function reject(s:GameState,selection:Selection,error:RegExp,slot:Cast['slot']='rapid') {
  const before=structuredClone(s);expect(()=>cast(s,selection,slot)).toThrow(error);expect(s).toEqual(before);
 }

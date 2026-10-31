@@ -585,7 +585,7 @@ function resolveInstructionBody(s:GameState,owner:Player,instruction:TriggeredIn
  if(instruction.effect==='INSTABILITY') {
   if(room)placeInstability(s,room,instruction.amount,owner);
  } else if(instruction.effect==='CONVERT' && room) {
-  if(!room.scored&&!room.reconstructed)convertCubes(s,owner,room.cubesByPlayer,'onBoard',instruction.amount,room.instability,roomFeedbackTarget(room));
+  if(!room.scored&&!room.reconstructed)convertRoomCubes(s,owner,room,instruction.amount);
  } else if(instruction.effect==='BLACK_ROSE_CONVERT' && target && target.mage) {
   const casterScoped=instruction.scope==='CASTER'&&ref?.id===actor?.id&&ref?.playerId===owner.id;
   convertRecentDamageToBlackRose(s,owner,target.mage,instruction.amount,modelFeedbackTarget(s,ref)!,casterScoped);
@@ -631,11 +631,11 @@ function resolveInstructionBody(s:GameState,owner:Player,instruction:TriggeredIn
     if(effect&&target.model.damageCubes>wounds&&!effect.damaged?.some(d=>d.id===ref!.id))(effect.damaged??=[]).push(ref!);
     }
     break;
-  case 'HEAL':healModel(s,target.model,target.location,instruction.amount,owner.id,modelFeedbackTarget(s,ref)!);break;
+  case 'HEAL':healDamageWithChoice(s,owner,target.model,target.location,instruction.amount,modelFeedbackTarget(s,ref)!);break;
   case 'CONVERT':
     // Owned models ignore damage conversion, including triggered instructions.
     if(ref!.playerId===owner.id)break;
-   convertCubes(s,owner,target.model.damageByPlayer,target.location,instruction.amount,target.model.damageCubes,modelFeedbackTarget(s,ref)!,target.model);
+   convertDamageWithChoice(s,owner,target.model,target.location,instruction.amount,modelFeedbackTarget(s,ref)!);
    break;
   }
  }
@@ -1151,6 +1151,7 @@ function modelTarget(s:GameState,id:string) {
 
 type CubeLocation = 'onWizard' | 'onEvocations' | 'onBoard';
 type WoundedModel = Pick<Player['wizard'],'damageCubes'|'damageByPlayer'> & {blackDamage?:number;damageOrder?:PlayerId[]};
+type DamageCubeOption = { token: string; sourceId?: PlayerId; label: string; cubeToken?: string };
 function removeCubes(ledger:Record<PlayerId,number>,id:PlayerId,amount:number) {
  ledger[id]-=amount;
  if(ledger[id]===0)delete ledger[id];
@@ -1163,6 +1164,49 @@ function removeDamageHistory(wizard: {damageOrder?:PlayerId[]}, amount: number) 
  if(amount<=0)return;
  wizard.damageOrder ??= [];
  wizard.damageOrder.splice(0,Math.min(amount,wizard.damageOrder.length));
+}
+function damageCubeOptions(s:GameState,model:WoundedModel,eligible:(sourceId:PlayerId|undefined)=>boolean):DamageCubeOption[] {
+ const history=model.damageOrder??[],seen:Record<string,number>={},options:DamageCubeOption[]=[];
+ const available:Record<string,number>={...model.damageByPlayer};
+ if((model.blackDamage??0)>0)available[BLACK_ROSE_ID]=(available[BLACK_ROSE_ID]??0)+model.blackDamage!;
+ for(let index=0;index<history.length;index++) {
+  const sourceId=history[index],count=seen[sourceId]??0;
+  if(count>=(available[sourceId]??0))continue;
+  seen[sourceId]=count+1;
+  if(!eligible(sourceId))continue;
+  const source=s.players.find(p=>p.id===sourceId);
+  const label=source?.name??(sourceId===BLACK_ROSE_ID?'Black Rose':'Unattributed');
+  options.push({token:`history:${index}`,sourceId,label:`${label} damage`});
+ }
+ for(const [sourceId,total] of Object.entries(available)) {
+  const missing=Math.max(0,total-(seen[sourceId]??0));
+  if(!eligible(sourceId))continue;
+  for(let i=0;i<missing;i++) {
+   const source=s.players.find(p=>p.id===sourceId),label=source?.name??(sourceId===BLACK_ROSE_ID?'Black Rose':'Unattributed');
+   options.push({token:`missing:${sourceId}:${i}`,sourceId,label:`${label} damage`});
+  }
+ }
+ return options;
+}
+function selectableDamageOptions(options:DamageCubeOption[]) {
+ const bySource=new Map<string,DamageCubeOption>();
+ for(const option of options) {
+  const key=option.sourceId??'untracked';
+  if(!bySource.has(key))bySource.set(key,{...option,token:`source:${key}`,cubeToken:option.token});
+ }
+ return [...bySource.values()];
+}
+function removeDamageCube(s:GameState,model:WoundedModel,location:Exclude<CubeLocation,'onBoard'>,option:DamageCubeOption) {
+ const token=option.cubeToken??option.token;
+ const index=token.startsWith('history:')?Number(token.slice(8)):-1;
+ if(index>=0)model.damageOrder?.splice(index,1);
+ const sourceId=option.sourceId;
+ if(sourceId && (model.damageByPlayer[sourceId]??0)>0) {
+  removeCubes(model.damageByPlayer,sourceId,1);
+  const owner=s.players.find(p=>p.id===sourceId);
+  if(owner){owner.cubes.available++;owner.cubes[location]--;}
+ } else if(sourceId===BLACK_ROSE_ID && (model.blackDamage??0)>0)model.blackDamage!--;
+ model.damageCubes--;
 }
 function convertRecentDamageToBlackRose(s:GameState,caster:Player,target:Player,amount:number,targetFeedback:FeedbackTarget,casterScoped=false) {
  if(caster.id===target.id&&!casterScoped)return 0;
@@ -1188,44 +1232,40 @@ function convertRecentDamageToBlackRose(s:GameState,caster:Player,target:Player,
  return converted;
 }
 
-// Physical sources are always processed in seat order, then Pink Tulip. Neutral
-// cubes have no supply to return; unattributed wounds are not convertible cubes.
-function convertCubes(s:GameState,p:Player,ledger:Record<PlayerId,number>,location:CubeLocation,amount:number,total:number,target:FeedbackTarget,model?:WoundedModel) {
- let remaining=Math.min(amount,p.cubes.available,total),converted=0;
- for(const id of [...s.players.map(owner=>owner.id),BLACK_ROSE_ID]) {
-  if(id===p.id || remaining<=0)continue;
-  const n=Math.min(remaining,ledger[id]??0);
-  if(n>0) {
-   removeCubes(ledger,id,n);
-   const owner=s.players.find(owner=>owner.id===id);
-   if(owner){owner.cubes.available+=n;owner.cubes[location]-=n;}
-   converted+=n;remaining-=n;
-  }
-  if(id===BLACK_ROSE_ID && model && remaining>0) {
-   const black=Math.min(remaining,model.blackDamage??0);
-   if(black>0){model.blackDamage!-=black;converted+=black;remaining-=black;}
-  }
+function convertDamageWithChoice(s:GameState,p:Player,model:WoundedModel,location:Exclude<CubeLocation,'onBoard'>,amount:number,target:FeedbackTarget) {
+ const selected:DamageCubeOption[]=[];
+ const limit=Math.min(amount,p.cubes.available,model.damageCubes);
+ while(selected.length<limit) {
+  const options=selectableDamageOptions(damageCubeOptions(s,model,sourceId=>!!sourceId&&sourceId!==p.id
+   && (sourceId===BLACK_ROSE_ID?((model.damageByPlayer[sourceId]??0)>0||(model.blackDamage??0)>0):(model.damageByPlayer[sourceId]??0)>0)));
+  if(!options.length)break;
+  const choice=options.length===1?options[0].token:askChoice(s,p.id,`convert-damage|${target.id}|${selected.length}`,
+   `Choose a damage cube on ${target.name} to convert.`,options.map(option=>({id:option.token,label:option.label})))!;
+  const option=options.find(candidate=>candidate.token===choice);
+  if(!option)break;
+  selected.push(option);
+  const sourceId=option.sourceId!;
+  const cubeToken=option.cubeToken??option.token;
+  if(cubeToken.startsWith('history:'))model.damageOrder?.splice(Number(cubeToken.slice(8)),1,p.id);
+  else (model.damageOrder??=[]).push(p.id);
+  const physicalSource=sourceId===BLACK_ROSE_ID
+   ? (model.damageByPlayer[sourceId]??0)>0
+   : (model.damageByPlayer[sourceId]??0)>0;
+  if(physicalSource) {
+   removeCubes(model.damageByPlayer,sourceId,1);
+   const source=s.players.find(owner=>owner.id===sourceId);
+   if(source){source.cubes.available++;source.cubes[location]--;}
+  } else if(sourceId===BLACK_ROSE_ID)model.blackDamage!--;
+  model.damageByPlayer[p.id]=(model.damageByPlayer[p.id]??0)+1;
+  p.cubes.available--;p.cubes[location]++;
  }
+ const converted=selected.length;
  if(converted>0) {
-  if(model && model.damageOrder) {
-   let remainingHistory=converted;
-   for(let i=model.damageOrder.length-1; i>=0 && remainingHistory>0; i--) {
-    const current=model.damageOrder[i];
-    const canConvert = current !== p.id && ((current===BLACK_ROSE_ID && (model.blackDamage ?? 0) >= 0) || (current !== BLACK_ROSE_ID && (model.damageByPlayer[current] ?? 0) > 0));
-    if (!canConvert) continue;
-    model.damageOrder[i]=p.id;
-    remainingHistory--;
-   }
-  }
-  ledger[p.id]=(ledger[p.id]??0)+converted;
-  p.cubes.available-=converted;p.cubes[location]+=converted;
-  s.log.push(`${p.name} converts ${converted} ${location==='onBoard'?'instability':'damage'} cubes; total ${location==='onBoard'?'instability':'wounds'} is unchanged.`);
-  appendFeedback(s,{kind:'CONVERT',target,sourceId:p.id,amount:converted,total});
+  s.log.push(`${p.name} converts ${converted} damage cubes; total wounds is unchanged.`);
+  appendFeedback(s,{kind:'CONVERT',target,sourceId:p.id,amount:converted,total:model.damageCubes});
  }
 }
 
-// Healing returns colored cubes in seat order (including safe own-color legacy
-// ledgers), then removes Pink Tulip cubes, then any unattributed wounds.
 function healModel(s:GameState,model:WoundedModel,location:Exclude<CubeLocation,'onBoard'>,amount:number,sourceId:string,target:FeedbackTarget) {
  const healed=Math.max(0,Math.min(amount,model.damageCubes));
  let remaining=healed;
@@ -1246,6 +1286,29 @@ function healModel(s:GameState,model:WoundedModel,location:Exclude<CubeLocation,
   appendFeedback(s,{kind:'HEAL',target,sourceId,amount:healed});
  }
 }
+function healDamageWithChoice(s:GameState,p:Player,model:WoundedModel,location:Exclude<CubeLocation,'onBoard'>,amount:number,target:FeedbackTarget) {
+ const healedOptions:DamageCubeOption[]=[];
+ while(healedOptions.length<amount) {
+  const options=selectableDamageOptions(damageCubeOptions(s,model,()=>true));
+  if(!options.length) {
+   const untracked=Math.min(amount-healedOptions.length,model.damageCubes);
+   model.damageCubes-=untracked;
+   healedOptions.push(...Array.from({length:untracked},()=>({token:'untracked',label:'Unattributed damage'})));
+   break;
+  }
+  const choice=options.length===1?options[0].token:askChoice(s,p.id,`heal-damage|${target.id}|${healedOptions.length}`,
+   `Choose a damage cube on ${target.name} to heal.`,options.map(option=>({id:option.token,label:option.label})))!;
+  const option=options.find(candidate=>candidate.token===choice);
+  if(!option)break;
+  removeDamageCube(s,model,location,option);
+  healedOptions.push(option);
+ }
+ const healed=healedOptions.length;
+ if(healed>0) {
+  s.log.push(`Healing removes ${healed} wounds and returns their physical cubes.`);
+  appendFeedback(s,{kind:'HEAL',target,sourceId:p.id,amount:healed});
+ }
+}
 
 function mageAttackTarget(s:GameState,p:Player,id:string) {
  assert(!isInStartingRoom(s,p),'Leave the starting room before attacking');
@@ -1262,6 +1325,8 @@ function placeInstability(s: GameState, room: Room, amount: number, source?: Pla
  const owner=source?.id ?? BLACK_ROSE_ID;
  room.instability+=actual;
  room.cubesByPlayer[owner]=(room.cubesByPlayer[owner]??0)+actual;
+ room.instabilityOrder??=[];
+ for(let i=0;i<actual;i++)room.instabilityOrder.push(owner);
  if(source) { source.cubes.available-=actual; source.cubes.onBoard+=actual; completeQuest(s,source,'INSTABILITY',actual); }
  s.log.push(`${source?.name ?? 'BR'} places ${actual} instability in ${room.name} (${room.instability}/${room.instabilityLimit}).`);
  if(room.instability===room.instabilityLimit) {
@@ -1270,9 +1335,34 @@ function placeInstability(s: GameState, room: Room, amount: number, source?: Pla
    awardVictoryPoints(s,source.id,1);
    s.log.push(`${source.name}: +1 VP for completing ${room.name} entirely in their color.`);
   }
+
   if(source) completeQuest(s,source,'REBUILD');
  }
  return actual;
+}
+function convertRoomCubes(s:GameState,p:Player,room:Room,amount:number) {
+ room.instabilityOrder??=Object.entries(room.cubesByPlayer).flatMap(([id,n])=>Array.from({length:n},()=>id));
+ let converted=0;
+ const limit=Math.min(amount,p.cubes.available,room.instability);
+ while(converted<limit) {
+  let index=room.instabilityOrder.length-1;
+  while(index>=0&&room.instabilityOrder[index]===p.id)index--;
+  if(index<0)break;
+  const sourceId=room.instabilityOrder[index];
+  room.instabilityOrder.splice(index,1);
+  const source=s.players.find(owner=>owner.id===sourceId);
+  if((room.cubesByPlayer[sourceId]??0)>0) {
+   removeCubes(room.cubesByPlayer,sourceId,1);
+   if(source){source.cubes.available++;source.cubes.onBoard--;}
+  }
+  room.cubesByPlayer[p.id]=(room.cubesByPlayer[p.id]??0)+1;
+  room.instabilityOrder.push(p.id);
+  p.cubes.available--;p.cubes.onBoard++;converted++;
+ }
+ if(converted>0) {
+  s.log.push(`${p.name} converts ${converted} instability cubes; total instability is unchanged.`);
+  appendFeedback(s,{kind:'CONVERT',target:roomFeedbackTarget(room),sourceId:p.id,amount:converted,total:room.instability});
+ }
 }
 
 function expireRoundSpells(s:GameState) {
@@ -2448,7 +2538,7 @@ function runAction(state: GameState, action: GameAction, answers: DecisionAnswer
    if(alchemy&&room) {
     s.log.push(`${e.name} #${e.number??1} deals no damage and ${alchemy==='PLACE'?'places':'converts'} 1 cube.`);
     if(alchemy==='PLACE')placeInstability(s,room,1,p);
-    else convertCubes(s,p,room.cubesByPlayer,'onBoard',1,room.instability,roomFeedbackTarget(room));
+    else convertRoomCubes(s,p,room,1);
    }
   }
   // Corrosive plasma attacks the room: every model there not of the controller's color suffers it.

@@ -169,6 +169,8 @@ export type Room = {
  // Full rooms reject new cubes immediately; reconstructed/scored change only at
  // Cleanup. After scoring, cubesByPlayer is history, not cubes still on the board.
  cubesByPlayer: Record<PlayerId, number>; reconstructed: boolean; scored: boolean;
+ // Placement order lets conversions remove the most recently placed eligible cube.
+ instabilityOrder?: PlayerId[];
  rewards: [number, number, number]; startingFor?: PlayerId;
  color: RoomColor | null; effect: RoomEffect | null; specialUsed: boolean;
 };
