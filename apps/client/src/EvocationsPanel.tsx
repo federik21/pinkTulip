@@ -44,7 +44,7 @@ export function EvocationsPanel({game,playerId,viewerId,enabled,pending,send}:Pr
    <div className="model-stats"><span>⚔ {evocationAttack(n)} attack</span><span>Strikes slot {n.slot}</span></div>
    <DamageBar game={game} {...n} name={`${owner.name} ${n.name} #${n.slot}`}/>
    <p className="hint">Activates at the start of the Evocation phase: hits {owner.name} and the evocation in slot {n.slot}.</p></div>)}
-  {!evocations.length&&<p>No evocations yet. Activate a Grey room to summon a Cadaver. Each mage may control up to three models; tokens activate existing models, not summon them.</p>}
+  {!evocations.length&&<p>No evocations yet. Each mage may control up to three models; Use tokens to activate existing models.</p>}
   {evocations.map(e=><div className={`evocation-card ${e.id===active?.evocationId?'active-model':''}`} style={mageStyle(e.playerId)} data-owned={isOwn} data-owner-id={e.playerId} data-evocation-id={e.id} key={e.id}>
     <strong className="evocation-heading"><span className={`evocation-portrait${getEvocationKind(e)==='COLOSSUS'?' big-portrait':''}`} aria-hidden="true">{evocationIcon(e)}</span><span>{e.name} <span className="evocation-number">#{evocationNumber(game,e)}</span></span></strong>
    <small>{owner.name} · {e.archetype==='DEMON'?'Demon':e.archetype==='CONSTRUCT'?'Construct':e.archetype==='ALTAR'?'Altar':e.archetype==='NIGHTMARE'?'Nightmare':'Undead'} · {roomNameAt(game,e.position)}</small>

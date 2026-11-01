@@ -1,5 +1,5 @@
 import React from 'react';
-import { BLACK_ROSE_ID, GameState, getMageEvocationCount, getSpellType, MAGE_DRAFT_POOL } from '@brw/game-engine';
+import { BLACK_ROSE_ID, ENDGAME_REWARDS, GameState, getContributionAwards, getMageEvocationCount, getSpellType, MAGE_DRAFT_POOL } from '@brw/game-engine';
 import { DamageBar } from './DamageBar';
 import { ModelEffects } from './ModelEffects';
 import { MAGE_SYMBOLS, MAGE_COLOR_NAMES, mageStyle } from './presentation';
@@ -12,6 +12,21 @@ type Props = {
 };
 
 export function MageRoster({game,viewerId,actingPlayerId,onViewRetinue}: Props) {
+ const trophyAwards=getContributionAwards(Object.fromEntries(game.players.map(player=>[player.id,player.trophies.length])),ENDGAME_REWARDS);
+ const questAwards=getContributionAwards(Object.fromEntries(game.players.map(player=>[player.id,player.questsCompleted])),ENDGAME_REWARDS);
+ const scores=[
+  ...game.players.map(player=>{
+   const trophyVP=trophyAwards.find(award=>award.playerId===player.id)?.points??0;
+   const questVP=questAwards.find(award=>award.playerId===player.id)?.points??0;
+   const firstPlayerVP=game.firstPlayerId===player.id?1:0;
+   const endgameVP=trophyVP+questVP+firstPlayerVP;
+   const currentVP=player.victoryPoints;
+   return {id:player.id,name:player.name,trophies:player.trophies.length,quests:player.questsCompleted,trophyVP,questVP,firstPlayerVP,currentVP,finalVP:game.endgameScored?currentVP:currentVP+endgameVP,baseVP:game.endgameScored?currentVP-endgameVP:currentVP};
+  }),
+  {id:BLACK_ROSE_ID,name:'BR',trophies:0,quests:0,trophyVP:0,questVP:0,firstPlayerVP:0,currentVP:game.blackRose.victoryPoints,finalVP:game.blackRose.victoryPoints,baseVP:game.blackRose.victoryPoints},
+ ];
+ const leaderboard=[...scores].sort((a,b)=>b.finalVP-a.finalVP);
+ const vpLabel=(points:number)=>points?`+${points} VP`:'—';
  return <section className="players-panel" aria-labelledby="mages-heading">
   <span className="eyebrow">Mages of the lodge · {game.players.length}</span><h2 id="mages-heading">Mages of the lodge</h2>
   {game.players.map(p=>{
@@ -44,6 +59,25 @@ export function MageRoster({game,viewerId,actingPlayerId,onViewRetinue}: Props) 
     </div>
    </details>;
   })}
-    <div className="black-rose-score" data-owner-id={BLACK_ROSE_ID} aria-label="BR score"><div className="player-heading"><span>✺ BR</span><b>{game.blackRose.victoryPoints}<small> VP</small></b></div><small>{game.blackRose.kills} kills · neutral competitor</small></div>
+    <div className="black-rose-score" data-owner-id={BLACK_ROSE_ID} aria-label="BR score"><div className="player-heading"><span>✺ BR</span><b>{game.blackRose.victoryPoints}<small> VP</small></b></div></div>
+    <section className="endgame-score-panel" aria-labelledby="endgame-score-heading">
+     <span className="eyebrow">{game.endgameScored?'Final standings':'Endgame preview'}</span>
+     <h3 id="endgame-score-heading">Leaderboard</h3>
+     <ol className="endgame-leaderboard">{leaderboard.map((score,index)=><li key={score.id} data-owner-id={score.id}><span><b>{index+1}.</b> {score.name}{score.id===game.firstPlayerId&&<span className="first-player" aria-label="First player">♛</span>}</span><b>{score.finalVP} VP</b></li>)}</ol>
+     <h3>Final VP assignment</h3>
+     <p className="hint">{game.endgameScored?'Scoring is complete; final VP includes the assignments below.':'Projected awards use the current trophy and solved-quest standings; ties follow the game rules.'}</p>
+     <div className="endgame-score-table-wrap"><table className="endgame-score-table">
+      <caption className="visually-hidden">Endgame victory-point assignment by player</caption>
+      <thead><tr><th scope="col">Player</th><th scope="col">Trophies<br/><small>count · VP</small></th><th scope="col">Solved quests<br/><small>count · VP</small></th><th scope="col">First player</th><th scope="col">VP before bonuses</th><th scope="col">Final VP</th></tr></thead>
+      <tbody>{scores.map(score=><tr key={score.id} data-owner-id={score.id}>
+       <th scope="row">{score.name}</th>
+       <td>{score.trophies} · {vpLabel(score.trophyVP)}</td>
+       <td>{score.quests} · {vpLabel(score.questVP)}</td>
+       <td>{score.firstPlayerVP?vpLabel(score.firstPlayerVP):'—'}</td>
+       <td>{score.baseVP}</td>
+       <td><b>{score.finalVP}</b></td>
+      </tr>)}</tbody>
+     </table></div>
+    </section>
  </section>;
 }

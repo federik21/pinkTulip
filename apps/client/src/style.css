@@ -155,6 +155,20 @@
 .game-column>.players-panel{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(250px,100%),1fr));gap:14px;align-items:start}
 .game-column>.players-panel>.eyebrow,.game-column>.players-panel>h2,.game-column>.players-panel>.black-rose-score{grid-column:1/-1;margin:0}
 .game-column>.players-panel .player.mage-disclosure{margin:0}
+.endgame-score-panel{grid-column:1/-1;border-top:1px solid var(--border);padding-top:16px;margin-top:8px;min-width:0}
+.endgame-score-panel>h3{margin:8px 0}
+.endgame-leaderboard{list-style:none;padding:0;margin:0 0 16px}
+.endgame-leaderboard li{display:flex;justify-content:space-between;gap:12px;padding:8px 10px;border-bottom:1px solid var(--border);color:var(--mage-color,#e8dfea)}
+.endgame-leaderboard li[data-owner-id="black-rose"]{--mage-color:#d4cedd}
+.endgame-score-panel>.hint{margin:0 0 10px}
+.endgame-score-table-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:8px}
+.endgame-score-table{width:100%;border-collapse:collapse;min-width:600px;font-size:12px;text-align:right}
+.endgame-score-table th,.endgame-score-table td{padding:9px 10px;border-bottom:1px solid var(--border);white-space:nowrap}
+.endgame-score-table thead th{color:var(--gold);font-size:11px;line-height:1.4}
+.endgame-score-table thead small{color:var(--muted);font-weight:500}
+.endgame-score-table th:first-child{text-align:left}
+.endgame-score-table tbody tr:last-child>*{border-bottom:0}
+.endgame-score-table tbody tr[data-owner-id="black-rose"]{color:#d4cedd}
 .remaining-spells{display:block;color:var(--gold);font-size:12px;margin:6px 0}
 .model-effects{display:flex;flex-wrap:wrap;gap:5px;margin:7px 0}
 .model-effect{--effect-color:#c4b5fd;color:var(--effect-color)}
