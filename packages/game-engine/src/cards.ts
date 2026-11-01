@@ -392,8 +392,8 @@ export function createShamanicDeck(prefix: string, schoolId?: string): Card[] {
    targetFilter: { maxHealth: 3 }, moments: [{ effect: 'REMOVE_EVOCATION', chosen: true }, { effect: 'GAIN_VP', amount: 1, when: 'EVOCATION_REMOVED' }],
    rulesText: 'Remove a target evocation with health 3 or less. If removed, gain 1 VP.' },
   { name: 'Source of Life', spellType: 'CONTINGENCY', range: 2, target: 'ROOM', element: 'water',
-   moments: [{ effect: 'MOVE_MODEL', distance: 1 }, { effect: 'HEAL', amount: 2, scope: 'MOVED' }, { effect: 'GAIN_VP', amount: 1 }],
-   rulesText: 'Move any model to a room at range 1 from the target room, heal it 2, then gain 1 VP.' },
+   moments: [{ effect: 'MOVE_MODEL', distance: 1 }, { effect: 'HEAL', amount: 2, scope: 'TARGET_ROOM' }, { effect: 'GAIN_VP', amount: 1 }],
+   rulesText: 'Move any model from anywhere on the board to a room within range 1 of the target room, heal 2 on every model in the target room, then gain 1 VP.' },
  ];
  return Array.from({ length: 36 }, (_, i) => ({ ...patterns[i % patterns.length], element: patterns[i % patterns.length].element ?? SHAMANIC_ELEMENTS[i % patterns.length], id: `${prefix}-${i + 1}`, kind: 'SPELL', ...(schoolId ? { schoolId } : {}) }));
 }

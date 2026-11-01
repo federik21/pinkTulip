@@ -168,20 +168,26 @@ describe('Shamanic school',()=>{
   expect(result.players[0].victoryPoints).toBe(1);
  });
 
- it('lets Source of Life move and heal any model before gaining VP',()=>{
-  let s=fixture(),p=s.players[0],target=s.players[1].wizard;
+ it('lets Source of Life move any model near the selected room, then heal all models in that room',()=>{
+  let s=fixture(),p=s.players[0],targetRoom=s.board.rooms.find(room=>room.id==='room-0,0')!;
+  const distantRoom=s.board.rooms.find(room=>!room.startingFor&&Math.min(...room.tiles.flatMap(h=>targetRoom.tiles.map(g=>Math.max(Math.abs(h.q-g.q),Math.abs(h.r-g.r),Math.abs(h.q+h.r-g.q-g.r)))))>1)!;
+  const moved=summonEvocation(s,p,'SUCCUBUS',distantRoom.tiles[0])!;
+  moved.damageCubes=2;
+  for(const player of s.players)player.wizard.damageCubes=2;
   const card=createShamanicDeck('shamanic','shamanic').find(c=>c.name==='Source of Life')!;
-  target.damageCubes=2;p.prepared.rapid={card,used:false};
-  s=applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:'room-0,0'});
+  p.prepared.rapid={card,used:false};
+  s=applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:targetRoom.id});
   expect(s.pendingDecision?.kind).toBe('CHOICE');
   let decision=s.pendingDecision!;
-  s=applyAction(s,{type:'RESPOND_CHOICE',playerId:'p1',key:decision.key,choiceId:'p2-wizard'});
+  s=applyAction(s,{type:'RESPOND_CHOICE',playerId:'p1',key:decision.key,choiceId:moved.id});
   expect(s.pendingDecision?.kind).toBe('CHOICE');
   decision=s.pendingDecision!;
-  const destination=decision.options[0];
+  const destination=decision.options.find(option=>option.id!==targetRoom.id)!;
   s=applyAction(s,{type:'RESPOND_CHOICE',playerId:'p1',key:decision.key,choiceId:destination.id});
-  expect(s.players[1].wizard.damageCubes).toBe(0);
-  expect(s.board.rooms.find(room=>room.id===destination.id)?.tiles.some(tile=>tile.q===s.players[1].wizard.position.q&&tile.r===s.players[1].wizard.position.r)).toBe(true);
+  expect(s.players.map(player=>player.wizard.damageCubes)).toEqual([0,0]);
+  const movedResult=s.evocations.find(evocation=>evocation.id===moved.id)!;
+  expect(movedResult.damageCubes).toBe(2);
+  expect(s.board.rooms.find(room=>room.id===destination.id)?.tiles.some(tile=>tile.q===movedResult.position.q&&tile.r===movedResult.position.r)).toBe(true);
   expect(s.players[0].victoryPoints).toBe(1);
  });
 
