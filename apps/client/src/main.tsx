@@ -299,9 +299,9 @@ function App() {
  const activeEvocation=game.evocations.find(e=>e.id===game.evocationActivation?.evocationId);
  const movingEvocation=enabled&&game.evocationActivation?.playerId===me.id&&!!game.evocationActivation?.moving&&(game.evocationActivation?.movesRemaining??0)>0&&activeEvocation;
  const actingPlayer=enabled&&(game.phase==='ACTION'||game.phase==='EVOCATION')?game.players.find(p=>p.id===game.currentPlayerId):undefined;
- const orderStartId=(game.phase==='ACTION'||game.phase==='EVOCATION')?game.currentPlayerId:game.firstPlayerId;
- const orderStartIndex=Math.max(0,game.players.findIndex(player=>player.id===orderStartId));
- const mapPlayerOrder=[...game.players.slice(orderStartIndex),...game.players.slice(0,orderStartIndex)];
+ const orderStartId=game.firstPlayerId ?? game.currentPlayerId ?? game.players[0]?.id ?? null;
+ const orderStartIndex=orderStartId===null?0:Math.max(0,game.players.findIndex(player=>player.id===orderStartId));
+ const mapPlayerOrder=orderStartId===null?[...game.players]:[...game.players.slice(orderStartIndex),...game.players.slice(0,orderStartIndex)];
  // The free Evocation-phase activation is mine to make, or my activated model still needs finishing.
  const evocationDue=game.evocationActivation?game.evocationActivation.playerId===me.id:game.phase==='EVOCATION'&&game.currentPlayerId===me.id&&game.evocations.some(e=>e.playerId===me.id&&!e.activated);
  const turnActionsUsed=active?.actionsUsed??0;

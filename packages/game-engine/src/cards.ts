@@ -374,7 +374,7 @@ export function createShamanicDeck(prefix: string, schoolId?: string): Card[] {
    triggerEffects: [{ effect: 'PREVENT_SPELL', target: 'EVENT_ACTOR' }, { effect: 'SUMMON', kind: 'TOTEM', position: 'CASTER', target: 'OWNER' }],
    rulesText: 'Ignore that spell effect. Summon a Totem in your room.' },
   { name: 'Wind Spirit', spellType: 'CONTINGENCY', instability: true, range: 0, target: 'SELF', moments: [{ effect: 'RESHUFFLE_DRAW', amount: 2 }],
-   rulesText: 'Shuffle your personal discard into your grimoire, then search and draw 2 cards from it. Reveal the cards in the log.' },
+   rulesText: 'Shuffle your personal discard into your grimoire, choose 2 cards from it, then shuffle your grimoire. Reveal the cards in the log.' },
   { name: 'Valor Totem', spellType: 'CONTINGENCY', range: 1, target: 'ROOM', element: 'fire', moments: [m.summon('TOTEM', 'TARGET'), { effect: 'GAIN_VP_PER_ALTAR', max: 5 }],
    rulesText: 'Summon a Totem in the target room, then gain 1 VP for each Altar in play (maximum 5).' },
   { name: 'River Spirit', spellType: 'CONTINGENCY', range: 3, target: 'ROOM', element: 'water', moments: [{ effect: 'DRAW_QUEST' }, { effect: 'ACTIVATE_TARGET_ROOM' }],

@@ -830,7 +830,7 @@ function describeInstruction(instruction:TriggeredInstruction):string {
   case 'GAIN_VP':return `Gain ${instruction.amount} VP.`;
   case 'GAIN_VP_PER_ALTAR':return `Gain 1 VP for each Altar in play, up to ${instruction.max}.`;
   case 'COMPLETE_QUEST':return 'Choose an active quest and lose VP equal to the moon level to complete it.';
-  case 'RESHUFFLE_DRAW':return `Shuffle your discard into your grimoire, then reveal and draw ${instruction.amount} cards.`;
+  case 'RESHUFFLE_DRAW':return `Shuffle your discard into your grimoire, choose ${instruction.amount} cards from it, then shuffle your grimoire.`;
   case 'DRAW_QUEST':return 'Draw 1 quest.';
   case 'ACTIVATE_TARGET_ROOM':return 'Activate the target room.';
   case 'MOVE_MODEL':return `Move any model to a room within range ${instruction.distance} of the target room.`;
@@ -2243,10 +2243,18 @@ function resolveMomentBody(s:GameState,caster:Player,spell:Card,step:Moment,room
   if(caster.personalDeck.length+caster.discard.length===0){s.log.push(`${spell.name}: your grimoire and discard are empty.`);return;}
   caster.personalDeck=shuffle([...caster.personalDeck,...caster.discard],()=>resolutionRandom(s));
   caster.discard=[];
-  const drawn:Card[]=[];
-  while(drawn.length<step.amount&&(caster.personalDeck.length||caster.discard.length))drawn.push(drawOne(s,caster.personalDeck,caster.discard));
-  caster.hand.push(...drawn);
-  s.log.push(`${caster.name} reveals and draws ${drawn.length} grimoire card${drawn.length===1?'':'s'}: ${drawn.map(c=>c.name).join(', ')||'none'}.`);
+  const chosen:Card[]=[];
+  for(let i=0;i<step.amount&&i<caster.personalDeck.length;i++) {
+   const options=caster.personalDeck.filter(card=>!chosen.includes(card));
+   const id=options.length===1?options[0].id:askChoice(s,caster.id,`wind-spirit|${caster.id}|${spell.id}|${i}`,
+    `${spell.name}: choose a card from your grimoire.`,options.map(card=>({id:card.id,label:card.name})))!;
+   const card=options.find(option=>option.id===id);
+   if(card)chosen.push(card);
+  }
+  caster.personalDeck=caster.personalDeck.filter(card=>!chosen.includes(card));
+  caster.hand.push(...chosen);
+  caster.personalDeck=shuffle(caster.personalDeck,()=>resolutionRandom(s));
+  s.log.push(`${caster.name} chooses ${chosen.length} grimoire card${chosen.length===1?'':'s'}: ${chosen.map(c=>c.name).join(', ')||'none'}.`);
   return;
  }
  if(step.effect==='DRAW_QUEST') {
@@ -2257,7 +2265,12 @@ function resolveMomentBody(s:GameState,caster:Player,spell:Card,step:Moment,room
  }
  if(step.effect==='ACTIVATE_TARGET_ROOM') {
   if(!room?.effect||room.startingFor){s.log.push(`${spell.name}: the target room has no activatable effect.`);return;}
-  activateRoomBody(s,caster,undefined,{room,position:{...caster.wizard.position}});
+  const targetRoomId=room.effect==='INSTABILITY'
+   ?askChoice(s,caster.id,`activate-room|${caster.id}|${spell.id}`,`${spell.name}: choose a room within range 1 of ${room.name} to receive instability.`,
+    s.board.rooms.filter(candidate=>!candidate.startingFor&&Math.min(...candidate.tiles.flatMap(h=>room.tiles.map(origin=>hexLineDistance(origin,h))))<=1)
+     .map(candidate=>({id:candidate.id,label:candidate.name,roomId:candidate.id})))!
+   :undefined;
+  activateRoomBody(s,caster,targetRoomId,{room,position:{...room.tiles[0]}});
   return;
  }
  if(step.effect==='MOVE_MODEL') {

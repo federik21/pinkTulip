@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
  applyAction, createGame, createShamanicDeck, EVOCATION_TYPES, getEvocationKind, getEvocationSupply, summonEvocation,
 } from '../src';
 import type { GameState } from '../src';
 
 const activation=(playerId:string)=>({playerId,actionsUsed:0,exploring:0,spellsCast:0,sequencedSpellUsed:false,discardedExit:false,roomEffectUsed:false});
+afterEach(()=>vi.restoreAllMocks());
 function fixture():GameState {
  const s=createGame(2),origin=s.board.rooms.find(room=>room.id==='room-0,0')!.tiles[0];
  s.phase='ACTION';s.round=1;s.currentPlayerId='p1';s.firstPlayerId='p1';s.activation=activation('p1');
@@ -130,15 +131,32 @@ describe('Shamanic school',()=>{
   expect(result.players[0].quest).toMatchObject({completed:true,progress:2});
  });
 
- it('shuffles the discard into the grimoire and reveals Wind Spirit draws in the log',()=>{
+ it('lets Wind Spirit choose two grimoire cards, then shuffles the remaining deck',()=>{
   const s=fixture(),p=s.players[0],cards=createShamanicDeck('shamanic','shamanic');
-  p.personalDeck=cards.slice(0,2);p.discard=[cards[2]];
-  p.prepared.rapid={card:cards.find(c=>c.name==='Wind Spirit')!,used:false};
-  const result=applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid'});
-  expect(result.players[0].hand).toHaveLength(2);
-  expect(result.players[0].personalDeck).toHaveLength(1);
+  const windSpirit=cards.find(c=>c.name==='Wind Spirit')!;
+  const grimoire=cards.filter(c=>c!==windSpirit).slice(0,6);
+  p.personalDeck=grimoire.slice(0,4);p.discard=grimoire.slice(4);
+  p.prepared.rapid={card:windSpirit,used:false};
+  const random=vi.spyOn(Math,'random').mockReturnValue(0);
+  let result=applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid'});
+  expect(result.pendingDecision?.kind).toBe('CHOICE');
+  if(result.pendingDecision?.kind!=='CHOICE')throw new Error('Expected Wind Spirit to ask for a grimoire card');
+  let decision=result.pendingDecision;
+  const first=decision.options[0];
+  result=applyAction(result,{type:'RESPOND_CHOICE',playerId:'p1',key:decision.key,choiceId:first.id});
+  expect(result.pendingDecision?.kind).toBe('CHOICE');
+  if(result.pendingDecision?.kind!=='CHOICE')throw new Error('Expected Wind Spirit to ask for a second grimoire card');
+  decision=result.pendingDecision;
+  expect(decision.options.map(option=>option.id)).not.toContain(first.id);
+  const second=decision.options[0];
+  result=applyAction(result,{type:'RESPOND_CHOICE',playerId:'p1',key:decision.key,choiceId:second.id});
+  expect(result.pendingDecision).toBeFalsy();
+  expect(result.players[0].hand.map(card=>card.id)).toEqual([first.id,second.id]);
+  expect(result.players[0].personalDeck).toHaveLength(4);
   expect(result.players[0].discard).toHaveLength(0);
-  expect(result.log.some(line=>line.includes('reveals and draws 2 grimoire cards:'))).toBe(true);
+  expect([...result.players[0].hand,...result.players[0].personalDeck].map(card=>card.id).sort()).toEqual(grimoire.map(card=>card.id).sort());
+  expect(result.log.some(line=>line.includes('chooses 2 grimoire cards:'))).toBe(true);
+  expect(random).toHaveBeenCalledTimes(8);
  });
 
  it('removes an evocation with health 3 or less and awards Pyre Spirit VP',()=>{
@@ -176,6 +194,32 @@ describe('Shamanic school',()=>{
   const result=applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:room.id});
   expect(result.players[0].quest||result.players[0].additionalQuests.length).toBeTruthy();
   expect(result.log.some(line=>line.includes(`activates ${room.name}`))).toBe(true);
+ });
+
+ it('lets River Spirit choose an instability target relative to the activated room',()=>{
+  const s=fixture(),p=s.players[0],card=createShamanicDeck('shamanic','shamanic').find(c=>c.name==='River Spirit')!;
+  const room=s.board.rooms.find(candidate=>candidate.effect==='INSTABILITY'&&!candidate.startingFor)!;
+  p.prepared.rapid={card,used:false};
+  let result=applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:room.id});
+  expect(result.pendingDecision?.kind).toBe('CHOICE');
+  if(result.pendingDecision?.kind!=='CHOICE')throw new Error('Expected a room choice for instability placement');
+  const decision=result.pendingDecision;
+  const destination=decision.options.find(option=>option.roomId&&option.roomId!==room.id);
+  expect(destination).toBeDefined();
+  result=applyAction(result,{type:'RESPOND_CHOICE',playerId:'p1',key:decision.key,choiceId:destination!.id});
+  expect(result.board.rooms.find(candidate=>candidate.id===room.id)!.instability).toBe(0);
+  expect(result.board.rooms.find(candidate=>candidate.id===destination!.roomId)!.instability).toBe(1);
+  expect(result.log.some(line=>line.includes(`activates ${room.name}`))).toBe(true);
+ });
+
+ it('places River Spirit room-effect summons in the selected room',()=>{
+  const s=fixture(),p=s.players[0],card=createShamanicDeck('shamanic','shamanic').find(c=>c.name==='River Spirit')!;
+  const room=s.board.rooms.find(candidate=>candidate.effect==='SUMMON_CADAVER'&&!candidate.startingFor)!;
+  room.name='Obsidian Study';
+  p.prepared.rapid={card,used:false};
+  const result=applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:room.id});
+  expect(result.evocations.some(evocation=>evocation.name==='Cadaver'&&evocation.position.q===room.tiles[0].q&&evocation.position.r===room.tiles[0].r)).toBe(true);
+  expect(result.log.some(line=>line.includes('activates Obsidian Study'))).toBe(true);
  });
 
  it('does not strand River Spirit on an unaffordable central-chamber activation',()=>{
