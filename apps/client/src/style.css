@@ -22,7 +22,6 @@
 /* Cube meters fill with received damage, never remaining HP. */
 .health.damage-bar{display:flex;height:9px;margin:14px 0 7px;border-radius:3px;overflow:hidden;background:#0d0b10;box-shadow:inset 0 0 0 1px #ffffff20}
 .damage-bar .damage-segment{flex-shrink:0;height:100%;transition:width .15s}
-.damage-bar .unattributed{background-image:repeating-linear-gradient(135deg,transparent 0 3px,#39323f 3px 5px)}
 .damage-count{font-size:11px;line-height:1.5;color:#e5e0da;margin:0 0 8px}
 .damage-contributions{gap:5px;margin-bottom:12px;font-size:10px}
 .cube-warning{color:#edc998}

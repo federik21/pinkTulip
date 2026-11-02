@@ -78,11 +78,11 @@ describe('exclusive color completion bonuses',()=>{
   expect(g.players[0].cubes.available).toBe(25);expect(g.players[0].cubes.onWizard).toBe(0);
   expect(defeat({p1:9}).players[0].victoryPoints).toBe(4);
  });
- it('does not award a solo defeat bonus for unplaced damage after cube supply runs out',()=>{
+ it('defaults unplaced damage after cube supply runs out to BR, which outranks the attacker',()=>{
   let g=actionFixture(2);g.players[0].actionTokens=2;
   g.players[1].wizard.damageCubes=8;g.players[1].wizard.damageByPlayer={p1:1};
   g.players[0].cubes.available=0;g.players[0].cubes.onWizard=1;
   g=applyAction(g,{type:'PUNCH',playerId:'p1',targetId:'p2'});
-  expect(g.players[0].victoryPoints).toBe(4);
+  expect(g.players[0].victoryPoints).toBe(2);
  });
 });

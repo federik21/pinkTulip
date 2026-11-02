@@ -325,6 +325,23 @@ export function getContributionAwards(cubes:Record<PlayerId,number>,rewards:read
  });
 }
 
+export function compareFinalStanding<T extends {id:string; victoryPoints?:number; finalVP?:number; currentVP?:number; questsCompleted?:number; quests?:number; trophies?:unknown[]|number; firstPlayer?:boolean}>(a:T,b:T,firstPlayerId:string|null=null):number {
+ const aScore=a.victoryPoints ?? a.finalVP ?? a.currentVP ?? 0;
+ const bScore=b.victoryPoints ?? b.finalVP ?? b.currentVP ?? 0;
+ const byPoints=bScore-aScore;
+ if(byPoints!==0)return byPoints;
+ const aQuests=a.questsCompleted ?? a.quests ?? 0;
+ const bQuests=b.questsCompleted ?? b.quests ?? 0;
+ if(aQuests!==bQuests)return bQuests-aQuests;
+ const aTrophies=Array.isArray(a.trophies)?a.trophies.length:typeof a.trophies==='number'?a.trophies:0;
+ const bTrophies=Array.isArray(b.trophies)?b.trophies.length:typeof b.trophies==='number'?b.trophies:0;
+ if(aTrophies!==bTrophies)return bTrophies-aTrophies;
+ const aCrown = a.firstPlayer===true || (firstPlayerId!==null && a.id===firstPlayerId) ? 1 : 0;
+ const bCrown = b.firstPlayer===true || (firstPlayerId!==null && b.id===firstPlayerId) ? 1 : 0;
+ if(aCrown!==bCrown)return bCrown-aCrown;
+ return 0;
+}
+
 function awardVictoryPoints(s:GameState,id:PlayerId,points:number):string {
  // General rule: victory points never go below zero.
  const previousLeader=Math.max(s.blackRose.victoryPoints,...s.players.map(player=>player.victoryPoints));
@@ -943,6 +960,11 @@ function damage(s: GameState, target: Player, amount: number, source?: Player, a
    appendDamageHistory(target.wizard,source.id,cubes);
    s.log.push(`${source.name} places ${cubes} damage cubes on ${target.name}.`);
   }
+  // Wounds without an available cube are not unassigned: they default to BR.
+  if(inflicted>cubes) {
+   target.wizard.blackDamage+=inflicted-cubes;
+   appendDamageHistory(target.wizard,BLACK_ROSE_ID,inflicted-cubes);
+  }
  } else {
   target.wizard.blackDamage+=inflicted;
   appendDamageHistory(target.wizard,BLACK_ROSE_ID,inflicted);
@@ -1035,6 +1057,8 @@ function damageEvocation(s:GameState,e:Evocation,amount:number,source?:Player,ac
  const cubes=source?Math.min(inflicted,source.cubes.available):0;
  if(source){source.cubes.available-=cubes;source.cubes.onEvocations+=cubes;}
  if(source&&cubes)e.damageByPlayer[source.id]=(e.damageByPlayer[source.id]??0)+cubes;
+ // No cube (no source or empty supply): the wound defaults to BR.
+ if(inflicted>cubes)e.damageByPlayer[BLACK_ROSE_ID]=(e.damageByPlayer[BLACK_ROSE_ID]??0)+inflicted-cubes;
  s.log.push(source?`${e.name} suffers ${inflicted} damage; ${source.name} places ${cubes} damage cubes.`:`${e.name} suffers ${inflicted} black damage.`);
  appendFeedback(s,{kind:'DAMAGE',target:feedbackTarget,sourceId:source?.id??BLACK_ROSE_ID,amount:inflicted});
  if(source && actor)cerebralImplant(s,source,actor);
@@ -1782,8 +1806,7 @@ function cleanup(s: GameState) {
  if(s.round>=3 || s.blackRose.victoryPoints>=30 || s.players.some(p=>p.victoryPoints>=30)) {
   s.log.push(`Endgame triggered after Cleanup: ${s.round>=3?'round limit reached':'a competitor reached 30 VP'}.`);
   scoreEndgame(s);
-  // Stable player seating order wins equal final scores; Pink Tulip follows mages.
-  const leaders=[...s.players,{id:BLACK_ROSE_ID,name:'BR',victoryPoints:s.blackRose.victoryPoints}].sort((a,b)=>b.victoryPoints-a.victoryPoints);
+  const leaders=[...s.players,{id:BLACK_ROSE_ID,name:'BR',victoryPoints:s.blackRose.victoryPoints,questsCompleted:0,trophies:[]}].sort((a,b)=>compareFinalStanding(a,b,s.firstPlayerId));
   s.phase='GAME_OVER';s.winner=leaders[0].id;
   s.log.push(`${leaders[0].name} wins with ${leaders[0].victoryPoints} VP!`);
  }

@@ -1,5 +1,5 @@
 import React from 'react';
-import { BLACK_ROSE_ID, ENDGAME_REWARDS, GameState, getContributionAwards, getMageEvocationCount, getSpellType, MAGE_DRAFT_POOL } from '@brw/game-engine';
+import { BLACK_ROSE_ID, compareFinalStanding, ENDGAME_REWARDS, GameState, getContributionAwards, getMageEvocationCount, getSpellType, MAGE_DRAFT_POOL } from '@brw/game-engine';
 import { DamageBar } from './DamageBar';
 import { ModelEffects } from './ModelEffects';
 import { MAGE_SYMBOLS, MAGE_COLOR_NAMES, mageStyle } from './presentation';
@@ -25,7 +25,7 @@ export function MageRoster({game,viewerId,actingPlayerId,onViewRetinue}: Props) 
   }),
   {id:BLACK_ROSE_ID,name:'BR',trophies:0,quests:0,trophyVP:0,questVP:0,firstPlayerVP:0,currentVP:game.blackRose.victoryPoints,finalVP:game.blackRose.victoryPoints,baseVP:game.blackRose.victoryPoints},
  ];
- const leaderboard=[...scores].sort((a,b)=>b.finalVP-a.finalVP);
+ const leaderboard=[...scores].sort((a,b)=>compareFinalStanding(a,b,game.firstPlayerId));
  const vpLabel=(points:number)=>points?`+${points} VP`:'—';
  return <section className="players-panel" aria-labelledby="mages-heading">
   <span className="eyebrow">Mages of the lodge · {game.players.length}</span><h2 id="mages-heading">Mages of the lodge</h2>

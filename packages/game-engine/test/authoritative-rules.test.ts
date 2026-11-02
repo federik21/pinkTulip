@@ -1,7 +1,7 @@
 import { moment } from '../src/cards';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
- applyAction, BLACK_ROSE_ID, canPassActionPhase, canPlayerAct, createGame,
+ applyAction, BLACK_ROSE_ID, canPassActionPhase, canPlayerAct, compareFinalStanding, createGame,
  ENDGAME_REWARDS, getContributionAwards, getRoomMajorityWinners, getRoomRewards, ROOM_COLORS, ROOM_EFFECT_LABELS,
 } from '../src';
 import type { Card, Evocation, GameAction, GameState, Player, Room } from '../src';
@@ -112,9 +112,19 @@ describe('endgame timing, majorities and deterministic victory',()=>{
   expect(n.players.map(p=>p.victoryPoints)).toEqual([0,1,0,0]);expect(n.blackRose).toEqual({victoryPoints:0,kills:0});
   expect(n.log.filter(l=>l.includes('endgame')&&l.includes('majority'))).toEqual([]);
  });
- it('breaks equal final scores deterministically by player seating order before Pink Tulip',()=>{
-  const g=actionFixture();g.round=3;g.blackRose.victoryPoints=30;player(g).victoryPoints=30;player(g,'p2').victoryPoints=30;
-  const n=settle(g);expect(n.winner).toBe('p1');expect(n.players.map(p=>p.victoryPoints)).toEqual([30,30,0,0]);
+ it('breaks equal final scores by solved quests, then trophies, then the crown before Pink Tulip',()=>{
+  const players=[
+   {id:'p1',victoryPoints:30,questsCompleted:1,trophies:['p4'],firstPlayer:false},
+   {id:'p2',victoryPoints:30,questsCompleted:2,trophies:[],firstPlayer:false},
+   {id:'p3',victoryPoints:30,questsCompleted:2,trophies:['p1'],firstPlayer:false},
+   {id:'p4',victoryPoints:30,questsCompleted:2,trophies:['p3'],firstPlayer:true},
+  ];
+  expect([...players].sort(compareFinalStanding)).toEqual([
+   {id:'p4',victoryPoints:30,questsCompleted:2,trophies:['p3'],firstPlayer:true},
+   {id:'p3',victoryPoints:30,questsCompleted:2,trophies:['p1'],firstPlayer:false},
+   {id:'p2',victoryPoints:30,questsCompleted:2,trophies:[],firstPlayer:false},
+   {id:'p1',victoryPoints:30,questsCompleted:1,trophies:['p4'],firstPlayer:false},
+  ]);
  });
  it('waits for the last free evocation before resolving a 30-point or round-limit endgame',()=>{
   let g=actionFixture(2);g.round=3;player(g).victoryPoints=30;

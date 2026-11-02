@@ -149,7 +149,11 @@ describe.each(['ACTION','EVOCATION'] as const)('%s authoritative evocation comba
      const result=applyAction(activate(initial),attack(target));
      const victim=target==='mage'?result.players[1].wizard:result.evocations.find(e=>e.id==='victim')!;
    expect(victim.damageCubes).toBe(2);
-   expect(victim.damageByPlayer).toEqual(available?{p1:Math.min(2,available)}:{});
+   // Wounds without a cube default to BR instead of staying unassigned.
+   const unfunded=2-Math.min(2,available);
+   const ledger={...(available?{p1:Math.min(2,available)}:{}),...(unfunded&&target!=='mage'?{'black-rose':unfunded}:{})};
+   expect(victim.damageByPlayer).toEqual(ledger);
+   if(target==='mage')expect((victim as typeof result.players[number]['wizard']).blackDamage).toBe(unfunded);
    expect(result.players[0].cubes.available).toBe(Math.max(0,available-2));
    expect(result.players[0].cubes[target==='mage'?'onWizard':'onEvocations']).toBe(Math.min(2,available));
      cubesConserved(result);

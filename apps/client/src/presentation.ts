@@ -15,8 +15,6 @@ export const roomStatus=(room:GameState['board']['rooms'][number])=>room.reconst
 export function cubeSegments(contributions:Record<string,number>,total:number,capacity:number) {
  let offset=0;
  const entries=Object.entries(contributions).filter(([,count])=>count>0).sort(([a],[b])=>a===BLACK_ROSE_ID?1:b===BLACK_ROSE_ID?-1:a.localeCompare(b));
- const attributed=entries.reduce((sum,[,count])=>sum+count,0);
- if(total>attributed)entries.push(['unattributed',total-attributed]);
  return entries.map(([id,count])=>{
   const start=Math.min(capacity,offset);offset+=count;
   return {id,count,start:start/capacity,fraction:Math.max(0,Math.min(capacity,offset)-start)/capacity};
