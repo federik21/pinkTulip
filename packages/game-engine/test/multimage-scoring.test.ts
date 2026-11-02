@@ -11,7 +11,7 @@ function actionFixture(count=4) {
 }
 function settleRoom(contributions:Record<string,number>,central=false) {
  const g=actionFixture();
- const r=g.board.rooms.find(r=>central?r.id==='room-0,0':!r.startingFor&&r.id!=='room-0,0')!;
+ const r=g.board.rooms.find(r=>central?r.id==='room-0,0':!r.startingFor&&r.id!=='room-0,0'&&r.instabilityLimit===5)!;
  r.reconstructed=true;r.cubesByPlayer={...contributions};r.instability=Object.values(contributions).reduce((n,c)=>n+c,0);
  for(const p of g.players){const n=contributions[p.id]??0;p.cubes.available-=n;p.cubes.onBoard=n;}
  return {g:applyAction(g,{type:'PASS_ROUND',playerId:'p1'}),roomId:r.id};
@@ -50,7 +50,7 @@ describe('dense contribution ranks and tie reduction',()=>{
 
 describe('exclusive color completion bonuses',()=>{
  function finishRoom(neutral:number) {
-  const g=actionFixture(2),r=g.board.rooms.find(r=>!r.startingFor&&r.id!=='room-0,0')!;
+  const g=actionFixture(2),r=g.board.rooms.find(r=>!r.startingFor&&r.id!=='room-0,0'&&r.instabilityLimit===5)!;
   g.players[0].wizard.position={...r.tiles[0]};g.players[1].actionTokens=2;
     const placed=r.instabilityLimit-1;
     r.instability=placed;r.cubesByPlayer={p1:placed-neutral,...(neutral?{'black-rose':neutral}:{})};

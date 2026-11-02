@@ -1,4 +1,4 @@
-import { applyAction, canStartGame, GameRuleError } from '@brw/game-engine';
+import { applyAction, canStartGame, GameRuleError, getRoomEffect } from '@brw/game-engine';
 import type { GameAction, GameState, Hex, PlayerId, RoomEffect } from '@brw/game-engine';
 
 export const HISTORY_LIMIT = 32;
@@ -46,9 +46,11 @@ function activatesDrawRoom(before: GameState, after: GameState, action: GameActi
  // A final step activates its destination, not the room it leaves. For other
  // effects check both sides in case the actor moves/respawns during resolution.
  // Empty sources are still hard barriers.
- return [before, after].some(game => game.board.rooms.some(room =>
-  room.effect && drawEffects.has(room.effect) && positions.some(position =>
-   room.tiles.some(tile => tile.q === position.q && tile.r === position.r))));
+ return [before, after].some(game => game.board.rooms.some(room => {
+  const effect=getRoomEffect(room);
+  return effect && drawEffects.has(effect) && positions.some(position =>
+   room.tiles.some(tile => tile.q === position.q && tile.r === position.r));
+ }));
 }
 
 type Identified = { id: string };

@@ -1,7 +1,7 @@
 import {
  applyAction, areAdjacent, areInSameRoom, canStartGame, canUseSpellDummy,
  GameRuleError, getDiscardMoveCards, getEffectiveSpell, getEvocationSupply, getQuestRewardTargets, getSpellType,
- hexDistance, hexKey, isInStartingRoom, isWithinSpellRange, MAGE_DRAFT_POOL,
+ getRoomEffect, hexDistance, hexKey, isInStartingRoom, isWithinSpellRange, MAGE_DRAFT_POOL,
 } from '@brw/game-engine';
 import type { Card, FeedbackTarget, GameAction, GameState, Hex, Moment, Player, Room } from '@brw/game-engine';
 
@@ -80,7 +80,7 @@ function targetValue(s: GameState, p: Player, card: Card, target: FeedbackTarget
    continue;
   }
   if(m.effect==='DRAW_QUEST') { if(s.questDeck.length+s.questDiscard.length)value+=2;continue; }
-  if(m.effect==='ACTIVATE_TARGET_ROOM') { if(room?.effect&&room.effect!=='DRAW_POWERFUL')value+=2;continue; }
+  if(m.effect==='ACTIVATE_TARGET_ROOM') { const effect=room?getRoomEffect(room):null;if(effect&&effect!=='DRAW_POWERFUL')value+=2;continue; }
   if(m.effect==='MOVE_MODEL') { if(models(s).some(model=>model.wounds>0))value+=3;continue; }
   if(m.effect==='PLACE_ALTAR_CUBES') {
    if(room&&!room.reconstructed)value+=2*Math.min(s.evocations.filter(e=>e.archetype==='ALTAR').length,room.instabilityLimit-room.instability,p.cubes.available);
@@ -159,8 +159,9 @@ function route(s: GameState, p: Player, origin: Hex, evocation = false): Hex[] {
 
 function* roomActions(s: GameState, p: Player): Generator<GameAction> {
  const room = roomAt(s, p.wizard.position);
- if (!room?.effect || room.startingFor || (room.reconstructed && room.specialUsed)) return;
- if (room.effect === 'INSTABILITY') {
+ const effect=room?getRoomEffect(room):null;
+ if (!room || !effect || room.startingFor || (room.reconstructed && room.specialUsed)) return;
+ if (effect === 'INSTABILITY') {
   const rooms = s.board.rooms.filter(r => !r.startingFor && !r.reconstructed && r.instability < r.instabilityLimit)
    .sort((a, b) => (a.instabilityLimit - a.instability) - (b.instabilityLimit - b.instability) || compareId(a.id, b.id));
   for (const target of rooms) if (target.tiles.some(h => room.tiles.some(origin => isWithinSpellRange(origin, h, 1)))) {

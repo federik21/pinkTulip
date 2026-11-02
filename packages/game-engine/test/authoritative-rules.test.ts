@@ -1,8 +1,8 @@
 import { moment } from '../src/cards';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
- applyAction, BLACK_ROSE_ID, canPassActionPhase, canPlayerAct, compareFinalStanding, createGame,
- ENDGAME_REWARDS, getContributionAwards, getRoomMajorityWinners, getRoomRewards, ROOM_COLORS, ROOM_EFFECT_LABELS,
+ applyAction, BLACK_ROSE_ID, canPassActionPhase, canPlayerAct, compareFinalStanding, createDemoBoard, createGame,
+ ENDGAME_REWARDS, getContributionAwards, getRoomEffect, getRoomMajorityWinners, getRoomRewards, hexDistance, ROOM_COLORS, ROOM_EFFECT_LABELS,
 } from '../src';
 import type { Card, Evocation, GameAction, GameState, Player, Room } from '../src';
 
@@ -72,14 +72,62 @@ describe('capacity-dependent triple prizes and finite dense rankings',()=>{
  it('rejects unsupported printed capacities rather than silently inventing prizes',()=>{
   expect(()=>getRoomRewards(7)).toThrow(/Unsupported room capacity/);
  });
- it('keeps 18 colored rooms, six colors times three, and deterministic capacity distribution',()=>{
+ it('keeps 18 colored rooms and the configured capacity distribution',()=>{
   const a=createGame().board,b=createGame().board,colored=a.rooms.filter(r=>r.color!==null);
   expect(colored).toHaveLength(18);for(const color of ROOM_COLORS)expect(colored.filter(r=>r.color===color)).toHaveLength(3);
   expect([4,5,6].map(n=>colored.filter(r=>r.instabilityLimit===n).length)).toEqual([3,12,3]);
-  expect(a.rooms.map(r=>[r.id,r.instabilityLimit,r.rewards])).toEqual(b.rooms.map(r=>[r.id,r.instabilityLimit,r.rewards]));
-  expect(a.rooms.find(r=>r.id==='room-0,0')).toMatchObject({instabilityLimit:10,rewards:[6,3,1]});
+  expect(a.rooms).toHaveLength(b.rooms.length);
+  expect(a.rooms.find(r=>r.id==='room-0,0')).toMatchObject({name:'BR room',instabilityLimit:10,rewards:[6,3,1]});
   expect(a.rooms.filter(r=>r.startingFor)).toHaveLength(4);
+  for(const color of ROOM_COLORS) {
+   const room=colored.find(r=>r.color===color)!;
+   expect(room.instabilityLimit).toBe(color==='violet'?4:color==='grey'?6:5);
+  }
+  expect(colored.every(r=>r.rebuiltEffect===null)).toBe(true);
   for(const r of colored)expect(r.rewards).toEqual(getRoomRewards(r.instabilityLimit));
+ });
+ it('randomizes room colors while keeping colors apart and every color within two steps of every mage',()=>{
+  const random=(seed:number)=>()=>{seed=(seed*1664525+1013904223)>>>0;return seed/0x100000000;};
+  const boards=Array.from({length:12},(_,index)=>createDemoBoard(3,random(index+1)));
+  for(const board of boards) {
+   const colored=board.rooms.filter(room=>room.color!==null);
+   expect(colored).toHaveLength(18);
+   for(const color of ROOM_COLORS)expect(colored.filter(room=>room.color===color)).toHaveLength(3);
+   const centerRing=colored.filter(room=>hexDistance(room.tiles[0],{q:0,r:0})===1);
+   expect(centerRing).toHaveLength(ROOM_COLORS.length);
+   expect(new Set(centerRing.map(room=>room.color))).toEqual(new Set(ROOM_COLORS));
+   for(let i=0;i<colored.length;i++)for(let j=i+1;j<colored.length;j++) {
+    if(hexDistance(colored[i].tiles[0],colored[j].tiles[0])===1)expect(colored[i].color).not.toBe(colored[j].color);
+   }
+   for(const start of board.rooms.filter(room=>room.startingFor)) {
+    const reachable=colored.filter(room=>hexDistance(start.tiles[0],room.tiles[0])<=2);
+    expect(new Set(reachable.map(room=>room.color))).toEqual(new Set(ROOM_COLORS));
+   }
+   expect(board.rooms.filter(room=>room.name==='Throne room')).toHaveLength(1);
+   const throne=board.rooms.find(room=>room.name==='Throne room');
+   expect(throne?.color).toBe('violet');
+   expect(hexDistance(throne!.tiles[0],{q:0,r:0})).toBe(1);
+   expect(board.rooms.every(room=>room.instabilityLimit>0)).toBe(true);
+  }
+  expect(new Set(boards.map(board=>board.rooms.filter(room=>room.color!==null).map(room=>`${room.id}:${room.color}`).join('|'))).size).toBeGreaterThan(1);
+ });
+ it('never places adjacent rooms of the same color at any supported room count',()=>{
+  const random=(seed:number)=>()=>{seed=(seed*1664525+1013904223)>>>0;return seed/0x100000000;};
+  for(const count of [1,2,3] as const) {
+   const colored=createDemoBoard(count,random(count)).rooms.filter(room=>room.color!==null);
+   for(const color of ROOM_COLORS)expect(colored.filter(room=>room.color===color)).toHaveLength(count);
+   for(let i=0;i<colored.length;i++)for(let j=i+1;j<colored.length;j++) {
+    if(hexDistance(colored[i].tiles[0],colored[j].tiles[0])===1)expect(colored[i].color).not.toBe(colored[j].color);
+   }
+  }
+ });
+ it('uses a per-room rebuilt-effect override and falls back to the standard effect by default',()=>{
+  const board=createGame().board;
+  const violet=board.rooms.find(room=>room.color==='violet')!;
+  expect(getRoomEffect(violet)).toBe(violet.effect);
+  violet.reconstructed=true;
+  violet.rebuiltEffect='ROOM_DAMAGE';
+  expect(getRoomEffect(violet)).toBe('ROOM_DAMAGE');
  });
  it('includes Pink Tulip in dense contribution ranks and returns no awards for zero or negative counts',()=>{
   expect(getContributionAwards({p1:4,p2:4,[BLACK_ROSE_ID]:1,p3:0,p4:-1},ENDGAME_REWARDS)).toEqual([

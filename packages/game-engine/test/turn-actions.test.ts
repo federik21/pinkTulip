@@ -71,7 +71,7 @@ describe('two shared turn actions',()=>{
  });
 
  it('finishes both movement steps and the room effect of the second action before handing off',()=>{
-  let g=fixture();prepare(g,'slot1');g=applyAction(g,cast('slot1'));
+  let g=fixture();g.board.rooms.find(room=>room.id==='room-1,-1')!.effect='SUMMON_CADAVER';prepare(g,'slot1');g=applyAction(g,cast('slot1'));
   g=applyAction(g,{type:'BEGIN_PHYSICAL_ACTION',playerId:'p1',kind:'EXPLORE'});
   g=applyAction(g,{type:'PERFORM_MOVEMENT',playerId:'p1'});
   g=applyAction(g,{type:'EXPLORE_STEP',playerId:'p1',destination:{q:1,r:0}});

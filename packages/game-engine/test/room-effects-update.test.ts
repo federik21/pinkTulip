@@ -39,6 +39,14 @@ describe('Violet room: first-player token',()=>{
   const ended=applyAction(begun,{type:'SKIP_PHYSICAL_EFFECTS',playerId:'p1'});
   expect(ended.currentPlayerId).toBe('p2');
  });
+ it('uses a room-specific rebuilt effect when configured',()=>{
+  const s=fixture(),room=s.board.rooms.find(candidate=>candidate.color==='crimson')!;
+  room.reconstructed=true;room.rebuiltEffect='FIRST_PLAYER';
+  stand(s,room.id);
+  const after=activate(s);
+  expect(after.firstPlayerId).toBe('p1');
+  expect(after.board.rooms.find(candidate=>candidate.id===room.id)?.instability).toBe(0);
+ });
 });
 
 describe('Central room: discard cost',()=>{

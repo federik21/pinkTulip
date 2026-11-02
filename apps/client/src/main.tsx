@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ACTIONS_PER_TURN, ELEMENT_GLYPHS, getEffectiveSpell, spellFilterAllows, spellReaches, getSpellType, getDiscardMoveCards, canUseSpellDummy, spellCanTargetModel, upgradeLegacyCards, getMageEvocationCount, Card, GameAction, GameState, Player, Room, MAX_MAGES, MIN_MAGES, ROOM_COLORS, ROOM_EFFECT_LABELS, isInStartingRoom, isWithinSpellRange, mustLeaveCell, hexDistance, hexKey } from '@brw/game-engine';
+import { ACTIONS_PER_TURN, ELEMENT_GLYPHS, getEffectiveSpell, spellFilterAllows, spellReaches, getSpellType, getDiscardMoveCards, canUseSpellDummy, spellCanTargetModel, upgradeLegacyCards, getMageEvocationCount, getRoomEffect, Card, GameAction, GameState, Player, Room, MAX_MAGES, MIN_MAGES, ROOM_COLORS, ROOM_EFFECT_LABELS, isInStartingRoom, isWithinSpellRange, mustLeaveCell, hexDistance, hexKey } from '@brw/game-engine';
 import type { TurnRecapCard } from '@brw/game-engine';
 import { ActiveEvocationControls, EvocationSupply, EvocationsPanel, evocationIcon, targetModels } from './EvocationsPanel';
 import { PhysicalActionsPanel, PhysicalBannerActions, physicalContext } from './PhysicalActionsPanel';
@@ -339,7 +339,7 @@ function App() {
  const room=game.board.rooms.find(r=>r.id===selectedRoom);
  // Room-targeted effects (Emerald rooms, Fountain-style room choices) are answered on the map and confirmed in the top bar.
  const emeraldCtx=pickingEmerald&&myTurn?physicalContext(game,me,effectTargetId):null;
- const emeraldPicking=!!emeraldCtx&&!!active?.physicalAction&&!active.roomEffectUsed&&!active.exploring&&emeraldCtx.roomAvailable&&emeraldCtx.currentRoom?.effect==='INSTABILITY';
+ const emeraldPicking=!!emeraldCtx&&!!active?.physicalAction&&!active.roomEffectUsed&&!active.exploring&&emeraldCtx.roomAvailable&&emeraldCtx.currentEffect==='INSTABILITY';
  const pendingDecision=game.pendingDecision;
  const choiceDecision=pendingDecision?.kind==='CHOICE'&&pendingDecision.playerId===me.id&&isRoomChoice(pendingDecision)?pendingDecision:null;
  const choiceRoomId=choiceDecision&&choicePick?.key===choiceDecision.key?choicePick.roomId:'';
@@ -474,7 +474,7 @@ function App() {
       else {setSelectedRoom(r.id);setSelectedModelId('');}
       };
       return <g key={r.id} data-room-id={r.id} data-color={r.color??undefined} transform={`translate(${x},${y})`} className={`hex ${occupants.some(p=>p.id===actingPlayer?.id)?'acting-room':''} ${r.reconstructed?'rebuilt':''} ${r.startingFor?'start-room':''} ${r.id==='room-0,0'?'central':''} ${selectedRoom===r.id?'selected':''} ${reachable||targetable||pickable?'reachable':''} ${pickable&&mapPick?.chosen===r.id?'pick-chosen':''}`} role="button" tabIndex={0} aria-label={`${r.name}, ${r.startingFor?'protected starting room':roomStatus(r)}${!r.reconstructed?contributions.map(([id,n])=>`, ${ownerName(game,id)}: ${n} cubes`).join(''):''}${occupants.map(p=>`, ${p.name}`).join('')}${summons.map(e=>`, ${e.name} #${evocationNumber(game,e)} of ${ownerName(game,e.assignedTo??e.playerId)}`).join('')}`} onClick={choose} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();choose();}}}>
-      <title>{r.name}{r.color?` · ${r.color}`:''} · {r.effect?ROOM_EFFECT_LABELS[r.effect]:'Protected starting room'}{r.reconstructed?` · Rebuilt · ${roomStatus(r)}`:` · Rewards ${r.rewards.join('/')} VP`}</title><polygon points="0,-33 29,-16 29,16 0,33 -29,16 -29,-16"/>
+      <title>{r.name}{r.color?` · ${r.color}`:''} · {getRoomEffect(r)?ROOM_EFFECT_LABELS[getRoomEffect(r)!]:'Protected starting room'}{r.reconstructed?` · Rebuilt · ${roomStatus(r)}`:` · Rewards ${r.rewards.join('/')} VP`}</title><polygon points="0,-33 29,-16 29,16 0,33 -29,16 -29,-16"/>
           <FeedbackPulse feedback={feedback} kind="ROOM" targetId={r.id} svg/>
           <RoomTrapTokens game={game} viewerId={me.id} roomId={r.id}/>
       <text className="room-name" aria-hidden="true">{roomNameLines(r.name).map((line,i)=><tspan x={0} y={-21+i*7} key={i}>{line}{i===0?' ':''}</tspan>)}</text>
@@ -489,7 +489,7 @@ function App() {
       </g>;
      })}</svg></div>
     {room&&<div className={`room-detail${quickMode&&spell&&!quickControls?' quick-target':''}`}><strong>{room.name} {room.reconstructed?'· Rebuilt':''}</strong><span>{room.startingFor?'Protected starting room · Exit only; no voluntary reentry':room.reconstructed?`Double special · ${roomStatus(room)} · no further cube placement`:`${room.color??'Central'} · ${room.instability}/${room.instabilityLimit} instability · Rewards ${room.rewards.join(' / ')} VP${room.instability>=room.instabilityLimit?' · Full: locked to new cubes; rebuilds at Cleanup, then unlocks its double special.':''}`}</span>
-    {room.effect&&<span>{room.reconstructed?'Double special':'Free effect'}: {ROOM_EFFECT_LABELS[room.effect]}{room.reconstructed?` ×2 · ${room.specialUsed?'Used this Action phase':'Ready · once per Action phase'}`:' · once within Explore or Attack, before or after its primary effect.'}</span>}
+    {getRoomEffect(room)&&<span>{room.reconstructed?'Rebuilt effect':'Standard effect'}: {ROOM_EFFECT_LABELS[getRoomEffect(room)!]}{room.reconstructed?` ×2 · ${room.specialUsed?'Used this Action phase':'Ready · once per Action phase'}`:' · once within Explore or Attack, before or after its primary effect.'}</span>}
     {!room.reconstructed&&<div className="contributions">{Object.entries(room.cubesByPlayer).filter(([,n])=>n>0).map(([id,n])=><span style={mageStyle(id)} key={id}>{emoji[id]??'✺'} {ownerName(game,id)}: {n}</span>)}</div>}
     {dockedModes}
     {!activatingSpell&&spell&&spell.target!=='ROOM'&&spell.target!=='SELF'&&!dummy&&<label className="action-setting">Spell target model<select aria-label="Spell target model" value={selectedModelId} onChange={e=>setSelectedModelId(e.target.value)}><option value="">First eligible model in this room</option>{spellModelsInRoom(room).map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label>}

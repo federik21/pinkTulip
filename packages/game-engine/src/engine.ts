@@ -190,6 +190,8 @@ export const ROOM_EFFECT_LABELS: Record<RoomEffect,string> = {
  FIRST_PLAYER:'Place 1 instability in this room and take the first-player token: you start the next phase and following rounds',
 };
 const effects: RoomEffect[] = ['ROOM_DAMAGE','DRAW_DISCARD','INSTABILITY','DRAW_QUEST','FIRST_PLAYER','SUMMON_CADAVER'];
+export const getRoomEffect = (room:Pick<Room,'effect'|'rebuiltEffect'|'reconstructed'>):RoomEffect|null =>
+ room.reconstructed ? room.rebuiltEffect ?? room.effect : room.effect;
 /** Cards discarded from hand to activate the central chamber. */
 export const CENTRAL_ROOM_DISCARD_COST=2;
 /** Hand cards that may pay the central chamber's cost (Forgotten spells never can). */
@@ -207,6 +209,63 @@ export function getDefaultRoomsPerColor(playerCount:number):1|2|3 {
  assert(Number.isInteger(playerCount)&&playerCount>=1&&playerCount<=MAX_MAGES,'Choose between 1 and 4 mages');
  // A host-only Lobby may preview the two-mage minimum before another seat joins.
  return Math.max(1,playerCount-1) as 1|2|3;
+}
+
+function assignRoomColors(positions:Hex[],startingPositions:Hex[],roomsPerColor:1|2|3,random:()=>number):Map<string,RoomColor> {
+ const remaining=new Map<RoomColor,number>(ROOM_COLORS.map(color=>[color,roomsPerColor]));
+ const assigned=new Map<string,RoomColor>();
+ const centerRing=positions.filter(position=>hexDistance(position,{q:0,r:0})===1);
+ if(centerRing.length!==ROOM_COLORS.length)throw new GameRuleError('Room layout must have one central-adjacent room per color');
+ for(const [index,position] of shuffle(centerRing,random).entries()) {
+  const color=ROOM_COLORS[index];
+  assigned.set(hexKey(position),color);
+  remaining.set(color,remaining.get(color)!-1);
+ }
+ const neighbors=new Map(positions.map(position=>[
+  hexKey(position),
+  positions.filter(other=>hexDistance(position,other)===1).map(hexKey),
+ ]));
+ const reachable=startingPositions.map(start=>new Set(positions.filter(position=>hexDistance(start,position)<=2).map(hexKey)));
+
+ const choicesFor=(position:Hex):RoomColor[]=>{
+  const key=hexKey(position),adjacent=neighbors.get(key)!;
+  return ROOM_COLORS.filter(color=>(remaining.get(color)??0)>0&&!adjacent.some(other=>assigned.get(other)===color));
+ };
+ const canStillReachEachColor=()=>{
+  if(roomsPerColor!==3)return true;
+  for(const start of reachable)for(const color of ROOM_COLORS) {
+   if([...start].some(key=>assigned.get(key)===color))continue;
+   if(!(remaining.get(color)??0))return false;
+   if(!positions.some(position=>{
+    const key=hexKey(position);
+    return start.has(key)&&!assigned.has(key)&&choicesFor(position).includes(color);
+   }))return false;
+  }
+  return true;
+ };
+ const search=():boolean=>{
+  if(assigned.size===positions.length)return canStillReachEachColor();
+  const unassigned=shuffle(positions.filter(position=>!assigned.has(hexKey(position))),random);
+  let next:Hex|undefined,options:RoomColor[]=[];
+  for(const position of unassigned) {
+   const choices=choicesFor(position);
+   if(!choices.length)return false;
+   if(!next||choices.length<options.length) { next=position;options=choices; }
+  }
+  if(!next)return false;
+  for(const color of shuffle(options,random)) {
+   const key=hexKey(next);
+   assigned.set(key,color);
+   remaining.set(color,remaining.get(color)!-1);
+   const enoughRooms=[...remaining.values()].every(count=>count<=positions.length-assigned.size);
+   if(enoughRooms&&canStillReachEachColor()&&search())return true;
+   remaining.set(color,remaining.get(color)!+1);
+   assigned.delete(key);
+  }
+  return false;
+ };
+ if(!search())throw new GameRuleError('Could not generate a room layout that meets the color and reachability rules');
+ return assigned;
 }
 
 export function createDemoBoard(roomsPerColor:1|2|3=3,random:()=>number=Math.random): Board {
@@ -231,17 +290,24 @@ export function createDemoBoard(roomsPerColor:1|2|3=3,random:()=>number=Math.ran
   if(distance<=1 || (distance===2 && (roomsPerColor===3 || (roomsPerColor===2 && (q===0 || r===0 || q+r===0)))))tiles.push({q,r});
  }
  tiles.push(...startingRooms.map(start=>start.position));
- let colorIndex=0;
+ const coloredPositions=tiles.filter(position=>
+  hexDistance(position,{q:0,r:0})>0&&!startingRooms.some(start=>hexKey(start.position)===hexKey(position)),
+ );
+ const roomColors=assignRoomColors(coloredPositions,startingRooms.map(start=>start.position),roomsPerColor,random);
+ const thronePosition=coloredPositions.find(position=>
+  hexDistance(position,{q:0,r:0})===1&&roomColors.get(hexKey(position))==='violet',
+ )!;
  const rooms: Room[] = tiles.map(h => {
-  const regular=hexDistance(h,{q:0,r:0})>0 && !startingRooms.some(start=>hexKey(start.position)===hexKey(h));
-  const index=regular?colorIndex++%6:-1;
-  // Each color retains its printed capacity/effect at every board size.
-  const capacity=h.q===0 && h.r===0?10:index===4?4:index===5?6:5;
+  const central=h.q===0&&h.r===0;
+  const starting=startingRooms.some(start=>hexKey(start.position)===hexKey(h));
+  const color=roomColors.get(hexKey(h))??null;
+  const capacity=central?10:color==='violet'?4:color==='grey'?6:5;
+  const effect=color?effects[ROOM_COLORS.indexOf(color)]:central?'DRAW_POWERFUL':null;
   return {
-  id: `room-${h.q},${h.r}`, name: h.q===0 && h.r===0 ? 'BR Chamber' : names.pop()!,
+  id: `room-${h.q},${h.r}`, name:central?'BR room':starting?'Starting room':hexKey(h)===hexKey(thronePosition)?'Throne room':names.pop()!,
   tiles: [h], instability: 0, instabilityLimit: capacity,
   rewards: getRoomRewards(capacity), cubesByPlayer: {}, reconstructed: false, scored: false,
-  color:index<0?null:ROOM_COLORS[index], effect:index<0?(h.q===0&&h.r===0?'DRAW_POWERFUL':null):effects[index], specialUsed:false,
+  color,effect,rebuiltEffect:null,specialUsed:false,
  }; });
  for(const start of startingRooms) {
   const room=rooms.find(r=>r.id===`room-${hexKey(start.position)}`)!;
@@ -741,7 +807,10 @@ function chooseReactiveSpell(s:GameState,owner:Player,eligible:ActiveSpell[],eve
  switch(event.event) {
   case 'SPELL_CAST':summary=`${actor?.name??'A mage'} casts ${card?.name??'a spell'}.`;break;
   case 'ENTER_ROOM':summary=`${model?.name??actor?.name??'A model'} enters ${room?.name??'a room'}.`;break;
-  case 'ROOM_ACTIVATED':summary=`${actor?.name??'A mage'} activates ${room?.name??'a room'}${room?.effect?`: ${ROOM_EFFECT_LABELS[room.effect]}`:''}.`;break;
+  case 'ROOM_ACTIVATED': {
+   const effect=room?getRoomEffect(room):null;
+   summary=`${actor?.name??'A mage'} activates ${room?.name??'a room'}${effect?`: ${ROOM_EFFECT_LABELS[effect]}`:''}.`;break;
+  }
   case 'DAMAGE_TAKEN':summary=card?`${actor?.name??'An effect'} resolves ${card.name} against ${model?.name??'a model'}.`:`${actor?.name??'The Black Rose'} deals damage to ${model?.name??'a model'}.`;break;
   case 'DAMAGE_DEALT':summary=`${actor?.name??'A model'} deals damage${event.target&&event.target.id!==actor?.id?` to ${event.target.name}`:''}.`;break;
   case 'MAGE_ATTACK':case 'EVOCATION_ATTACK':summary=`${actor?.name??'A model'} attacks ${model?.name??'a target'}.`;break;
@@ -1662,11 +1731,12 @@ function discardCard(s:GameState,p:Player,card:Card) {
 function roomActivationProblem(s:GameState,p:Player,targetRoomId?:string):string|null {
  try {
   const room=s.board.rooms.find(r=>inRoom(p,r));
-  assert(room?.effect && !room.startingFor,'No room effect in a starting room');
-  assert(!targetRoomId || room!.effect==='INSTABILITY','Only Emerald instability takes a target room');
-  if(room!.effect==='DRAW_POWERFUL'&&s.powerfulDeck.length>0)assert(getCentralDiscardOptions(p).length>=CENTRAL_ROOM_DISCARD_COST,`Discard ${CENTRAL_ROOM_DISCARD_COST} cards from your hand to activate the central chamber`);
+  const effect=room?getRoomEffect(room):null;
+  assert(effect && !room!.startingFor,'No room effect in a starting room');
+  assert(!targetRoomId || effect==='INSTABILITY','Only Emerald instability takes a target room');
+  if(effect==='DRAW_POWERFUL'&&s.powerfulDeck.length>0)assert(getCentralDiscardOptions(p).length>=CENTRAL_ROOM_DISCARD_COST,`Discard ${CENTRAL_ROOM_DISCARD_COST} cards from your hand to activate the central chamber`);
   assert(!room!.reconstructed||!room!.specialUsed,'Reconstructed room special already used this Action phase');
-  if(room!.effect==='INSTABILITY') {
+  if(effect==='INSTABILITY') {
    const target=targetRoomId?getRoom(s,targetRoomId):room!;
    assert(!target.startingFor,'Starting rooms cannot be targeted');
    const distance=Math.min(...target.tiles.flatMap(h=>room!.tiles.map(origin=>hexLineDistance(origin,h))));
@@ -1683,9 +1753,10 @@ function activateRoom(s:GameState,p:Player,targetRoomId?:string) {
 }
 function activateRoomBody(s:GameState,p:Player,targetRoomId?:string,via?:{room:Room;position:Hex;allowUsedSpecial?:boolean}) {
  const room=via?.room??s.board.rooms.find(r=>inRoom(p,r));
- assert(room?.effect && !room.startingFor,'No room effect in a starting room');
- assert(!targetRoomId || room!.effect==='INSTABILITY','Only Emerald instability takes a target room');
- if(room!.effect==='DRAW_POWERFUL'&&s.powerfulDeck.length>0&&getCentralDiscardOptions(p).length<CENTRAL_ROOM_DISCARD_COST) {
+ const effect=room?getRoomEffect(room):null;
+ assert(effect && !room!.startingFor,'No room effect in a starting room');
+ assert(!targetRoomId || effect==='INSTABILITY','Only Emerald instability takes a target room');
+ if(effect==='DRAW_POWERFUL'&&s.powerfulDeck.length>0&&getCentralDiscardOptions(p).length<CENTRAL_ROOM_DISCARD_COST) {
   if(via){s.log.push(`${p.name} cannot pay the central chamber’s discard cost; nothing happens.`);return;}
   assert(false,`Discard ${CENTRAL_ROOM_DISCARD_COST} cards from your hand to activate the central chamber`);
  }
@@ -1698,9 +1769,9 @@ function activateRoomBody(s:GameState,p:Player,targetRoomId?:string,via?:{room:R
  }
  const actor=snapshot(s,p.id)!,position={...(via?.position??p.wizard.position)};
  const targets=[...s.players.filter(t=>inRoom(t,room!)).map(t=>snapshot(s,t.id)!),...s.evocations.filter(e=>room!.tiles.some(h=>hexKey(h)===hexKey(e.position))).map(e=>snapshot(s,e.id)!)];
- s.log.push(`${p.name} activates ${room!.name} for free${reward===2?' (reconstructed special: double reward)':''}: ${ROOM_EFFECT_LABELS[room!.effect!]}.`);
+ s.log.push(`${p.name} activates ${room!.name} for free${reward===2?' (reconstructed special: double reward)':''}: ${ROOM_EFFECT_LABELS[effect!]}.`);
  if(!via)progressQuest(s,p,'ROOM_ACTIVATE');
- switch(room!.effect) {
+ switch(effect) {
   case 'ROOM_DAMAGE': {
   for(const ref of targets)resolveInstruction(s,p,{effect:'DAMAGE',amount:reward,target:'EVENT_MODEL'},ref,undefined,actor,undefined,'ROOM');
    break;
@@ -2222,7 +2293,7 @@ function resolveMomentBody(s:GameState,caster:Player,spell:Card,step:Moment,room
  }
  if(step.effect==='ACTIVATE_ROOM') {
   const e=liveModel(s,refs[0])?.evocation,at=e?roomAt(s,e.position):undefined;
-  if(!e||!at?.effect||at.startingFor||at.effect==='DRAW_POWERFUL'){s.log.push(`${spell.name}: no room effect to activate.`);return;}
+  if(!e||!at||!getRoomEffect(at)||at.startingFor||getRoomEffect(at)==='DRAW_POWERFUL'){s.log.push(`${spell.name}: no room effect to activate.`);return;}
   activateRoomBody(s,caster,undefined,{room:at,position:{...e.position}});
   return;
  }
@@ -2331,7 +2402,8 @@ function resolveMomentBody(s:GameState,caster:Player,spell:Card,step:Moment,room
  }
  if(step.effect==='ACTIVATE_ROOM_IF_NIGHTMARE') {
   const umbra=room?s.evocations.find(e=>isNightmare(e)&&inRoomPosition(room,e.position)):undefined;
-  if(!room||!umbra||!room.effect||room.startingFor||room.effect==='DRAW_POWERFUL'){s.log.push(`${spell.name}: no room effect to activate.`);return;}
+  const effect=room?getRoomEffect(room):null;
+  if(!room||!umbra||!effect||room.startingFor||effect==='DRAW_POWERFUL'){s.log.push(`${spell.name}: no room effect to activate.`);return;}
   activateRoomBody(s,caster,undefined,{room,position:{...umbra.position},allowUsedSpecial:true});
   return;
  }
@@ -2400,8 +2472,8 @@ function resolveMomentBody(s:GameState,caster:Player,spell:Card,step:Moment,room
  }
  if(step.effect==='ACTIVATE_TARGET_ROOM') {
   const target=step.used&&effect.spellEvent?.roomId?s.board.rooms.find(r=>r.id===effect.spellEvent!.roomId)??room:room;
-  if(!target?.effect||target.startingFor){s.log.push(`${spell.name}: the target room has no activatable effect.`);return;}
-  const targetRoomId=target.effect==='INSTABILITY'
+  if(!target||!getRoomEffect(target)||target.startingFor){s.log.push(`${spell.name}: the target room has no activatable effect.`);return;}
+  const targetRoomId=getRoomEffect(target)==='INSTABILITY'
    ?askChoice(s,caster.id,`activate-room|${caster.id}|${spell.id}`,`${spell.name}: choose a room within range 1 of ${target.name} to receive instability.`,
     s.board.rooms.filter(candidate=>!candidate.startingFor&&Math.min(...candidate.tiles.flatMap(h=>target.tiles.map(origin=>hexLineDistance(origin,h))))<=1)
      .map(candidate=>({id:candidate.id,label:candidate.name,roomId:candidate.id})))!

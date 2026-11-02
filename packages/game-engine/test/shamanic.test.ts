@@ -246,6 +246,7 @@ describe('Shamanic school',()=>{
  it('lets River Spirit choose an instability target relative to the activated room',()=>{
   const s=fixture(),p=s.players[0],card=createShamanicDeck('shamanic','shamanic').find(c=>c.name==='River Spirit')!;
   const room=s.board.rooms.find(candidate=>candidate.effect==='INSTABILITY'&&!candidate.startingFor)!;
+  p.wizard.position={...room.tiles[0]};
   p.prepared.rapid={card,used:false};
   let result=applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:room.id});
   expect(result.pendingDecision?.kind).toBe('CHOICE');

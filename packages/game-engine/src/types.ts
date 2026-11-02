@@ -201,7 +201,10 @@ export type Room = {
  // Placement order lets conversions remove the most recently placed eligible cube.
  instabilityOrder?: PlayerId[];
  rewards: [number, number, number]; startingFor?: PlayerId;
- color: RoomColor | null; effect: RoomEffect | null; specialUsed: boolean;
+ // `effect` is the room's standard effect; rebuilt overrides are configured independently per room.
+ color: RoomColor | null; effect: RoomEffect | null;
+ // A null rebuilt effect keeps the standard effect, upgraded by the current rebuild rules.
+ rebuiltEffect: RoomEffect | null; specialUsed: boolean;
 };
 export type Board = { tiles: Hex[]; rooms: Room[] };
 export type PhysicalAction = { kind: 'EXPLORE' | 'ATTACK'; mainEffectUsed: boolean; movementStarted: boolean };
