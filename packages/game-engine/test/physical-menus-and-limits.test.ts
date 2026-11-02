@@ -81,3 +81,20 @@ describe('agreed client interfaces and defaults',()=>{
   }
  });
 });
+
+describe('Black Rose quest limits',()=>{
+ it('does not count completed quests or allow them to be discarded for the limit',()=>{
+  const g=blackRoseFixture([3,0]),p=player(g);
+  const completed=p.additionalQuests[0];
+  completed.completed=true;completed.progress=completed.amount;
+  g.blackRoseResolved=true;
+
+  rejected(g,{type:'DISCARD_QUESTS',playerId:p.id,questIds:[completed.id]},/No quests over the quest limit/);
+  expect(heldQuests(p)).toHaveLength(3);
+
+  p.additionalQuests.push(g.questDeck.shift()!);
+  rejected(g,{type:'DISCARD_QUESTS',playerId:p.id,questIds:[completed.id]},/Only active quests/);
+  expect(heldQuests(p)).toHaveLength(4);
+  expect(heldQuests(p).filter(quest=>!quest.completed)).toHaveLength(3);
+ });
+});

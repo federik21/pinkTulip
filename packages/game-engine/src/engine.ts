@@ -1608,9 +1608,10 @@ function drawExtraEvent(s:GameState) {
 }
 
 const heldQuests = (p:Player) => p.quest?[p.quest,...p.additionalQuests]:[...p.additionalQuests];
+const activeQuests = (p:Player) => heldQuests(p).filter(q=>!q.completed&&!q.claimed);
 
 function beginStudyIfQuestsFit(s:GameState,tendonDone=false) {
- if(s.players.some(p=>heldQuests(p).length>p.questLimit))return;
+ if(s.players.some(p=>activeQuests(p).length>p.questLimit))return;
  if(!tendonDone&&startTendonMoves(s))return;
  for(const p of s.players) {
   let drawn=0;
@@ -1624,8 +1625,8 @@ function finishBlackRose(s: GameState) {
  assert(!s.blackRoseResolved,'Waiting for quest-limit discards');
  for(const p of s.players) {
   const held=heldQuests(p);
-  // Legacy saves may still keep solved cards in a held slot. They neither
-  // block a replacement nor count against the active, unsolved quest limit.
+  // Legacy saves may still keep completed cards in a held slot. They neither
+  // block a replacement nor count against the active quest limit.
   for(const quest of held.filter(q=>q.claimed))if(!s.questDiscard.some(q=>q.id===quest.id))s.questDiscard.push(quest);
   const quests=held.filter(q=>!q.claimed);p.quest=quests.shift()??null;p.additionalQuests=quests;
   if(!p.quest) {
@@ -1634,7 +1635,7 @@ function finishBlackRose(s: GameState) {
   }
  }
  s.blackRoseResolved=true;
- if(s.players.some(p=>heldQuests(p).length>p.questLimit))s.log.push('BR — waiting for quest-limit discards.');
+ if(s.players.some(p=>activeQuests(p).length>p.questLimit))s.log.push('BR — waiting for quest-limit discards.');
  beginStudyIfQuestsFit(s);
 }
 
@@ -2747,10 +2748,10 @@ function runAction(state: GameState, action: GameAction, answers: DecisionAnswer
   }
   case 'DISCARD_QUESTS': {
   requirePhase(s,'BLACK_ROSE');assert(s.blackRoseResolved,'Resolve BR before discarding quests');
-   const quests=heldQuests(p),overflow=quests.length-p.questLimit;
+   const quests=heldQuests(p),eligible=activeQuests(p),overflow=eligible.length-p.questLimit;
    assert(overflow>0,'No quests over the quest limit');
    assert(Array.isArray(action.questIds) && action.questIds.length===overflow && new Set(action.questIds).size===overflow,`Discard exactly ${overflow} different quests`);
-   assert(action.questIds.every(id=>quests.some(q=>q.id===id)),'Quest not owned by this player');
+   assert(action.questIds.every(id=>eligible.some(q=>q.id===id)),'Only active quests can be discarded to meet the quest limit');
    const selected=new Set(action.questIds),remaining=quests.filter(q=>!selected.has(q.id));
    s.questDiscard.push(...quests.filter(q=>selected.has(q.id)));
    p.quest=remaining.shift()??null;p.additionalQuests=remaining;

@@ -323,8 +323,8 @@ function* candidates(s: GameState): Generator<GameAction> {
  }
  if (s.phase === 'BLACK_ROSE' && s.blackRoseResolved) {
   for (const p of s.players.filter(bot)) {
-   const held = quests(p), excess = held.length - p.questLimit;
-   if (excess > 0) yield { type: 'DISCARD_QUESTS', playerId: p.id, questIds: [...held].sort((a, b) => Number(a.completed) - Number(b.completed) || (a.progress ?? 0) - (b.progress ?? 0) || a.reward - b.reward || compareId(a.id, b.id)).slice(0, excess).map(q => q.id) };
+   const held = quests(p), eligible = held.filter(q => !q.completed && !q.claimed), excess = eligible.length - p.questLimit;
+   if (excess > 0) yield { type: 'DISCARD_QUESTS', playerId: p.id, questIds: [...eligible].sort((a, b) => (a.progress ?? 0) - (b.progress ?? 0) || a.reward - b.reward || compareId(a.id, b.id)).slice(0, excess).map(q => q.id) };
   }
   return;
  }

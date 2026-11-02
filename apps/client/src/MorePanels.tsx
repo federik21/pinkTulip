@@ -61,6 +61,9 @@ function QuestEntry({game,me,quest,disabled,send}:{game:GameState;me:Player;ques
  return <article className={`quest-entry${ready?' quest-ready':''}`} aria-label={quest.name}>
   <div className="quest-heading"><h3><span aria-hidden="true">◇ </span>{quest.name}</h3>{ready&&<span className="quest-ready-label"><span aria-hidden="true">✦ </span>Completed · unsolved</span>}</div>
   <p>{quest.description}</p><span className="badge">+{quest.reward} VP when solved</span>
+  <div className="quest-progress-cubes" role="img" aria-label={`${quest.name} progress: ${quest.progress??0} of ${quest.amount} cubes`}>
+   {Array.from({length:quest.amount},(_,index)=><span key={index} className={`quest-progress-cube${index<(quest.progress??0)?' is-filled':''}`} aria-hidden="true"/>)}
+  </div>
   <p className="hint">{quest.claimed?'Solved':ready?'Objective complete. Your free reward is ready.':`Progress: ${quest.progress??0}/${quest.amount}`}</p>
   {card&&<div className="quest-reward"><strong>{card.name}</strong><p>{card.moments.map(rewardMoment).join(' → ')}{card.rulesText?` · ${card.rulesText}`:''}</p><span className="hint">Free action · no turn action, physical token or spell slot · Range {card.range===Infinity?'∞ · ignores line of sight':card.range}</span></div>}
   {ready&&<>
@@ -87,7 +90,7 @@ export function QuickReference({game,me}:{game:GameState;me:Player}) {
   <p><b>2 actions total per turn.</b> Explore, Attack, each spell cast (including Quick and Forgotten), discard-to-move, and paid evocation activation each use one. The turn hands off after the second action finishes, unless a usable quest reward is ready: resolve it for free or choose End turn.</p>
    <p><b>2 physical tokens per round.</b> Explore, Attack, and paid evocation activation also use a token. Spells and discard-to-move do not. Resolve a physical action's primary effect and room activation in either order, once each, or skip what remains.</p>
    <p>Mage attacks deal <b>{me.wizard.attack} damage at distance 0</b>. Explore permits up to <b>{getMageMovement(me)} movements</b>. Numbered spells are limited to one per turn, within the shared two-action budget.</p>
-  <p>Before Preparation, discard to <b>{me.cardLimit} cards</b>; excess goes to personal discard. At the end of BR, discard to <b>{me.questLimit} quests</b>.</p>
+  <p>Before Preparation, discard to <b>{me.cardLimit} cards</b>; excess goes to personal discard. At the end of BR, discard to <b>{me.questLimit} active quests</b>; completed quests do not count.</p>
   <p><b>Cell exit:</b> if you have one turn action left and are still in your cell, spend it to move out with Explore or discard-to-move. You cannot end your turn or skip that Explore before leaving when an exit is available.</p>
   <p><b>Discard to move:</b> any unused prepared numbered or Quick spell, regardless of numbered order or whether you already cast a numbered spell this turn. Hand cards, already cast or activated spells, and Forgotten spells are ineligible. Discarding uses one turn action and no physical token; it does not count as casting a numbered spell.</p>
   <p><b>Ongoing spells persist through death.</b> They follow their bound mage after respawn and are discarded at Cleanup. A destroyed evocation's binding stays inactive rather than moving to a new summon.</p>

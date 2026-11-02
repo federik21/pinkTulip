@@ -140,7 +140,7 @@ describe('blind setup and preparation', () => {
  });
  it('handles bot quest overflow after the explicit Black Rose continuation', () => {
   const s = lobby(2, ['p2']); s.phase = 'BLACK_ROSE'; s.blackRoseResolved = true;
-  const p = s.players[1]; p.quest = s.questDeck.shift()!; p.additionalQuests = s.questDeck.splice(0, 2);
+  const p = s.players[1]; p.quest = s.questDeck.shift()!; p.additionalQuests = s.questDeck.splice(0, 3);
   const keep = p.additionalQuests[0]; keep.completed = true;
   const action = next(s); expect(action.type).toBe('DISCARD_QUESTS');
   const done = applyAction(s, action); expect(done.phase).toBe('STUDY'); expect(done.players[1].additionalQuests.some(q => q.id === keep.id) || done.players[1].quest?.id === keep.id).toBe(true);
