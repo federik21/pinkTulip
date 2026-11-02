@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ACTIONS_PER_TURN, ELEMENT_GLYPHS, getEffectiveSpell, spellFilterAllows, spellReaches, getSpellType, getDiscardMoveCards, canUseSpellDummy, spellCanTargetModel, upgradeLegacyCards, getMageEvocationCount, getRoomEffect, Card, GameAction, GameState, Player, Room, MAX_MAGES, MIN_MAGES, ROOM_COLORS, ROOM_EFFECT_LABELS, isInStartingRoom, isWithinSpellRange, mustLeaveCell, hexDistance, hexKey } from '@brw/game-engine';
+import { ACTIONS_PER_TURN, ELEMENT_GLYPHS, getEffectiveSpell, spellFilterAllows, spellReaches, getSpellType, getDiscardMoveCards, canUseSpellDummy, spellCanTargetModel, upgradeLegacyCards, getMageEvocationCount, getRoomEffect, roomEffectNeedsTarget, Card, GameAction, GameState, Player, Room, MAX_MAGES, MIN_MAGES, ROOM_COLORS, ROOM_EFFECT_LABELS, isInStartingRoom, isWithinSpellRange, mustLeaveCell, hexDistance, hexKey } from '@brw/game-engine';
 import type { TurnRecapCard } from '@brw/game-engine';
 import { ActiveEvocationControls, EvocationSupply, EvocationsPanel, evocationIcon, targetModels } from './EvocationsPanel';
 import { PhysicalActionsPanel, PhysicalBannerActions, physicalContext } from './PhysicalActionsPanel';
@@ -48,6 +48,16 @@ type Send=(action:GameAction)=>void;
 type Slot='slot1'|'slot2'|'slot3'|'rapid';
 const slotKeys:Slot[]=['slot1','slot2','slot3','rapid'];
 const randomName=()=>['Ember','Moon','Storm','Rune','Thorn'][Math.floor(Math.random()*5)]+['Warden','Seer','Mancer','Sage','Bloom'][Math.floor(Math.random()*5)];
+function roomEffectLines(text:string):string[] {
+ const lines:string[]=[];
+ let line='';
+ for(const word of text.split(' ')) {
+  if(line&&`${line} ${word}`.length>18){lines.push(line);line=word;}
+  else line=line?`${line} ${word}`:word;
+ }
+ if(line)lines.push(line);
+ return lines;
+}
 
 function SpellCard({card,label,selected,disabled,onClick,used=false}:{card:Card;label?:string;selected?:boolean;disabled?:boolean;onClick?:()=>void;used?:boolean}) {
  const spellType=getSpellType(card);
@@ -145,6 +155,7 @@ function App() {
  const [quickControls,setQuickControls]=useState(false),[quickMode,setQuickMode]=useState(false);
  const quickOpener=useRef<HTMLElement|null>(null);
  const [infoPopup,setInfoPopup]=useState<'lodge'|'reference'|null>(null);
+ const [showRoomEffects,setShowRoomEffects]=useState(false);
  const [historyRevision,setHistoryRevision]=useState(0);
  const [slowAi,setSlowAi]=useState(()=>localStorage.getItem('slowAi')==='1');
  const [playedCards,setPlayedCards]=useState<Array<{key:string;entry:TurnRecapCard}>>([]);
@@ -337,16 +348,16 @@ function App() {
   return spellModelsInRoom(room).length>0;
  };
  const room=game.board.rooms.find(r=>r.id===selectedRoom);
- // Room-targeted effects (Emerald rooms, Fountain-style room choices) are answered on the map and confirmed in the top bar.
+ // Room-targeted activations are answered on the map and confirmed in the top bar.
  const emeraldCtx=pickingEmerald&&myTurn?physicalContext(game,me,effectTargetId):null;
- const emeraldPicking=!!emeraldCtx&&!!active?.physicalAction&&!active.roomEffectUsed&&!active.exploring&&emeraldCtx.roomAvailable&&emeraldCtx.currentEffect==='INSTABILITY';
+ const emeraldPicking=!!emeraldCtx&&!!active?.physicalAction&&!active.roomEffectUsed&&!active.exploring&&emeraldCtx.roomAvailable&&roomEffectNeedsTarget(emeraldCtx.currentEffect);
  const pendingDecision=game.pendingDecision;
  const choiceDecision=pendingDecision?.kind==='CHOICE'&&pendingDecision.playerId===me.id&&isRoomChoice(pendingDecision)?pendingDecision:null;
  const choiceRoomId=choiceDecision&&choicePick?.key===choiceDecision.key?choicePick.roomId:'';
  const mapPick=choiceDecision
   ?{prompt:choiceDecision.prompt,rooms:new Set(choiceDecision.options.map(o=>o.roomId!)),chosen:choiceRoomId,cancelLabel:choiceDecision.optional?'Decline':'',select:(id:string)=>setChoicePick({key:choiceDecision.key,roomId:id})}
   :emeraldPicking&&emeraldCtx
-  ?{prompt:'Emerald effect: choose the room that receives instability.',rooms:new Set(emeraldCtx.effectTargets.map(r=>r.id)),chosen:effectTargetId||emeraldCtx.currentRoom?.id||'',cancelLabel:'Cancel',select:(id:string)=>setEffectTargetId(id===emeraldCtx.currentRoom?.id?'':id)}
+  ?{prompt:'Choose the target room for this room effect.',rooms:new Set(emeraldCtx.effectTargets.map(r=>r.id)),chosen:effectTargetId||emeraldCtx.currentRoom?.id||'',cancelLabel:'Cancel',select:(id:string)=>setEffectTargetId(id===emeraldCtx.currentRoom?.id?'':id)}
   :null;
  const beginRoomPick=()=>{setEffectTargetId('');setSelectedSlot(null);setSelectedRoom(null);setPickingEmerald(true);if(quickControls)closeQuickControls();};
  const confirmMapPick=()=>{
@@ -448,7 +459,7 @@ function App() {
      </>}
     quests={<QuestsPanel game={game} me={me} disabled={!enabled||pending} send={send}/>}
     />
-    <section className="board-panel"><div className="section-heading"><div><span className="eyebrow">The lodge</span><h2>{mapPick?'Choose a highlighted room':movingEvocation&&activeEvocation?`${activeEvocation.name} #${evocationNumber(game,activeEvocation)} · choose an adjacent space`:exitCardId&&myTurn?'Discard to move · choose an adjacent space':spell?`Target: ${spell.name}${dummy?' · dummy':''}`:active?.exploring&&myTurn?'Explore · choose an adjacent space':'Chambers of the BR'}</h2></div><div className="board-tools"><ZoomControls zoom={boardZoom.zoom} onZoomIn={boardZoom.zoomIn} onZoomOut={boardZoom.zoomOut} onReset={boardZoom.resetZoom}/><button type="button" className="info-button" aria-label="Lodge information" onClick={()=>setInfoPopup('lodge')}>ⓘ Info</button></div></div>
+    <section className="board-panel"><div className="section-heading"><div><span className="eyebrow">The lodge</span><h2>{mapPick?'Choose a highlighted room':movingEvocation&&activeEvocation?`${activeEvocation.name} #${evocationNumber(game,activeEvocation)} · choose an adjacent space`:exitCardId&&myTurn?'Discard to move · choose an adjacent space':spell?`Target: ${spell.name}${dummy?' · dummy':''}`:active?.exploring&&myTurn?'Explore · choose an adjacent space':'Chambers of the BR'}</h2></div><div className="board-tools"><ZoomControls zoom={boardZoom.zoom} onZoomIn={boardZoom.zoomIn} onZoomOut={boardZoom.zoomOut} onReset={boardZoom.resetZoom}/><label className="board-effect-switch"><input type="checkbox" checked={showRoomEffects} onChange={event=>setShowRoomEffects(event.target.checked)}/> Effects</label><button type="button" className="info-button" aria-label="Lodge information" onClick={()=>setInfoPopup('lodge')}>ⓘ Info</button></div></div>
       {game.phase!=='LOBBY'&&<ol className="map-player-order" aria-label={`Turn order, ${mapPlayerOrder[0]?.name} first`}>
        {mapPlayerOrder.map((player,index)=><li className={player.id===actingPlayer?.id?'map-player-active':''} data-player-id={player.id} aria-label={`${player.name}${index===0?', first in turn order':''}${player.id===actingPlayer?.id?', acting now':''}`} title={player.name} style={mageStyle(player.id)} key={player.id}><span className="map-player-icon" aria-hidden="true">{index===0&&<span className="map-first-crown">♛</span>}{emoji[player.id]}</span></li>)}
       </ol>}
@@ -477,7 +488,7 @@ function App() {
       <title>{r.name}{r.color?` · ${r.color}`:''} · {getRoomEffect(r)?ROOM_EFFECT_LABELS[getRoomEffect(r)!]:'Protected starting room'}{r.reconstructed?` · Rebuilt · ${roomStatus(r)}`:` · Rewards ${r.rewards.join('/')} VP`}</title><polygon points="0,-33 29,-16 29,16 0,33 -29,16 -29,-16"/>
           <FeedbackPulse feedback={feedback} kind="ROOM" targetId={r.id} svg/>
           <RoomTrapTokens game={game} viewerId={me.id} roomId={r.id}/>
-      <text className="room-name" aria-hidden="true">{roomNameLines(r.name).map((line,i)=><tspan x={0} y={-21+i*7} key={i}>{line}{i===0?' ':''}</tspan>)}</text>
+      <text className={`room-name${showRoomEffects?' room-effect-name':''}`} aria-hidden="true">{(showRoomEffects?roomEffectLines(getRoomEffect(r)?ROOM_EFFECT_LABELS[getRoomEffect(r)!]:'Protected starting room'):roomNameLines(r.name)).map((line,i)=><tspan x={0} y={(showRoomEffects?-27:-21)+i*(showRoomEffects?5:7)} key={i}>{line}{i===0?' ':''}</tspan>)}</text>
           {occupants.length?occupants.map((p,i)=>{const token=modelLayout(i),radius=token.radius*1.12;return <g key={p.id} transform={`translate(${token.x},${token.y})`}><FeedbackPulse feedback={feedback} kind="MAGE" targetId={p.id} svg/><g className={p.id===actingPlayer?.id?'acting-mage-token':''} data-mage-id={p.id} style={mageStyle(p.id)}><title>{p.name} · {MAGE_COLOR_NAMES[p.id]}</title><circle className="mage-token-disc" r={radius}/><text className="occupants" style={{fontSize:radius*1.8}} y={radius*.6}>{emoji[p.id]}</text></g><ModelEffectMarkers game={game} viewerId={me.id} modelId={p.id} radius={radius}/></g>;}):!summons.length&&<text className="empty-room-icon" y={0}>{r.startingFor?'⌂':r.reconstructed?'❖':r.id==='room-0,0'?'✺':'·'}</text>}
           {summons.length>0&&<g className="evocation-markers">{summons.map((e,i)=>{const token=modelLayout(occupants.length+i);const big=e.kind==='COLOSSUS',tr=big?token.radius*1.35:token.radius,nightmare=e.archetype==='NIGHTMARE',colorOwner=nightmare?e.assignedTo??e.playerId:e.playerId;return <g className={`evocation-marker${big?' big-evocation':''}${nightmare?' nightmare-marker':''}`} data-evocation-id={e.id} data-owner-id={colorOwner} style={mageStyle(colorOwner)} transform={`translate(${token.x},${token.y})`} key={e.id}><title>{ownerName(game,colorOwner)} · {e.name} #{evocationNumber(game,e)}</title><FeedbackPulse feedback={feedback} kind="EVOCATION" targetId={e.id} svg/>{nightmare?<path className="nightmare-crescent" d="M 0 -5 A 5 5 0 1 0 0 5 A 3 5 0 1 1 0 -5 Z" transform={`rotate(${((e.slot??1)-1)*90}) scale(${tr/5})`}/>:<circle className="mage-token-disc evocation-token-disc" r={tr}/>}<text aria-hidden="true" style={{fontSize:tr*1.2}} y={tr*.4}>{evocationIcon(e)}</text><ModelEffectMarkers game={game} viewerId={me.id} modelId={e.id} radius={tr}/></g>;})}</g>}
       {r.startingFor?<text className="start-label" y={17}>START</text>:r.reconstructed?<g className={`rebuilt-badge ${r.specialUsed?'used':'ready'}`}><rect x={-18} y={10} width={36} height={12} rx={3}/><text y={18.5}>{roomStatus(r)}</text></g>:<g className="capacity-badge">
@@ -488,8 +499,8 @@ function App() {
       {!r.startingFor&&!r.reconstructed&&contributions.map(([id,n],i)=><g className="cube-owner" transform={`translate(${(i-(contributions.length-1)/2)*5},26)`} key={id}><title>{ownerName(game,id)}: {n} cubes</title><circle r={2.5} fill={ownerColor(id)}/><text y={1.3}>{n}</text></g>)}
       </g>;
      })}</svg></div>
-    {room&&<div className={`room-detail${quickMode&&spell&&!quickControls?' quick-target':''}`}><strong>{room.name} {room.reconstructed?'· Rebuilt':''}</strong><span>{room.startingFor?'Protected starting room · Exit only; no voluntary reentry':room.reconstructed?`Double special · ${roomStatus(room)} · no further cube placement`:`${room.color??'Central'} · ${room.instability}/${room.instabilityLimit} instability · Rewards ${room.rewards.join(' / ')} VP${room.instability>=room.instabilityLimit?' · Full: locked to new cubes; rebuilds at Cleanup, then unlocks its double special.':''}`}</span>
-    {getRoomEffect(room)&&<span>{room.reconstructed?'Rebuilt effect':'Standard effect'}: {ROOM_EFFECT_LABELS[getRoomEffect(room)!]}{room.reconstructed?` ×2 · ${room.specialUsed?'Used this Action phase':'Ready · once per Action phase'}`:' · once within Explore or Attack, before or after its primary effect.'}</span>}
+    {room&&<div className={`room-detail${quickMode&&spell&&!quickControls?' quick-target':''}`}><strong>{room.name} {room.reconstructed?'· Rebuilt':''}</strong><span>{room.startingFor?'Protected starting room · Exit only; no voluntary reentry':room.reconstructed?`Rebuilt · ${roomStatus(room)} · no further cube placement`:`${room.color??'Central'} · ${room.instability}/${room.instabilityLimit} instability · Rewards ${room.rewards.join(' / ')} VP${room.instability>=room.instabilityLimit?' · Full: locked to new cubes; rebuilds at Cleanup, then unlocks its rebuilt effect.':''}`}</span>
+    {getRoomEffect(room)&&<span>{room.reconstructed?'Rebuilt effect':'Standard effect'}: {ROOM_EFFECT_LABELS[getRoomEffect(room)!]}{room.reconstructed?` · ${room.specialUsed?'Used this Action phase':'Ready · once per Action phase'}`:' · once within Explore or Attack, before or after its primary effect.'}</span>}
     {!room.reconstructed&&<div className="contributions">{Object.entries(room.cubesByPlayer).filter(([,n])=>n>0).map(([id,n])=><span style={mageStyle(id)} key={id}>{emoji[id]??'✺'} {ownerName(game,id)}: {n}</span>)}</div>}
     {dockedModes}
     {!activatingSpell&&spell&&spell.target!=='ROOM'&&spell.target!=='SELF'&&!dummy&&<label className="action-setting">Spell target model<select aria-label="Spell target model" value={selectedModelId} onChange={e=>setSelectedModelId(e.target.value)}><option value="">First eligible model in this room</option>{spellModelsInRoom(room).map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label>}
@@ -502,7 +513,7 @@ function App() {
    </div>
   <ChronicleDrawer open={chronicleOpen} entries={game.log} players={game.players} onClose={()=>setChronicleOpen(false)}/>
   {infoPopup==='reference'&&<InfoPopup id="quick-reference" title="Quick reference" onClose={()=>setInfoPopup(null)}><QuickReference game={game} me={me}/></InfoPopup>}
-  {infoPopup==='lodge'&&<InfoPopup id="lodge-info" title="Lodge information" onClose={()=>setInfoPopup(null)}><p className="board-help">Select a chamber to inspect it or confirm a spell target. Scroll the board on smaller screens. Protected starting cells allow exits only. Segmented badges show instability / capacity by mage color; light gray is BR. Full rooms rebuild at Cleanup. Rebuilt rooms show READY / USED instead of returned cubes. Numbered circles are owner-colored evocations. Target models show shield, trap and ✧ ongoing-effect icons. Your hidden bindings are visible only to you; ongoing effects are public. Repeated effects show counts on mage and evocation cards.</p><div className="room-legend">{ROOM_COLORS.map(color=><span data-color={color} key={color}><i/>{color} · {game.board.rooms.filter(room=>room.color===color).length}</span>)}</div><div className="mage-legend" aria-label="Mage colors">{game.players.map(p=><span style={mageStyle(p.id)} data-player-id={p.id} key={p.id}><i aria-hidden="true"/>{emoji[p.id]} {p.name} · {MAGE_COLOR_NAMES[p.id]}</span>)}<span className="neutral-owner"><i aria-hidden="true"/>✺ BR · neutral</span></div><dl className="room-effect-reference">{ROOM_COLORS.map(color=><React.Fragment key={color}><dt>{color}</dt><dd>{ROOM_EFFECT_LABELS[game.board.rooms.find(room=>room.color===color)?.effect??'DRAW_POWERFUL']}</dd></React.Fragment>)}</dl><p>The central chamber grants a Forgotten spell for discarding 2 cards. Violet rooms place 1 cube and give you the first-player token. Room effects are optional within a physical action; rebuilt rooms double their special, once per Action phase.</p></InfoPopup>}
+  {infoPopup==='lodge'&&<InfoPopup id="lodge-info" title="Lodge information" onClose={()=>setInfoPopup(null)}><p className="board-help">Select a chamber to inspect it or confirm a spell target. Scroll the board on smaller screens. Protected starting cells allow exits only. Segmented badges show instability / capacity by mage color; light gray is BR. Full rooms rebuild at Cleanup. Rebuilt rooms show READY / USED and use their listed rebuilt effect instead of their standard effect. Numbered circles are owner-colored evocations. Target models show shield, trap and ✧ ongoing-effect icons. Your hidden bindings are visible only to you; ongoing effects are public. Repeated effects show counts on mage and evocation cards.</p><div className="room-legend">{ROOM_COLORS.map(color=><span data-color={color} key={color}><i/>{color} · {game.board.rooms.filter(room=>room.color===color).length}</span>)}</div><div className="mage-legend" aria-label="Mage colors">{game.players.map(p=><span style={mageStyle(p.id)} data-player-id={p.id} key={p.id}><i aria-hidden="true"/>{emoji[p.id]} {p.name} · {MAGE_COLOR_NAMES[p.id]}</span>)}<span className="neutral-owner"><i aria-hidden="true"/>✺ BR · neutral</span></div><dl className="room-effect-reference">{ROOM_COLORS.map(color=><React.Fragment key={color}><dt>{color}</dt><dd>{ROOM_EFFECT_LABELS[game.board.rooms.find(room=>room.color===color)?.effect??'BR_STANDARD']}</dd></React.Fragment>)}</dl><p>The BR room costs 3 cards to draw a Forgotten spell and places a neutral cube. A full room rebuilds at Cleanup and then uses its distinct rebuilt effect once per Action phase.</p></InfoPopup>}
   </main><SiteFooter/>
   <QuickAccess selected={controlTab} expanded={quickControls} chronicleOpen={chronicleOpen} readyQuests={[me.quest,...me.additionalQuests].filter(quest=>quest?.completed&&!quest.claimed).length} evocationDue={evocationDue} onSelect={openQuickControls} onChronicle={()=>setChronicleOpen(true)}/>
  </div>;

@@ -1,7 +1,7 @@
 import {
  applyAction, areAdjacent, areInSameRoom, canStartGame, canUseSpellDummy,
  GameRuleError, getDiscardMoveCards, getEffectiveSpell, getEvocationSupply, getQuestRewardTargets, getSpellType,
- getRoomEffect, hexDistance, hexKey, isInStartingRoom, isWithinSpellRange, MAGE_DRAFT_POOL,
+ getRoomEffect, hexDistance, hexKey, isInStartingRoom, isWithinSpellRange, MAGE_DRAFT_POOL, roomEffectNeedsTarget,
 } from '@brw/game-engine';
 import type { Card, FeedbackTarget, GameAction, GameState, Hex, Moment, Player, Room } from '@brw/game-engine';
 
@@ -161,7 +161,7 @@ function* roomActions(s: GameState, p: Player): Generator<GameAction> {
  const room = roomAt(s, p.wizard.position);
  const effect=room?getRoomEffect(room):null;
  if (!room || !effect || room.startingFor || (room.reconstructed && room.specialUsed)) return;
- if (effect === 'INSTABILITY') {
+ if (roomEffectNeedsTarget(effect)) {
   const rooms = s.board.rooms.filter(r => !r.startingFor && !r.reconstructed && r.instability < r.instabilityLimit)
    .sort((a, b) => (a.instabilityLimit - a.instability) - (b.instabilityLimit - b.instability) || compareId(a.id, b.id));
   for (const target of rooms) if (target.tiles.some(h => room.tiles.some(origin => isWithinSpellRange(origin, h, 1)))) {

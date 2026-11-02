@@ -65,7 +65,7 @@ describe('public authoritative schema and history boundary',()=>{
 });
 
 describe('capacity-dependent triple prizes and finite dense rankings',()=>{
- it.each([[4,[2,1,0]],[5,[4,2,1]],[6,[5,3,1]],[10,[6,3,1]]] as const)('returns capacity %i prizes', (capacity,rewards)=>{
+ it.each([[4,[2,1,0]],[5,[3,1,1]],[6,[4,2,1]],[10,[6,3,1]]] as const)('returns capacity %i prizes', (capacity,rewards)=>{
   expect(getRoomRewards(capacity)).toEqual(rewards);
   const changed=getRoomRewards(capacity);changed[0]=999;expect(getRoomRewards(capacity)).toEqual(rewards);
  });
@@ -75,15 +75,14 @@ describe('capacity-dependent triple prizes and finite dense rankings',()=>{
  it('keeps 18 colored rooms and the configured capacity distribution',()=>{
   const a=createGame().board,b=createGame().board,colored=a.rooms.filter(r=>r.color!==null);
   expect(colored).toHaveLength(18);for(const color of ROOM_COLORS)expect(colored.filter(r=>r.color===color)).toHaveLength(3);
-  expect([4,5,6].map(n=>colored.filter(r=>r.instabilityLimit===n).length)).toEqual([3,12,3]);
+  expect([4,5,6,10].map(n=>colored.filter(r=>r.instabilityLimit===n).length)).toEqual([3,3,11,1]);
   expect(a.rooms).toHaveLength(b.rooms.length);
   expect(a.rooms.find(r=>r.id==='room-0,0')).toMatchObject({name:'BR room',instabilityLimit:10,rewards:[6,3,1]});
   expect(a.rooms.filter(r=>r.startingFor)).toHaveLength(4);
-  for(const color of ROOM_COLORS) {
-   const room=colored.find(r=>r.color===color)!;
-   expect(room.instabilityLimit).toBe(color==='violet'?4:color==='grey'?6:5);
-  }
-  expect(colored.every(r=>r.rebuiltEffect===null)).toBe(true);
+  for(const color of ROOM_COLORS)expect(colored.filter(r=>r.color===color).map(r=>r.instabilityLimit).sort()).toEqual(
+   (color==='emerald'?[4,4,4]:color==='amber'?[5,5,5]:color==='violet'?[6,6,10]:[6,6,6]).sort(),
+  );
+  expect(colored.every(r=>r.rebuiltEffect!==null)).toBe(true);
   for(const r of colored)expect(r.rewards).toEqual(getRoomRewards(r.instabilityLimit));
  });
  it('randomizes room colors while keeping colors apart and every color within two steps of every mage',()=>{
@@ -103,8 +102,8 @@ describe('capacity-dependent triple prizes and finite dense rankings',()=>{
     const reachable=colored.filter(room=>hexDistance(start.tiles[0],room.tiles[0])<=2);
     expect(new Set(reachable.map(room=>room.color))).toEqual(new Set(ROOM_COLORS));
    }
-   expect(board.rooms.filter(room=>room.name==='Throne room')).toHaveLength(1);
-   const throne=board.rooms.find(room=>room.name==='Throne room');
+   expect(board.rooms.filter(room=>room.name==='Throne Room')).toHaveLength(1);
+   const throne=board.rooms.find(room=>room.name==='Throne Room');
    expect(throne?.color).toBe('violet');
    expect(hexDistance(throne!.tiles[0],{q:0,r:0})).toBe(1);
    expect(board.rooms.every(room=>room.instabilityLimit>0)).toBe(true);

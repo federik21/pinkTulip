@@ -17,7 +17,11 @@ const labels: Partial<Record<GameAction['type'], string>> = {
  END_EXPLORE: 'End movement', DISCARD_EXIT: 'Discard to leave', PUNCH: 'Attack',
  CAST_SPELL: 'Cast spell', ACTIVATE_SPELL: 'Activate hidden spell', CAST_POWERFUL_SPELL: 'Cast forgotten spell',
 };
-const drawEffects = new Set<RoomEffect>(['DRAW_POWERFUL', 'DRAW_GRIMOIRE', 'DRAW_DISCARD', 'DRAW_QUEST']);
+const drawEffects = new Set<RoomEffect>([
+ 'DRAW_POWERFUL','DRAW_GRIMOIRE','DRAW_DISCARD','DRAW_QUEST','BR_STANDARD','BR_REBUILT','ALCHEMICAL_LAB_REBUILT',
+ 'BIBLIOTHECA_STANDARD','BIBLIOTHECA_REBUILT','ORACLE_STANDARD','ORACLE_REBUILT','ABYSS_STANDARD','ARMORY_STANDARD','PLEASURE_STANDARD',
+ 'PLEASURE_REBUILT','TREASURE_REBUILT',
+]);
 const actionPhase = (game: GameState) => game.phase === 'ACTION' || game.phase === 'EVOCATION';
 
 function snapshot(game: GameState): GameState {

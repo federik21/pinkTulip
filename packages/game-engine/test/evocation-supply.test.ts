@@ -68,10 +68,10 @@ describe('shared evocation model supplies',()=>{
   expect(result.activation?.actionsUsed).toBe(1);
   expect(getEvocationSupply(result).SUCCUBUS).toBe(0);
  });
- it.each([0,1])('summons only the %i remaining Cadavers from a double-reward Grey room',remaining=>{
+ it.each([0,1])('summons only the %i remaining Cadavers from a Grey room',remaining=>{
   let s=fixture();
   for(let i=0;i<6-remaining;i++)summonEvocation(s,s.players[1+Math.floor(i/3)],'CADAVER',origin);
-  const grey=s.board.rooms.find(r=>r.color==='grey')!;grey.reconstructed=true;grey.scored=true;
+  const grey=s.board.rooms.find(r=>r.color==='grey')!;grey.scored=true;
   s.players[0].wizard.position={...grey.tiles[0]};
   const tokens=s.players[0].actionTokens;
   s=applyAction(s,{type:'BEGIN_PHYSICAL_ACTION',playerId:'p1',kind:'EXPLORE'});
@@ -79,8 +79,8 @@ describe('shared evocation model supplies',()=>{
   expect(s.evocations.filter(e=>e.playerId==='p1')).toHaveLength(remaining);
   expect(s.evocations).toHaveLength(6);
   expect(getEvocationSupply(s).CADAVER).toBe(0);
-  expect(s.log.filter(line=>line.includes('summons a Cadaver from the Grey room'))).toHaveLength(remaining);
-  expect(s.board.rooms.find(r=>r.id===grey.id)!.specialUsed).toBe(true);
+  expect(s.log.filter(line=>line.includes(`summons Cadaver in ${grey.name}`))).toHaveLength(remaining);
+  expect(s.board.rooms.find(r=>r.id===grey.id)!.specialUsed).toBe(false);
   expect(s.activation?.roomEffectUsed).toBe(true);
   expect(s.activation?.actionsUsed).toBe(1);
   expect(s.players[0].actionTokens).toBe(tokens-1);

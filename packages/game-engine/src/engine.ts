@@ -19,8 +19,8 @@ export const ENDGAME_REWARDS = [4,2,1] as const;
 export function getRoomRewards(capacity:number):Room['rewards'] {
  switch(capacity) {
   case 4:return [2,1,0];
-  case 5:return [4,2,1];
-  case 6:return [5,3,1];
+  case 5:return [3,1,1];
+  case 6:return [4,2,1];
   case 10:return [6,3,1];
   default:throw new GameRuleError(`Unsupported room capacity: ${capacity}`);
  }
@@ -188,12 +188,35 @@ export const ROOM_EFFECT_LABELS: Record<RoomEffect,string> = {
  DRAW_GRIMOIRE:'Draw 1 grimoire spell', SUMMON_CADAVER:'Summon 1 Cadaver from the shared supply in this room (6 models total; maximum 3 evocations per mage)',
  DRAW_POWERFUL:'Discard 2 cards to gain 1 forgotten spell; prepare in a later Preparation phase, then remove from the game when cast',
  FIRST_PLAYER:'Place 1 instability in this room and take the first-player token: you start the next phase and following rounds',
+ BR_STANDARD:'Discard 3 cards to draw 1 Forgotten spell; BR places 1 cube here',
+ BR_REBUILT:'Discard 3 cards to draw 2 Forgotten spells, then discard 1 card',
+ CEMETERY_STANDARD:'Summon a Cadaver here', CEMETERY_REBUILT:'Summon a Colossus anywhere',
+ CRYPT_STANDARD:'Summon a Cadaver here', CRYPT_REBUILT:'Summon 2 Cadavers within range 1',
+ ALTAR_STANDARD:'Summon a Cadaver here', ALTAR_REBUILT:'Deal 2 damage to a model anywhere',
+ ALCHEMICAL_LAB_STANDARD:'Deal 1 damage to enemies in a room within range 1', ALCHEMICAL_LAB_REBUILT:'Draw 3 grimoire cards, then discard 1',
+ ARENA_STANDARD:'Deal 1 damage to enemies in a room within range 1', ARENA_REBUILT:'Cast your next ready numbered spell',
+ SUMMONER_STANDARD:'Deal 1 damage to enemies in a room within range 1', SUMMONER_REBUILT:'Summon and activate a Nigredo here',
+ BIBLIOTHECA_STANDARD:'Draw 1 quest', BIBLIOTHECA_REBUILT:'Draw 2 cards from different available schools',
+ OBSERVATORY_STANDARD:'Draw 1 quest', OBSERVATORY_REBUILT:'Each other mage loses 1 VP',
+ SANCTUARY_STANDARD:'Draw 1 quest', SANCTUARY_REBUILT:'Heal yourself for 3, then heal any model for 3',
+ FORGE_STANDARD:'Place 1 instability in a room within range 1', FORGE_REBUILT:'Move 1, attack, move 1, attack, move 1, move 1',
+ GARDEN_STANDARD:'Place 1 instability in a room within range 1', GARDEN_REBUILT:'Heal yourself for 3, then heal any model for 3',
+ TREASURE_STANDARD:'Place 1 instability in a room within range 1', TREASURE_REBUILT:'Gain 2 VP and draw an event',
+ ORACLE_STANDARD:'Draw 1 random card from your discard', ORACLE_REBUILT:'Shuffle your discard into your grimoire and choose a card to draw',
+ ABYSS_STANDARD:'Draw 1 random card from your discard', ABYSS_REBUILT:'Send every mage to their starting room',
+ MIRRORS_STANDARD:'Place 1 instability in a room within range 1', MIRRORS_REBUILT:'Copy the standard or rebuilt effect of another room',
+ ARMORY_STANDARD:'Draw 1 grimoire card', ARMORY_REBUILT:'Replace a revealed numbered spell with a card from your hand; BR gains 1 VP',
+ PLEASURE_STANDARD:'Draw 1 grimoire card', PLEASURE_REBUILT:'Draw 3 quests, then discard 2 quests',
+ THRONE_STANDARD:'Lose 1 VP to take the first-player token', THRONE_REBUILT:'Take the first-player token and gain 1 VP',
 };
-const effects: RoomEffect[] = ['ROOM_DAMAGE','DRAW_DISCARD','INSTABILITY','DRAW_QUEST','FIRST_PLAYER','SUMMON_CADAVER'];
+export const ROOM_TARGET_EFFECTS:ReadonlySet<RoomEffect>=new Set([
+ 'INSTABILITY','ALCHEMICAL_LAB_STANDARD','ARENA_STANDARD','SUMMONER_STANDARD','FORGE_STANDARD','GARDEN_STANDARD','TREASURE_STANDARD','MIRRORS_STANDARD',
+]);
+export const roomEffectNeedsTarget=(effect:RoomEffect|null|undefined)=>!!effect&&ROOM_TARGET_EFFECTS.has(effect);
 export const getRoomEffect = (room:Pick<Room,'effect'|'rebuiltEffect'|'reconstructed'>):RoomEffect|null =>
  room.reconstructed ? room.rebuiltEffect ?? room.effect : room.effect;
 /** Cards discarded from hand to activate the central chamber. */
-export const CENTRAL_ROOM_DISCARD_COST=2;
+export const CENTRAL_ROOM_DISCARD_COST=3;
 /** Hand cards that may pay the central chamber's cost (Forgotten spells never can). */
 export const getCentralDiscardOptions=(p:Player):Card[]=>p.hand.filter(c=>!c.powerful);
 export const isInStartingRoom = (s:GameState,p:Player) => s.board.rooms.some(r=>!!r.startingFor && inRoom(p,r));
@@ -270,12 +293,6 @@ function assignRoomColors(positions:Hex[],startingPositions:Hex[],roomsPerColor:
 
 export function createDemoBoard(roomsPerColor:1|2|3=3,random:()=>number=Math.random): Board {
  assert([1,2,3].includes(roomsPerColor),'Choose 1, 2 or 3 rooms per color');
- const names=shuffle([
-  'Ember Vault','Moonlit Gallery','Thorn Garden','Whispering Library','Ashen Forge','Silver Observatory',
-  'Hollow Chapel','Crimson Atelier','Veiled Archive','Gilded Reliquary','Echoing Crypt','Starlit Hall',
-  'Obsidian Study','Dreaming Atrium','Frost Conservatory','Sunken Treasury','Twilight Court','Waning Sanctum',
-  'Raven Belfry','Glass Labyrinth','Ivied Vestibule','Candlelit Refuge',
- ],random);
  const startingPositions=[
   roomsPerColor===1?{q:2,r:-1}:{q:3,r:-2},
   roomsPerColor===1?{q:-2,r:1}:{q:-3,r:2},
@@ -297,17 +314,62 @@ export function createDemoBoard(roomsPerColor:1|2|3=3,random:()=>number=Math.ran
  const thronePosition=coloredPositions.find(position=>
   hexDistance(position,{q:0,r:0})===1&&roomColors.get(hexKey(position))==='violet',
  )!;
+ type RoomDefinition=Pick<Room,'name'|'instabilityLimit'|'rewards'|'effect'|'rebuiltEffect'>;
+ const definitions:Record<RoomColor,RoomDefinition[]>={
+  grey:[
+   {name:'Cemetery',instabilityLimit:6,rewards:[4,2,1],effect:'CEMETERY_STANDARD',rebuiltEffect:'CEMETERY_REBUILT'},
+   {name:'Crypt',instabilityLimit:6,rewards:[4,2,1],effect:'CRYPT_STANDARD',rebuiltEffect:'CRYPT_REBUILT'},
+   {name:'Sacrificial Altar',instabilityLimit:6,rewards:[4,2,1],effect:'ALTAR_STANDARD',rebuiltEffect:'ALTAR_REBUILT'},
+  ],
+  crimson:[
+   {name:'Alchemical Laboratory',instabilityLimit:6,rewards:[4,2,1],effect:'ALCHEMICAL_LAB_STANDARD',rebuiltEffect:'ALCHEMICAL_LAB_REBUILT'},
+   {name:'Arena',instabilityLimit:6,rewards:[4,2,1],effect:'ARENA_STANDARD',rebuiltEffect:'ARENA_REBUILT'},
+   {name:'Summoner Room',instabilityLimit:6,rewards:[4,2,1],effect:'SUMMONER_STANDARD',rebuiltEffect:'SUMMONER_REBUILT'},
+  ],
+  amber:[
+   {name:'Bibliotheca',instabilityLimit:5,rewards:[3,1,1],effect:'BIBLIOTHECA_STANDARD',rebuiltEffect:'BIBLIOTHECA_REBUILT'},
+   {name:'Observatory',instabilityLimit:5,rewards:[3,1,1],effect:'OBSERVATORY_STANDARD',rebuiltEffect:'OBSERVATORY_REBUILT'},
+   {name:'Sanctuary',instabilityLimit:5,rewards:[3,1,1],effect:'SANCTUARY_STANDARD',rebuiltEffect:'SANCTUARY_REBUILT'},
+  ],
+  emerald:[
+   {name:'Forge',instabilityLimit:4,rewards:[2,1,0],effect:'FORGE_STANDARD',rebuiltEffect:'FORGE_REBUILT'},
+   {name:'Garden',instabilityLimit:4,rewards:[2,1,0],effect:'GARDEN_STANDARD',rebuiltEffect:'GARDEN_REBUILT'},
+   {name:'Treasure Room',instabilityLimit:4,rewards:[2,1,0],effect:'TREASURE_STANDARD',rebuiltEffect:'TREASURE_REBUILT'},
+  ],
+  azure:[
+   {name:'Oracle Room',instabilityLimit:6,rewards:[4,2,1],effect:'ORACLE_STANDARD',rebuiltEffect:'ORACLE_REBUILT'},
+   {name:'The Abyss',instabilityLimit:6,rewards:[4,2,1],effect:'ABYSS_STANDARD',rebuiltEffect:'ABYSS_REBUILT'},
+   {name:'Mirrors Room',instabilityLimit:6,rewards:[4,2,1],effect:'MIRRORS_STANDARD',rebuiltEffect:'MIRRORS_REBUILT'},
+  ],
+  violet:[
+   {name:'Armory Room',instabilityLimit:6,rewards:[4,2,1],effect:'ARMORY_STANDARD',rebuiltEffect:'ARMORY_REBUILT'},
+   {name:'Pleasure Room',instabilityLimit:6,rewards:[4,2,1],effect:'PLEASURE_STANDARD',rebuiltEffect:'PLEASURE_REBUILT'},
+   {name:'Throne Room',instabilityLimit:10,rewards:[6,3,1],effect:'THRONE_STANDARD',rebuiltEffect:'THRONE_REBUILT'},
+  ],
+ };
+ const roomDefinitionByPosition=new Map<string,RoomDefinition>();
+ for(const color of ROOM_COLORS) {
+  const positions=shuffle(coloredPositions.filter(position=>roomColors.get(hexKey(position))===color),random);
+  const colorDefinitions=shuffle(definitions[color],random);
+  const throneIndex=colorDefinitions.findIndex(definition=>definition.name==='Throne Room');
+  if(color==='violet') {
+   const throne=colorDefinitions.splice(throneIndex,1)[0];
+   roomDefinitionByPosition.set(hexKey(thronePosition),throne);
+  }
+  const remainingPositions=positions.filter(position=>color!=='violet'||hexKey(position)!==hexKey(thronePosition));
+  remainingPositions.forEach((position,index)=>roomDefinitionByPosition.set(hexKey(position),colorDefinitions[index]));
+ }
  const rooms: Room[] = tiles.map(h => {
   const central=h.q===0&&h.r===0;
   const starting=startingRooms.some(start=>hexKey(start.position)===hexKey(h));
   const color=roomColors.get(hexKey(h))??null;
-  const capacity=central?10:color==='violet'?4:color==='grey'?6:5;
-  const effect=color?effects[ROOM_COLORS.indexOf(color)]:central?'DRAW_POWERFUL':null;
+  const definition=roomDefinitionByPosition.get(hexKey(h));
+  const capacity=central?10:definition?.instabilityLimit??5;
   return {
-  id: `room-${h.q},${h.r}`, name:central?'BR room':starting?'Starting room':hexKey(h)===hexKey(thronePosition)?'Throne room':names.pop()!,
-  tiles: [h], instability: 0, instabilityLimit: capacity,
-  rewards: getRoomRewards(capacity), cubesByPlayer: {}, reconstructed: false, scored: false,
-  color,effect,rebuiltEffect:null,specialUsed:false,
+  id: `room-${h.q},${h.r}`, name:central?'BR room':starting?'Starting room':definition!.name,
+  tiles: [h], instability: 0, instabilityLimit:capacity,
+  rewards:central?[6,3,1]:definition?.rewards?[...definition.rewards]:getRoomRewards(capacity), cubesByPlayer: {}, reconstructed: false, scored: false,
+  color,effect:central?'BR_STANDARD':definition?.effect??null,rebuiltEffect:definition?.rebuiltEffect??null,specialUsed:false,
  }; });
  for(const start of startingRooms) {
   const room=rooms.find(r=>r.id===`room-${hexKey(start.position)}`)!;
@@ -1557,9 +1619,14 @@ function placeInstability(s: GameState, room: Room, amount: number, source?: Pla
  s.log.push(`${source?.name ?? 'BR'} places ${actual} instability in ${room.name} (${room.instability}/${room.instabilityLimit}).`);
  if(room.instability===room.instabilityLimit) {
   s.log.push(`${room.name} is full and cannot accept more instability; rebuilding, room VP and upgraded actions wait until Cleanup.`);
-  if(source && room.cubesByPlayer[source.id]===room.instability) {
-   awardVictoryPoints(s,source.id,1);
-   s.log.push(`${source.name}: +1 VP for completing ${room.name} entirely in their color.`);
+  const contributors=Object.entries(room.cubesByPlayer).filter(([,count])=>count>0);
+  if(contributors.length===1&&contributors[0][0]!==BLACK_ROSE_ID) {
+   const ownerId=contributors[0][0];
+   const owner=s.players.find(player=>player.id===ownerId);
+   if(owner) {
+    awardVictoryPoints(s,ownerId,1);
+    s.log.push(`${owner.name}: +1 VP for completing ${room.name} entirely in their color.`);
+   }
   }
 
   if(source) completeQuest(s,source,'REBUILD');
@@ -1733,10 +1800,11 @@ function roomActivationProblem(s:GameState,p:Player,targetRoomId?:string):string
   const room=s.board.rooms.find(r=>inRoom(p,r));
   const effect=room?getRoomEffect(room):null;
   assert(effect && !room!.startingFor,'No room effect in a starting room');
-  assert(!targetRoomId || effect==='INSTABILITY','Only Emerald instability takes a target room');
-  if(effect==='DRAW_POWERFUL'&&s.powerfulDeck.length>0)assert(getCentralDiscardOptions(p).length>=CENTRAL_ROOM_DISCARD_COST,`Discard ${CENTRAL_ROOM_DISCARD_COST} cards from your hand to activate the central chamber`);
+  assert(!targetRoomId || roomEffectNeedsTarget(effect),'This room effect does not take a target room');
+  if((effect==='DRAW_POWERFUL'||effect==='BR_STANDARD'||effect==='BR_REBUILT')&&s.powerfulDeck.length>0)
+   assert(getCentralDiscardOptions(p).length>=CENTRAL_ROOM_DISCARD_COST,`Discard ${CENTRAL_ROOM_DISCARD_COST} cards from your hand to activate the central chamber`);
   assert(!room!.reconstructed||!room!.specialUsed,'Reconstructed room special already used this Action phase');
-  if(effect==='INSTABILITY') {
+  if(roomEffectNeedsTarget(effect)) {
    const target=targetRoomId?getRoom(s,targetRoomId):room!;
    assert(!target.startingFor,'Starting rooms cannot be targeted');
    const distance=Math.min(...target.tiles.flatMap(h=>room!.tiles.map(origin=>hexLineDistance(origin,h))));
@@ -1751,16 +1819,186 @@ function roomActivationProblem(s:GameState,p:Player,targetRoomId?:string):string
 function activateRoom(s:GameState,p:Player,targetRoomId?:string) {
  atMomentEnd(s,()=>activateRoomBody(s,p,targetRoomId));
 }
+function chooseRoomTarget(s:GameState,p:Player,origin:Room,range:number,prompt:string):Room|undefined {
+ const options=s.board.rooms.filter(candidate=>!candidate.startingFor&&Math.min(...candidate.tiles.flatMap(h=>origin.tiles.map(g=>hexDistance(h,g))))<=range);
+ if(!options.length)return;
+ const id=options.length===1?options[0].id:askChoice(s,p.id,`room-target|${origin.id}|${prompt}`,prompt,options.map(candidate=>({id:candidate.id,label:candidate.name,roomId:candidate.id})))!;
+ return options.find(candidate=>candidate.id===id);
+}
+function roomDamage(s:GameState,p:Player,room:Room,amount:number) {
+ const actor=snapshot(s,p.id)!;
+ for(const target of s.players.filter(candidate=>candidate.id!==p.id&&candidate.wizard.alive&&inRoom(candidate,room))) {
+  resolveInstruction(s,p,{effect:'DAMAGE',amount,target:'EVENT_MODEL'},snapshot(s,target.id),undefined,actor,undefined,'ROOM');
+ }
+ for(const target of s.evocations.filter(candidate=>candidate.playerId!==p.id&&inRoomPosition(room,candidate.position))) {
+  resolveInstruction(s,p,{effect:'DAMAGE',amount,target:'EVENT_MODEL'},snapshot(s,target.id),undefined,actor,undefined,'ROOM');
+ }
+}
+function drawPersonalCards(s:GameState,p:Player,count:number) {
+ let drawn=0;
+ while(drawn<count&&p.personalDeck.length+p.discard.length>0){p.hand.push(drawOne(s,p.personalDeck,p.discard));drawn++;}
+ return drawn;
+}
+function chooseAndDiscard(s:GameState,p:Player,count:number,label:string,required=false) {
+ for(let index=0;index<count;index++) {
+  const options=getCentralDiscardOptions(p);
+  if(!options.length) {
+   if(required)throw new GameRuleError(`${p.name} needs ${count} non-Forgotten hand cards to activate ${label}`);
+   s.log.push(`${p.name} has no non-Forgotten card to discard for ${label}.`);return;
+  }
+  const id=options.length===1?options[0].id:askChoice(s,p.id,`room-discard|${label}|${p.id}|${index}`,`${label}: discard a card.`,options.map(card=>({id:card.id,label:card.name})))!;
+  const card=options.find(candidate=>candidate.id===id)!;
+  p.hand.splice(p.hand.indexOf(card),1);
+  discardCard(s,p,card);
+  s.log.push(`${p.name} discards ${card.name}.`);
+ }
+}
+function allLiveModels(s:GameState) {
+ return [
+  ...s.players.filter(candidate=>candidate.wizard.alive).map(candidate=>({id:candidate.id,label:candidate.name,kind:'MAGE' as const})),
+  ...s.evocations.filter(candidate=>!isNightmare(candidate)).map(candidate=>({id:candidate.id,label:`${candidate.name} #${candidate.number??1}`,kind:'EVOCATION' as const})),
+ ];
+}
+function chooseRoomModel(s:GameState,p:Player,options:ReturnType<typeof allLiveModels>,prompt:string,allowSelf=true) {
+ const eligible=options.filter(candidate=>allowSelf||
+  (candidate.id!==p.id&&(candidate.kind==='MAGE'||s.evocations.find(evocation=>evocation.id===candidate.id)?.playerId!==p.id)));
+ if(!eligible.length)return;
+ const id=eligible.length===1?eligible[0].id:askChoice(s,p.id,`room-model|${prompt}|${p.id}`,prompt,eligible.map(candidate=>({id:candidate.id,label:candidate.label})))!;
+ return eligible.find(candidate=>candidate.id===id);
+}
+function damageRoomModel(s:GameState,p:Player,modelId:string,amount:number) {
+ const actor=snapshot(s,p.id)!;
+ if(s.players.some(candidate=>candidate.id===modelId)) {
+  const target=getPlayer(s,modelId);
+  resolveInstruction(s,p,{effect:'DAMAGE',amount,target:'EVENT_MODEL'},snapshot(s,target.id),undefined,actor,undefined,'ROOM');
+ } else {
+  const target=s.evocations.find(candidate=>candidate.id===modelId);
+  if(target)resolveInstruction(s,p,{effect:'DAMAGE',amount,target:'EVENT_MODEL'},snapshot(s,target.id),undefined,actor,undefined,'ROOM');
+ }
+}
+function healRoomModel(s:GameState,p:Player,modelId:string,amount:number) {
+ if(s.players.some(candidate=>candidate.id===modelId)) {
+  const target=getPlayer(s,modelId);
+  healModel(s,target.wizard,'onWizard',amount,p.id,{kind:'MAGE',id:target.id,name:target.name,roomId:roomAt(s,target.wizard.position)?.id});
+  return;
+ }
+ const target=s.evocations.find(candidate=>candidate.id===modelId);
+ if(target)healModel(s,target,'onEvocations',amount,p.id,{kind:'EVOCATION',id:target.id,name:target.name,roomId:roomAt(s,target.position)?.id});
+}
+function healRoomTarget(s:GameState,p:Player,amount:number) {
+ const wounded=allLiveModels(s).filter(candidate=>{
+  const target=candidate.kind==='MAGE'?s.players.find(mage=>mage.id===candidate.id)?.wizard:s.evocations.find(e=>e.id===candidate.id);
+  return !!target&&target.damageCubes>0;
+ });
+ if(!wounded.length)return;
+ const target=chooseRoomModel(s,p,wounded,`${p.name}: choose a model to heal.`);
+ if(target)healRoomModel(s,p,target.id,amount);
+}
+function drawSchoolCards(s:GameState,p:Player,count:number) {
+ const chosenDecks=new Set<string>();
+ for(let index=0;index<count;index++) {
+  const decks=s.library.filter(deck=>deck.cards.length+deck.discard.length>0&&!chosenDecks.has(deck.id));
+  if(!decks.length){s.log.push('No school cards are available.');return;}
+  const deckId=decks.length===1?decks[0].id:askChoice(s,p.id,`school-draw|${p.id}|${index}`,'Choose a school deck to draw from.',decks.map(deck=>({id:deck.id,label:`${deck.name} (${deck.cards.length+deck.discard.length} available)`})))!;
+  const deck=decks.find(candidate=>candidate.id===deckId)!;
+  p.hand.push(drawOne(s,deck.cards,deck.discard));
+  chosenDecks.add(deck.id);
+ }
+}
+function drawAndDiscardQuests(s:GameState,p:Player,drawCount:number,discardCount:number) {
+ for(let index=0;index<drawCount;index++) {
+  const quest=drawQuest(s);
+  if(!quest){s.log.push('No quest cards are available.');break;}
+  if(p.quest)p.additionalQuests.push(quest);else p.quest=quest;
+ }
+ const eligible=activeQuests(p);
+ for(let index=0;index<Math.min(discardCount,eligible.length);index++) {
+  const choices=activeQuests(p);
+  const id=choices.length===1?choices[0].id:askChoice(s,p.id,`room-quest-discard|${p.id}|${index}`,'Choose a quest to discard.',choices.map(quest=>({id:quest.id,label:quest.name})))!;
+  const selected=choices.find(quest=>quest.id===id)!;
+  s.questDiscard.push(selected);
+  if(p.quest?.id===id)p.quest=p.additionalQuests.shift()??null;
+  else p.additionalQuests=p.additionalQuests.filter(quest=>quest.id!==id);
+ }
+}
+function summonRoomEvocation(s:GameState,p:Player,kind:EvocationKind,room:Room) {
+ const evocation=summonEvocation(s,p,kind,room.tiles[0]);
+ if(evocation)s.log.push(`${p.name} summons ${evocation.name} in ${room.name}.`);
+ return evocation;
+}
+function roomSequenceMove(s:GameState,p:Player,label:string) {
+ const destinations=s.board.tiles.filter(tile=>areAdjacent(p.wizard.position,tile)&&!s.board.rooms.some(candidate=>candidate.startingFor&&inRoomPosition(candidate,tile)));
+ if(!destinations.length)return;
+ const destination=destinations.length===1?destinations[0]:destinations.find(tile=>hexKey(tile)===askChoice(s,p.id,`forge-move|${p.id}|${label}`,`${label}: move one space.`,destinations.map(tile=>({id:hexKey(tile),label:roomAt(s,tile)?.name??hexKey(tile),...(roomAt(s,tile)?{roomId:roomAt(s,tile)!.id}:{})})))!);
+ if(destination)moveModel(s,snapshot(s,p.id)!,destination);
+}
+function roomSequenceAttack(s:GameState,p:Player,label:string) {
+ const targets=[
+  ...s.players.filter(target=>target.id!==p.id&&target.wizard.alive&&hexKey(target.wizard.position)===hexKey(p.wizard.position)).map(target=>({id:target.id,label:target.name})),
+  ...s.evocations.filter(target=>target.playerId!==p.id&&hexKey(target.position)===hexKey(p.wizard.position)).map(target=>({id:target.id,label:`${target.name} #${target.number??1}`})),
+ ];
+ if(!targets.length)return;
+ const id=targets.length===1?targets[0].id:askChoice(s,p.id,`forge-attack|${p.id}|${label}`,`${label}: choose a model to attack.`,targets)!;
+ damageRoomModel(s,p,id,p.wizard.attack);
+ modelEvent(s,'MAGE_ATTACK',snapshot(s,id)!,snapshot(s,p.id)!,roomAt(s,p.wizard.position)?.id);
+}
+function moveAllMagesToStarts(s:GameState) {
+ for(const mage of s.players) {
+  mage.wizard.position={...getRoom(s,mage.wizard.startingRoomId).tiles[0]};
+  syncNightmares(s,mage.id);
+  if(mage.id===s.activation?.playerId)s.activation.mustExitCell=true;
+ }
+}
+function castNextRoomSpell(s:GameState,p:Player) {
+ const slot=(['slot1','slot2','slot3'] as const).find(candidate=>p.prepared[candidate]&&!p.prepared[candidate]!.used);
+ if(!slot){s.log.push(`${p.name} has no ready numbered spell to cast.`);return;}
+ if(!s.activation?.physicalAction){s.log.push('Arena: the numbered spell can only be cast during a physical action.');return;}
+ const printed=p.prepared[slot]!.card;
+ const spell=getEffectiveSpell(s,p,printed);
+ if(['TRAP','PROTECTION'].includes(getSpellType(spell))){s.log.push('Arena cannot cast a Trap or Protection as a ready spell.');return;}
+ const command:Extract<GameAction,{type:'CAST_SPELL'}>={type:'CAST_SPELL',playerId:p.id,slot};
+ if(spell.target==='ROOM') {
+  const rooms=s.board.rooms.filter(candidate=>!candidate.startingFor&&candidate.tiles.some(tile=>spellReaches(s,spell,p.wizard.position,tile)));
+  if(!rooms.length){s.log.push(`${printed.name}: no room is in range.`);return;}
+  const roomId=rooms.length===1?rooms[0].id:askChoice(s,p.id,`arena-room|${p.id}|${slot}`,'Arena: choose the room to target with your spell.',
+   rooms.map(candidate=>({id:candidate.id,label:candidate.name,roomId:candidate.id})))!;
+  command.roomId=roomId;
+ } else if(spell.target!=='SELF') {
+  const candidates=allLiveModels(s).filter(candidate=>{
+   const model=modelTarget(s,candidate.id);
+   return spellCanTargetModel(spell,p.id,model.playerId,candidate.kind)&&spellFilterAllows(spell,p.id,model)&&
+    spellReaches(s,spell,p.wizard.position,model.position)&&!roomAt(s,model.position)?.startingFor;
+  });
+  if(!candidates.length){s.log.push(`${printed.name}: no model is a legal target.`);return;}
+  const chosen=candidates.length===1?candidates[0]:candidates.find(candidate=>candidate.id===askChoice(s,p.id,`arena-model|${p.id}|${slot}`,
+   'Arena: choose a model to target with your spell.',candidates.map(candidate=>({id:candidate.id,label:candidate.label})))!);
+  if(chosen?.kind==='MAGE')command.targetPlayerId=chosen.id;
+  else if(chosen)command.targetEvocationId=chosen.id;
+ }
+ castSpell(s,p,command,true);
+}
+function copyRoomEffect(s:GameState,p:Player,mirror:Room,position:Hex) {
+ const options=s.board.rooms.filter(candidate=>candidate.id!==mirror.id&&!candidate.startingFor&&getRoomEffect(candidate)!=='MIRRORS_REBUILT'&&getRoomEffect(candidate));
+ if(!options.length)return;
+ const selectedId=options.length===1?options[0].id:askChoice(s,p.id,`mirror-room|${p.id}|${mirror.id}`,'Choose a room effect to copy.',options.map(candidate=>({id:candidate.id,label:`${candidate.name} · ${candidate.reconstructed?'rebuilt':'standard'}: ${ROOM_EFFECT_LABELS[getRoomEffect(candidate)!]}`,roomId:candidate.id})))!;
+ const selected=options.find(candidate=>candidate.id===selectedId);
+ if(!selected)return;
+ const effect=getRoomEffect(selected)!;
+ const copied:Room={...selected,reconstructed:false,rebuiltEffect:null,effect};
+ s.log.push(`${p.name} copies ${selected.name}'s ${selected.reconstructed?'rebuilt':'standard'} effect.`);
+ activateRoomBody(s,p,undefined,{room:copied,position,allowUsedSpecial:true});
+}
 function activateRoomBody(s:GameState,p:Player,targetRoomId?:string,via?:{room:Room;position:Hex;allowUsedSpecial?:boolean}) {
  const room=via?.room??s.board.rooms.find(r=>inRoom(p,r));
  const effect=room?getRoomEffect(room):null;
  assert(effect && !room!.startingFor,'No room effect in a starting room');
- assert(!targetRoomId || effect==='INSTABILITY','Only Emerald instability takes a target room');
- if(effect==='DRAW_POWERFUL'&&s.powerfulDeck.length>0&&getCentralDiscardOptions(p).length<CENTRAL_ROOM_DISCARD_COST) {
+ assert(!targetRoomId || roomEffectNeedsTarget(effect),'This room effect does not take a target room');
+ if((effect==='DRAW_POWERFUL'||effect==='BR_STANDARD'||effect==='BR_REBUILT')&&s.powerfulDeck.length>0&&getCentralDiscardOptions(p).length<CENTRAL_ROOM_DISCARD_COST) {
   if(via){s.log.push(`${p.name} cannot pay the central chamber’s discard cost; nothing happens.`);return;}
   assert(false,`Discard ${CENTRAL_ROOM_DISCARD_COST} cards from your hand to activate the central chamber`);
  }
- const reward=room!.reconstructed?2:1;
+ const legacyEffect=new Set<RoomEffect>(['ROOM_DAMAGE','DRAW_DISCARD','INSTABILITY','DRAW_QUEST','DRAW_GRIMOIRE','SUMMON_CADAVER','DRAW_POWERFUL','FIRST_PLAYER']).has(effect!);
+ const reward=room!.reconstructed&&legacyEffect?2:1;
  if(room!.reconstructed) {
   // A spell-driven activation just fizzles on an already used reconstructed room.
   if(via&&room!.specialUsed&&!via.allowUsedSpecial){s.log.push(`${room!.name} special already used this Action phase; nothing happens.`);return;}
@@ -1769,7 +2007,7 @@ function activateRoomBody(s:GameState,p:Player,targetRoomId?:string,via?:{room:R
  }
  const actor=snapshot(s,p.id)!,position={...(via?.position??p.wizard.position)};
  const targets=[...s.players.filter(t=>inRoom(t,room!)).map(t=>snapshot(s,t.id)!),...s.evocations.filter(e=>room!.tiles.some(h=>hexKey(h)===hexKey(e.position))).map(e=>snapshot(s,e.id)!)];
- s.log.push(`${p.name} activates ${room!.name} for free${reward===2?' (reconstructed special: double reward)':''}: ${ROOM_EFFECT_LABELS[effect!]}.`);
+ s.log.push(`${p.name} activates ${room!.name} for free${room!.reconstructed?' (rebuilt effect)':''}: ${ROOM_EFFECT_LABELS[effect!]}.`);
  if(!via)progressQuest(s,p,'ROOM_ACTIVATE');
  switch(effect) {
   case 'ROOM_DAMAGE': {
@@ -1831,6 +2069,122 @@ function activateRoomBody(s:GameState,p:Player,targetRoomId?:string,via?:{room:R
   }
    break;
   }
+  case 'BR_STANDARD':
+  case 'BR_REBUILT': {
+  if(s.powerfulDeck.length)chooseAndDiscard(s,p,CENTRAL_ROOM_DISCARD_COST,room!.name,true);
+  const count=effect==='BR_REBUILT'?2:1;
+  for(let index=0;index<count;index++) {
+   const card=s.powerfulDeck.shift();
+   if(card)p.hand.push(card);else {s.log.push('The Forgotten spell supply is exhausted.');break;}
+  }
+  if(effect==='BR_REBUILT')chooseAndDiscard(s,p,1,room!.name);
+  else placeInstability(s,room!,1);
+  break;
+  }
+  case 'CEMETERY_STANDARD':case 'CRYPT_STANDARD':case 'ALTAR_STANDARD':
+  summonRoomEvocation(s,p,'CADAVER',room!);break;
+  case 'CEMETERY_REBUILT': {
+  const destination=chooseRoomTarget(s,p,room!,Infinity,'Cemetery: choose any room for the Colossus.');
+  if(destination)summonRoomEvocation(s,p,'COLOSSUS',destination);
+  break;
+  }
+  case 'CRYPT_REBUILT': {
+  for(let index=0;index<2;index++) {
+   const destination=chooseRoomTarget(s,p,room!,1,`Crypt: choose a room within range 1 for Cadaver ${index+1}.`);
+   if(destination)summonRoomEvocation(s,p,'CADAVER',destination);
+  }
+  break;
+  }
+  case 'ALTAR_REBUILT': {
+  const target=chooseRoomModel(s,p,allLiveModels(s),'Sacrificial Altar: choose a model anywhere to damage.',false);
+  if(target)damageRoomModel(s,p,target.id,2);
+  break;
+  }
+  case 'ALCHEMICAL_LAB_STANDARD':case 'ARENA_STANDARD':case 'SUMMONER_STANDARD': {
+  const destination=targetRoomId?getRoom(s,targetRoomId):room!;
+  roomDamage(s,p,destination,1);break;
+  }
+  case 'ALCHEMICAL_LAB_REBUILT':
+  drawPersonalCards(s,p,3);chooseAndDiscard(s,p,1,room!.name);break;
+  case 'ARENA_REBUILT':
+  castNextRoomSpell(s,p);break;
+  case 'SUMMONER_REBUILT': {
+  const effectResolution:EffectResolution={activationIsExplicit:false};
+  summonForEffect(s,p,'NIGREDO',position,effectResolution);
+  activateEffectSummon(s,p,'NIGREDO',effectResolution);
+  break;
+  }
+  case 'BIBLIOTHECA_STANDARD':case 'OBSERVATORY_STANDARD':case 'SANCTUARY_STANDARD':
+  for(let index=0;index<1;index++) {
+   const quest=drawQuest(s);
+   if(quest){if(p.quest)p.additionalQuests.push(quest);else p.quest=quest;}
+   else s.log.push('No quest cards are available.');
+  }
+  break;
+  case 'BIBLIOTHECA_REBUILT':drawSchoolCards(s,p,2);break;
+  case 'OBSERVATORY_REBUILT':
+  for(const mage of s.players)if(mage.id!==p.id)awardVictoryPoints(s,mage.id,-1);
+  s.log.push(`${p.name} activates the Observatory; every other mage loses 1 VP.`);break;
+  case 'SANCTUARY_REBUILT':case 'GARDEN_REBUILT': {
+  healRoomModel(s,p,p.id,3);
+  healRoomTarget(s,p,3);
+  break;
+  }
+  case 'FORGE_STANDARD':case 'GARDEN_STANDARD':case 'TREASURE_STANDARD':case 'MIRRORS_STANDARD': {
+  const destination=targetRoomId?getRoom(s,targetRoomId):room!;
+  placeInstability(s,destination,1,p);break;
+  }
+  case 'FORGE_REBUILT':
+  roomSequenceMove(s,p,'Forge move 1');
+  roomSequenceMove(s,p,'Forge move 2');
+  roomSequenceAttack(s,p,'Forge attack 1');
+  roomSequenceMove(s,p,'Forge move 3');
+  roomSequenceMove(s,p,'Forge move 4');
+  roomSequenceAttack(s,p,'Forge attack 2');
+  break;
+  case 'TREASURE_REBUILT':
+  awardVictoryPoints(s,p.id,2);s.log.push(`${p.name} gains 2 VP from the Treasure Room.`);drawExtraEvent(s);break;
+  case 'ORACLE_STANDARD':case 'ABYSS_STANDARD': {
+  if(p.discard.length) {
+   const card=p.discard.splice(Math.floor(resolutionRandom(s)*p.discard.length),1)[0];
+   p.hand.push(card);s.log.push(`${p.name} retrieves ${card.name} from their discard.`);
+  } else s.log.push(`${p.name}'s personal discard is empty.`);
+  break;
+  }
+  case 'ORACLE_REBUILT': {
+  p.personalDeck=shuffle([...p.personalDeck,...p.discard],()=>resolutionRandom(s));p.discard=[];
+  if(!p.personalDeck.length){s.log.push(`${p.name}'s grimoire is empty.`);break;}
+  const cardId=askChoice(s,p.id,`oracle-draw|${p.id}|${room!.id}`,'Oracle Room: choose a card from your grimoire.',
+   p.personalDeck.map(card=>({id:card.id,label:card.name})))!;
+  const index=p.personalDeck.findIndex(card=>card.id===cardId);
+  if(index>=0)p.hand.push(p.personalDeck.splice(index,1)[0]);
+  break;
+  }
+  case 'ABYSS_REBUILT':moveAllMagesToStarts(s);break;
+  case 'MIRRORS_REBUILT':copyRoomEffect(s,p,room!,position);break;
+  case 'ARMORY_STANDARD':case 'PLEASURE_STANDARD':drawPersonalCards(s,p,1);break;
+  case 'ARMORY_REBUILT': {
+  const numbered=(['slot1','slot2','slot3'] as const).filter(slot=>p.prepared[slot]);
+  const cards=getCentralDiscardOptions(p);
+  if(!numbered.length||!cards.length){s.log.push('Armory Room needs a revealed numbered spell and a card in hand.');break;}
+  const slotId=numbered.length===1?numbered[0]:askChoice(s,p.id,`armory-slot|${p.id}`,'Armory Room: choose a revealed numbered spell to replace.',
+   numbered.map(slot=>({id:slot,label:`${slot}: ${p.prepared[slot]!.card.name}`})))!;
+  const slot=numbered.find(candidate=>candidate===slotId)!;
+  const cardId=cards.length===1?cards[0].id:askChoice(s,p.id,`armory-card|${p.id}`,'Armory Room: choose a card from your hand.',
+   cards.map(card=>({id:card.id,label:card.name})))!;
+  const replacement=cards.find(card=>card.id===cardId)!;
+  const previous=p.prepared[slot]!.card;
+  p.hand.splice(p.hand.indexOf(replacement),1);
+  p.hand.push(previous);p.prepared[slot]={card:replacement,used:false};
+  awardVictoryPoints(s,BLACK_ROSE_ID,1);break;
+  }
+  case 'PLEASURE_REBUILT':drawAndDiscardQuests(s,p,3,2);break;
+  case 'THRONE_STANDARD':
+  awardVictoryPoints(s,p.id,-1);s.firstPlayerId=p.id;
+  s.log.push(`${p.name} loses 1 VP and takes the first-player token.`);break;
+  case 'THRONE_REBUILT':
+  s.firstPlayerId=p.id;awardVictoryPoints(s,p.id,1);
+  s.log.push(`${p.name} takes the first-player token and gains 1 VP.`);break;
  }
  if(room!.color==='amber'||room!.color==='emerald')progressJinx(s,p,'WEAKNESS');
  // Reactions to a room activation (Suffocation) resolve after the room's effect.
@@ -2473,7 +2827,7 @@ function resolveMomentBody(s:GameState,caster:Player,spell:Card,step:Moment,room
  if(step.effect==='ACTIVATE_TARGET_ROOM') {
   const target=step.used&&effect.spellEvent?.roomId?s.board.rooms.find(r=>r.id===effect.spellEvent!.roomId)??room:room;
   if(!target||!getRoomEffect(target)||target.startingFor){s.log.push(`${spell.name}: the target room has no activatable effect.`);return;}
-  const targetRoomId=getRoomEffect(target)==='INSTABILITY'
+  const targetRoomId=roomEffectNeedsTarget(getRoomEffect(target))
    ?askChoice(s,caster.id,`activate-room|${caster.id}|${spell.id}`,`${spell.name}: choose a room within range 1 of ${target.name} to receive instability.`,
     s.board.rooms.filter(candidate=>!candidate.startingFor&&Math.min(...candidate.tiles.flatMap(h=>target.tiles.map(origin=>hexLineDistance(origin,h))))<=1)
      .map(candidate=>({id:candidate.id,label:candidate.name,roomId:candidate.id})))!
@@ -2574,18 +2928,21 @@ function resolveMomentBody(s:GameState,caster:Player,spell:Card,step:Moment,room
  for(const ref of refs)resolveInstruction(s,caster,{...step,target:'BOUND_MODEL'},ref,undefined,actor,effect,damageOrigin);
 }
 
-function castSpell(s: GameState, p: Player, command: Extract<GameAction,{type:'CAST_SPELL'|'CAST_POWERFUL_SPELL'|'ACTIVATE_SPELL'}>) {
+function castSpell(s: GameState, p: Player, command: Extract<GameAction,{type:'CAST_SPELL'|'CAST_POWERFUL_SPELL'|'ACTIVATE_SPELL'}>,freeWithinRoom=false) {
  const a=requireActivation(s,p.id);
- assert(a.exploring===0,'Finish exploring first');
- requireNoPendingPhysical(a);
- requireTurnAction(a);
+ if(freeWithinRoom)assert(a.physicalAction,'A room-granted spell requires a pending physical action');
+ else {
+  assert(a.exploring===0,'Finish exploring first');
+  requireNoPendingPhysical(a);
+  requireTurnAction(a);
+ }
  assert(!isInStartingRoom(s,p),'Leave the starting room before casting spells');
  if(command.type==='CAST_POWERFUL_SPELL')throw new GameRuleError('Forgotten spells cannot be cast from hand; prepare them in a later Preparation phase and use CAST_SPELL');
  const action=command as Extract<GameAction,{type:'CAST_SPELL'}>;
  const prepared=p.prepared[action.slot];
  const card=prepared&&!prepared.used?prepared.card:undefined;
  assert(card,'Spell unavailable');
- if(action.slot!=='rapid') {
+ if(action.slot!=='rapid'&&!freeWithinRoom) {
   assert(!a.sequencedSpellUsed,'Only one sequenced spell per turn');
   assert(slots.find(slot=>p.prepared[slot] && !p.prepared[slot]!.used)===action.slot,'Cast numbered spells in order 1 → 2 → 3');
  }
@@ -2642,9 +2999,9 @@ function castSpell(s: GameState, p: Player, command: Extract<GameAction,{type:'C
   s.activeSpellOrder!.push(active.id);bindActiveSpell(s,active);
  } else if(spell.powerful){s.removedCards.push(printed);s.log.push(`${spell.name} is removed from the game after use.`);}
  else discardCard(s,p,printed);
- a.spellsCast++;a.actionsUsed++;
+ a.spellsCast++;if(!freeWithinRoom)a.actionsUsed++;
  if(action.slot!=='rapid')a.sequencedSpellUsed=true;
- s.log.push(reactive&&!action.dummy?`${p.name} activates a hidden spell for 1 action (no physical token).`:`${p.name} casts ${spell.name}${action.dummy?' on a dummy (no model effects)':''} for 1 action (no physical token).`);
+ s.log.push(freeWithinRoom?`${p.name} casts ${spell.name} through the Arena's rebuilt effect.`:reactive&&!action.dummy?`${p.name} activates a hidden spell for 1 action (no physical token).`:`${p.name} casts ${spell.name}${action.dummy?' on a dummy (no model effects)':''} for 1 action (no physical token).`);
  if(!reactive||action.dummy)recordRecapCard(s,'CAST',p.id,printed);
  if(spell.ongoing&&!action.dummy)s.log.push(`${spell.name} remains ongoing: ${spell.ongoing.effects.map(describeInstruction).join(' ')}`);
  // Activation is not a cast and cannot trigger "when a spell is cast".

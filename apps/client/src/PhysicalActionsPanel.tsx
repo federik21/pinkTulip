@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { GameAction, GameState, Player, ROOM_EFFECT_LABELS, CENTRAL_ROOM_DISCARD_COST, getCentralDiscardOptions, getDiscardMoveCards, getMageMovement, getRoomEffect, hexDistance, hexKey, isInStartingRoom, mustLeaveCell } from '@brw/game-engine';
+import { GameAction, GameState, Player, ROOM_EFFECT_LABELS, CENTRAL_ROOM_DISCARD_COST, getCentralDiscardOptions, getDiscardMoveCards, getMageMovement, getRoomEffect, hexDistance, hexKey, isInStartingRoom, mustLeaveCell, roomEffectNeedsTarget } from '@brw/game-engine';
 import { targetModels } from './EvocationsPanel';
 
 type Props = {
@@ -16,9 +16,10 @@ export function physicalContext(game:GameState,me:Player,effectTargetId:string) 
  const inStart=isInStartingRoom(game,me);
  const targets=targetModels(game).filter(t=>t.playerId!==me.id&&hexDistance(me.wizard.position,t.position)===0&&!game.board.rooms.some(r=>r.startingFor&&r.tiles.some(h=>hexKey(h)===hexKey(t.position))));
  const effectTargets=game.board.rooms.filter(r=>!r.startingFor&&currentRoom&&Math.min(...currentRoom.tiles.flatMap(h=>r.tiles.map(t=>hexDistance(h,t))))<=1);
- const roomAvailable=!!currentEffect&&!inStart&&(!currentRoom?.reconstructed||!currentRoom.specialUsed)&&(currentEffect!=='DRAW_POWERFUL'||!game.powerfulDeck.length||getCentralDiscardOptions(me).length>=CENTRAL_ROOM_DISCARD_COST);
+ const roomAvailable=!!currentEffect&&!inStart&&(!currentRoom?.reconstructed||!currentRoom.specialUsed)&&
+  (!(currentEffect==='DRAW_POWERFUL'||currentEffect==='BR_STANDARD'||currentEffect==='BR_REBUILT')||!game.powerfulDeck.length||getCentralDiscardOptions(me).length>=CENTRAL_ROOM_DISCARD_COST);
  const targetValid=!effectTargetId||effectTargets.some(r=>r.id===effectTargetId);
- const activateRoom=(playerId:string):GameAction=>({type:'ACTIVATE_ROOM',playerId,...(currentEffect==='INSTABILITY'&&effectTargetId?{roomTargetId:effectTargetId}:{})});
+ const activateRoom=(playerId:string):GameAction=>({type:'ACTIVATE_ROOM',playerId,...(roomEffectNeedsTarget(currentEffect)&&effectTargetId?{roomTargetId:effectTargetId}:{})});
  return {currentRoom,currentEffect,inStart,targets,effectTargets,roomAvailable,targetValid,activateRoom};
 }
 
@@ -35,7 +36,7 @@ export function PhysicalBannerActions({game,me,pending,effectTargetId,beginRoomP
   ?<button type="button" disabled={pending||mustMove} onClick={()=>send({type:'END_EXPLORE',playerId:me.id})}>Finish moving early</button>
    :!physical.movementStarted&&!physical.mainEffectUsed&&<button type="button" className="primary" disabled={pending} onClick={()=>send({type:'PERFORM_MOVEMENT',playerId:me.id})}>Move {getMageMovement(me)}</button>)
    :!physical.mainEffectUsed&&targets.map(t=><button type="button" className="primary" key={t.id} disabled={pending} title={`Inflict ${me.wizard.attack} damage on ${t.name}`} onClick={()=>send({type:'INFLICT_ATTACK',playerId:me.id,targetId:t.id})}>Attack {t.name}</button>)}
-  {roomAvailable&&!active?.roomEffectUsed&&!exploring&&<button type="button" disabled={pending||!targetValid} onClick={()=>currentEffect==='INSTABILITY'?beginRoomPick():send(activateRoom(me.id))}>Activate room</button>}
+  {roomAvailable&&!active?.roomEffectUsed&&!exploring&&<button type="button" disabled={pending||!targetValid} onClick={()=>roomEffectNeedsTarget(currentEffect)?beginRoomPick():send(activateRoom(me.id))}>Activate room</button>}
   <button type="button" disabled={pending||mustMove} title="Skip any remaining effects and finish this physical action" onClick={()=>send({type:'SKIP_PHYSICAL_EFFECTS',playerId:me.id})}>Finish action</button>
  </div>;
 }
@@ -70,9 +71,9 @@ export function PhysicalActionsPanel({game,me,enabled,pending,exitCardId,setExit
      {!physical.mainEffectUsed&&targets.length===0&&<p className="hint">No enemy model in this room. You can still activate the room or skip.</p>}
      {choosingTarget&&!physical.mainEffectUsed&&<div className="attack-targets" role="group" aria-label="Attack target">{targets.map(t=><button key={t.id} disabled={pending} onClick={()=>{send({type:'INFLICT_ATTACK',playerId:me.id,targetId:t.id});setChoosingTarget(false);}}>Inflict {me.wizard.attack} damage on {t.name}</button>)}</div>}
     </>}
-    <div className="physical-room-effect"><p className="hint">{currentEffect?`${ROOM_EFFECT_LABELS[currentEffect]}${currentRoom?.reconstructed?` ×2 · ${currentRoom.specialUsed?'Used this Action phase':'Reconstructed special'}`:''}.`:'Starting rooms cannot be activated.'}</p>
-     {currentEffect==='INSTABILITY'&&!active?.roomEffectUsed&&!active?.exploring&&<p className="hint">Emerald effect: pick the target room (this room or any non-starting room within distance 1) by clicking it on the map, then confirm in the top bar.</p>}
-     <button disabled={pending||!roomAvailable||!!active?.roomEffectUsed||!!active?.exploring||!targetValid} onClick={()=>currentEffect==='INSTABILITY'?beginRoomPick():send(activateRoom(me.id))}>Activate the room<small>{active?.roomEffectUsed?'Room effect resolved':active?.exploring?'Finish movement before activating':currentEffect==='INSTABILITY'?'Choose the target room on the map':'Once with this physical action'}</small></button>
+    <div className="physical-room-effect"><p className="hint">{currentEffect?`${ROOM_EFFECT_LABELS[currentEffect]}${currentRoom?.reconstructed?` · ${currentRoom.specialUsed?'Used this Action phase':'Rebuilt effect'}`:''}.`:'Starting rooms cannot be activated.'}</p>
+     {roomEffectNeedsTarget(currentEffect)&&!active?.roomEffectUsed&&!active?.exploring&&<p className="hint">Choose a non-starting target room within range 1 on the map, then confirm.</p>}
+     <button disabled={pending||!roomAvailable||!!active?.roomEffectUsed||!!active?.exploring||!targetValid} onClick={()=>roomEffectNeedsTarget(currentEffect)?beginRoomPick():send(activateRoom(me.id))}>Activate the room<small>{active?.roomEffectUsed?'Room effect resolved':active?.exploring?'Finish movement before activating':roomEffectNeedsTarget(currentEffect)?'Choose the target room on the map':'Once with this physical action'}</small></button>
     </div>
     <button className="skip-effects" disabled={pending||mustMove} onClick={()=>send({type:'SKIP_PHYSICAL_EFFECTS',playerId:me.id})}>Skip remaining effects</button>
    </div>}

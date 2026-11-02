@@ -234,7 +234,7 @@ describe('Shamanic school',()=>{
 
  it('draws a quest and activates River Spirit’s chosen room',()=>{
   const s=fixture(),p=s.players[0],card=createShamanicDeck('shamanic','shamanic').find(c=>c.name==='River Spirit')!;
-  const room=s.board.rooms.filter(candidate=>candidate.effect&&candidate.effect!=='DRAW_POWERFUL'&&!candidate.startingFor)
+  const room=s.board.rooms.filter(candidate=>candidate.effect&&candidate.effect!=='DRAW_POWERFUL'&&candidate.effect!=='BR_STANDARD'&&!candidate.startingFor)
    .sort((a,b)=>Math.min(...a.tiles.map(tile=>Math.abs(tile.q)+Math.abs(tile.r)))-Math.min(...b.tiles.map(tile=>Math.abs(tile.q)+Math.abs(tile.r))))[0];
   expect(room).toBeDefined();
   p.prepared.rapid={card,used:false};
@@ -245,7 +245,7 @@ describe('Shamanic school',()=>{
 
  it('lets River Spirit choose an instability target relative to the activated room',()=>{
   const s=fixture(),p=s.players[0],card=createShamanicDeck('shamanic','shamanic').find(c=>c.name==='River Spirit')!;
-  const room=s.board.rooms.find(candidate=>candidate.effect==='INSTABILITY'&&!candidate.startingFor)!;
+  const room=s.board.rooms.find(candidate=>candidate.effect==='FORGE_STANDARD'&&!candidate.startingFor)!;
   p.wizard.position={...room.tiles[0]};
   p.prepared.rapid={card,used:false};
   let result=applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:room.id});
@@ -262,8 +262,9 @@ describe('Shamanic school',()=>{
 
  it('places River Spirit room-effect summons in the selected room',()=>{
   const s=fixture(),p=s.players[0],card=createShamanicDeck('shamanic','shamanic').find(c=>c.name==='River Spirit')!;
-  const room=s.board.rooms.find(candidate=>candidate.effect==='SUMMON_CADAVER'&&!candidate.startingFor)!;
+  const room=s.board.rooms.find(candidate=>candidate.effect==='CEMETERY_STANDARD'&&!candidate.startingFor)!;
   room.name='Obsidian Study';
+  p.wizard.position={...room.tiles[0]};
   p.prepared.rapid={card,used:false};
   const result=applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:room.id});
   expect(result.evocations.some(evocation=>evocation.name==='Cadaver'&&evocation.position.q===room.tiles[0].q&&evocation.position.r===room.tiles[0].r)).toBe(true);

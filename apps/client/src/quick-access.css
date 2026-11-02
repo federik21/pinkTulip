@@ -127,6 +127,8 @@
 @media(prefers-reduced-motion:reduce){.chronicle-drawer[open]{animation:none}}
 /* Board zoom controls sit beside the Info button; the viewport keeps native one-finger panning while pinch is handled in script. */
 .board-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.board-effect-switch{display:inline-flex;align-items:center;gap:6px;min-height:40px;padding:7px 10px;border:1px solid #4d424e;border-radius:7px;background:#28232d;color:#eee5dc;font-size:12px;white-space:nowrap;cursor:pointer}
+.board-effect-switch input{margin:0;accent-color:var(--gold)}
 .zoom-controls{display:inline-flex;align-items:stretch;border:1px solid #574650;border-radius:9px;background:#100d14;overflow:hidden}
 .zoom-controls button{min-height:44px;min-width:44px;margin:0;padding:6px 10px;border:0;border-radius:0;background:transparent;font-size:16px;font-weight:700;line-height:1}
 .zoom-controls button+button{border-left:1px solid #574650}

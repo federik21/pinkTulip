@@ -106,7 +106,7 @@ describe('Nightmare school',()=>{
   const s=castHumiliationAfterAssign(fixture());
   const umbra=s.evocations.find(e=>e.kind==='UMBRA')!;
   const library=s.board.rooms.find(r=>!r.startingFor&&r.id!=='room-0,0')!;
-  library.name='Whispering Library';library.effect='DRAW_GRIMOIRE';library.reconstructed=true;library.specialUsed=true;
+  library.name='Whispering Library';library.effect='DRAW_GRIMOIRE';library.rebuiltEffect=null;library.reconstructed=true;library.specialUsed=true;
   umbra.position={...library.tiles[0]};
   s.players[0].personalDeck=[card('Anguish')];
   s.players[0].prepared.rapid={used:false,card:card('Traitor Nightmare')};

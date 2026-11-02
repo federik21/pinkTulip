@@ -112,7 +112,15 @@ export type TargetFilter = { own?: boolean; archetype?: 'CONSTRUCT'; maxHealth?:
 export type Card = { id: string; name: string; kind: 'SPELL'; moments: Moment[]; instability?: boolean; range: number; target: SpellTarget; element?: Element; enhancement?: Enhancement; targetFilter?: TargetFilter; suppressReactions?: boolean; schoolId?: string; powerful?: boolean; spellType?: SpellType; triggerText?: string; rulesText?: string; trigger?: TriggerCondition; triggerTarget?: 'EVENT_MODEL' | 'EVENT_ACTOR' | 'EVENT_ROOM'; triggerSight?: number; targetFrom?: 'EVENT_MODEL'; triggerEffects?: TriggeredInstruction[]; ongoing?: { trigger: TriggerCondition; effects: TriggeredInstruction[] } };
 export type ActiveSpell = { id: string; playerId: string; card: Card; targetPlayerId?: string; targetEvocationId?: string; roomId?: string; cleanupDestination?: 'HAND' | 'MEMORIES' };
 export type RoomColor = 'crimson' | 'azure' | 'emerald' | 'amber' | 'violet' | 'grey';
-export type RoomEffect = 'ROOM_DAMAGE' | 'DRAW_DISCARD' | 'INSTABILITY' | 'DRAW_QUEST' | 'DRAW_GRIMOIRE' | 'SUMMON_CADAVER' | 'DRAW_POWERFUL' | 'FIRST_PLAYER';
+export type RoomEffect =
+ | 'ROOM_DAMAGE' | 'DRAW_DISCARD' | 'INSTABILITY' | 'DRAW_QUEST' | 'DRAW_GRIMOIRE' | 'SUMMON_CADAVER' | 'DRAW_POWERFUL' | 'FIRST_PLAYER'
+ | 'BR_STANDARD' | 'BR_REBUILT'
+ | 'CEMETERY_STANDARD' | 'CEMETERY_REBUILT' | 'CRYPT_STANDARD' | 'CRYPT_REBUILT' | 'ALTAR_STANDARD' | 'ALTAR_REBUILT'
+ | 'ALCHEMICAL_LAB_STANDARD' | 'ALCHEMICAL_LAB_REBUILT' | 'ARENA_STANDARD' | 'ARENA_REBUILT' | 'SUMMONER_STANDARD' | 'SUMMONER_REBUILT'
+ | 'BIBLIOTHECA_STANDARD' | 'BIBLIOTHECA_REBUILT' | 'OBSERVATORY_STANDARD' | 'OBSERVATORY_REBUILT' | 'SANCTUARY_STANDARD' | 'SANCTUARY_REBUILT'
+ | 'FORGE_STANDARD' | 'FORGE_REBUILT' | 'GARDEN_STANDARD' | 'GARDEN_REBUILT' | 'TREASURE_STANDARD' | 'TREASURE_REBUILT'
+ | 'ORACLE_STANDARD' | 'ORACLE_REBUILT' | 'ABYSS_STANDARD' | 'ABYSS_REBUILT' | 'MIRRORS_STANDARD' | 'MIRRORS_REBUILT'
+ | 'ARMORY_STANDARD' | 'ARMORY_REBUILT' | 'PLEASURE_STANDARD' | 'PLEASURE_REBUILT' | 'THRONE_STANDARD' | 'THRONE_REBUILT';
 export type LibraryDeck = { id: string; name: string; cards: Card[]; discard: Card[] };
 // ONGOING events skip the discard on reveal and sit on GameState.eventBoard.
 // entryPoints go to BR when the event enters; exitPoints when it shifts out.

@@ -250,7 +250,7 @@ describe('all-model targeting and physical damage cubes',()=>{
  });
 
  it('Crimson damages every enemy model in the activated room, excluding own mage/models and outsiders',()=>{
-  let g=actionFixture();const crimson=g.board.rooms.find(r=>r.effect==='ROOM_DAMAGE')!;
+  let g=actionFixture();const crimson=g.board.rooms.find(r=>r.effect==='ALCHEMICAL_LAB_STANDARD')!;
   player(g).wizard.position={...crimson.tiles[0]};player(g,'p2').wizard.position={...crimson.tiles[0]};
   addPlayer(g,'p3').wizard.position={...crimson.tiles[0]};
   g.evocations=[cadaver('own','p1',crimson.tiles[0]),cadaver('enemy2','p2',crimson.tiles[0]),cadaver('enemy3','p3',crimson.tiles[0]),cadaver('outside','p2')];

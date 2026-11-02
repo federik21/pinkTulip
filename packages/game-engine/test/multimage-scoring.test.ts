@@ -30,21 +30,21 @@ function defeat(contributions:Record<string,number>,black=0) {
 describe('dense contribution ranks and tie reduction',()=>{
  it('applies dense ties and the room minimum including Pink Tulip in ranking',()=>{
   const {g}=settleRoom({p1:2,p2:2,p3:1});
-  expect(g.players.map(p=>p.victoryPoints)).toEqual([3,3,2,0]);
+  expect(g.players.map(p=>p.victoryPoints)).toEqual([2,2,1,0]);
   expect(g.players.every(p=>p.cubes.onBoard===0&&p.cubes.available===25)).toBe(true);
     const tied=settleRoom({p1:1,p2:1,p3:1,p4:1,'black-rose':1}).g;
-    expect(tied.players.map(p=>p.victoryPoints)).toEqual([3,3,3,3]);expect(tied.blackRose.victoryPoints).toBe(3);
+    expect(tied.players.map(p=>p.victoryPoints)).toEqual([2,2,2,2]);expect(tied.blackRose.victoryPoints).toBe(2);
  });
  it('retains the central room reward values and does not skip second rank behind tied leaders',()=>{
   expect(settleRoom({p1:4,p2:4,p3:2},true).g.players.map(p=>p.victoryPoints)).toEqual([5,5,3,0]);
  });
  it('never gives noncontributors a room award, and never scores a room twice',()=>{
   let {g,roomId}=settleRoom({p1:4,'black-rose':1});
-    expect(g.players.map(p=>p.victoryPoints)).toEqual([4,0,0,0]);expect(g.blackRose.victoryPoints).toBe(2);
+    expect(g.players.map(p=>p.victoryPoints)).toEqual([3,0,0,0]);expect(g.blackRose.victoryPoints).toBe(1);
   g.phase='ACTION';g.currentPlayerId='p1';g.activation={playerId:'p1',actionsUsed:0,exploring:0,sequencedSpellUsed:false,spellsCast:0,discardedExit:false,roomEffectUsed:false};
   g=applyAction(g,{type:'PASS_ROUND',playerId:'p1'});
   expect(g.board.rooms.find(r=>r.id===roomId)?.scored).toBe(true);
-    expect(g.players.map(p=>p.victoryPoints)).toEqual([4,0,0,0]);expect(g.blackRose.victoryPoints).toBe(2);
+    expect(g.players.map(p=>p.victoryPoints)).toEqual([3,0,0,0]);expect(g.blackRose.victoryPoints).toBe(1);
  });
 });
 
@@ -64,7 +64,7 @@ describe('exclusive color completion bonuses',()=>{
     expect(g.players[0].victoryPoints).toBe(1);expect(g.board.rooms.find(r=>r.id===roomId)?.reconstructed).toBe(false);
   // Exhaust the other mage through real actions, then score the finished room at Cleanup.
   for(let i=0;i<2;i++){g=applyAction(g,{type:'EXPLORE',playerId:'p2'});g=applyAction(g,{type:'END_EXPLORE',playerId:'p2'});}
-    expect(g.phase).toBe('CLEANUP');expect(g.players[0].victoryPoints).toBe(5);expect(g.board.rooms.find(r=>r.id===roomId)?.reconstructed).toBe(true);
+    expect(g.phase).toBe('CLEANUP');expect(g.players[0].victoryPoints).toBe(4);expect(g.board.rooms.find(r=>r.id===roomId)?.reconstructed).toBe(true);
  });
  it('does not award the exclusive room bonus when neutral cubes contributed',()=>{
   expect(finishRoom(1).g.players[0].victoryPoints).toBe(0);
