@@ -3,8 +3,8 @@ import { applyAction, BLACK_ROSE_ID, createGame, createNightmareDeck, EVOCATION_
 import type { Card, EventCard, GameState } from '../src';
 
 const card=(name:string):Card=>({...createNightmareDeck('n','nightmare').find(c=>c.name===name)!,id:`n-${name}`});
-function fixture():GameState {
- const s=createGame(2);s.phase='ACTION';s.round=1;s.currentPlayerId='p1';s.firstPlayerId='p1';
+function fixture(playerCount=2):GameState {
+ const s=createGame(playerCount);s.phase='ACTION';s.round=1;s.currentPlayerId='p1';s.firstPlayerId='p1';
  s.activation={playerId:'p1',actionsUsed:0,exploring:0,sequencedSpellUsed:false,spellsCast:0,discardedExit:false,roomEffectUsed:false};
  for(const p of s.players){p.connected=true;p.wizard.position={q:0,r:0};}
  return s;
@@ -33,6 +33,24 @@ describe('Nightmare school',()=>{
   expect(umbra).toMatchObject({playerId:BLACK_ROSE_ID,assignedTo:'p2',slot:2});
   expect(s.players[1].wizard.damageCubes).toBe(2); // attack 1 + 1 bonus
   expect(getEvocationSupply(s).UMBRA).toBe(8);
+ });
+ it('credits an assigned Umbra lethal hit to Black Rose without the Liquefy bonus',()=>{
+  const s=castHumiliationAfterAssign(fixture(3));
+  const target=s.players[1],umbra=s.evocations.find(e=>e.kind==='UMBRA')!;
+  expect(umbra.assignedTo).toBe(target.id);
+  target.wizard.damageCubes=9;target.wizard.blackDamage=0;
+  target.wizard.damageByPlayer={p1:9};target.wizard.damageOrder=Array(9).fill('p1');
+  s.players[0].cubes.available=16;s.players[0].cubes.onWizard=9;
+  for(const player of s.players)player.actionTokens=0;
+
+  const result=applyAction(s,{type:'END_ACTIVATION',playerId:'p1'});
+
+  expect(result.phase).toBe('CLEANUP');
+  expect(result.blackRose).toMatchObject({kills:1,victoryPoints:2});
+    expect(result.players.map(player=>player.victoryPoints)).toEqual([4,0,0]);
+  expect(result.players.map(player=>player.trophies)).toEqual([[],[],[]]);
+  expect(result.evocations.some(e=>e.id===umbra.id)).toBe(false);
+  expect(result.feedbackEvents!.find(event=>event.kind==='MAGE_DEFEATED')).toMatchObject({sourceId:BLACK_ROSE_ID});
  });
  it('also damages the evocation in the assigned slot',()=>{
   const s=fixture();

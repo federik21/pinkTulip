@@ -442,7 +442,7 @@ type ModelSnapshot = { id:string; playerId:string; kind:'MAGE'|'EVOCATION'; gene
 // Local to a single effect, so a nested spell cannot replace its summoned model.
 type EffectResolution = { casterSeen?:{position:Hex}; assigned?:string[]; eventActor?:ModelSnapshot; summoned?:ModelSnapshot; activationIsExplicit:boolean; upgraded?:boolean; removed?:{position:Hex;attack:number;roomId?:string}; eventPosition?:Hex; eventKind?:EvocationKind; damaged?:ModelSnapshot[]; moved?:ModelSnapshot; spellEvent?:SpellEvent; protectedTargets?:Set<string> };
 type SpellEvent = { event:TriggerEvent; model?:ModelSnapshot; actor?:ModelSnapshot; roomId?:string; target?:FeedbackTarget; damageOrigin?:DamageOrigin; position?:Hex; kind?:EvocationKind; spellType?:Card['spellType']; prevented?:{value:boolean}; afterResolution?:()=>void };
-type PendingMageDefeat = { ref:ModelSnapshot; roomId?:string; target:FeedbackTarget; source?:Player };
+type PendingMageDefeat = { ref:ModelSnapshot; roomId?:string; target:FeedbackTarget; source?:Player; liquefyThePain?:boolean };
 type ReplayEntropy={ids:string[];random:number[]};
 type InstructionContext = { generations:Map<string,number>; bindings:Map<string,ModelSnapshot>; defeats:Map<string,PendingMageDefeat>; resolutions:number; interruptId?:string; answers:DecisionAnswer[]; cursor:number; momentDepth:number; events:SpellEvent[]; entropy:ReplayEntropy; idCursor:number; randomCursor:number; suppress?:boolean };
 const instructionContexts=new WeakMap<GameState,InstructionContext>();
@@ -649,8 +649,8 @@ function resolveInstructionBody(s:GameState,owner:Player,instruction:TriggeredIn
     break;
   case 'HEAL':healDamageWithChoice(s,owner,target.model,target.location,instruction.amount,modelFeedbackTarget(s,ref)!);break;
   case 'CONVERT':
-    // Owned models ignore damage conversion, including triggered instructions.
-    if(ref!.playerId===owner.id)break;
+    // Damage can be converted on the caster's own mage, but not on friendly evocations.
+    if(ref!.playerId===owner.id&&!target.mage)break;
    convertDamageWithChoice(s,owner,target.model,target.location,instruction.amount,modelFeedbackTarget(s,ref)!);
    break;
   }
@@ -733,6 +733,10 @@ function resolveEvent(s:GameState,event:SpellEvent) {
   if(bound&&!liveModel(s,bound))continue;
   assert(++context(s).resolutions<=128,'Reactive spell resolution limit exceeded (128); root action cancelled');
   const ongoing=s.ongoingSpells!.some(a=>a.id===active.id);
+  if(event.event==='MAGE_DEFEATED'&&active.card.name==='Liquefy the Pain'&&event.model) {
+   const defeat=context(s).defeats.get(event.model.id);
+   if(defeat)defeat.liquefyThePain=true;
+  }
   // Remove a one-shot BEFORE any nested effects; reveal/discard is physical.
   if(!ongoing)retireActiveSpell(s,active);
   s.log.push(`Interrupt ${event.event}: ${owner.name} ${ongoing?'reacts with':'reveals'} ${active.card.name}.`);
@@ -1002,8 +1006,11 @@ function settleMageDefeat(s:GameState,pending:PendingMageDefeat) {
   source.kills=source.trophies.length;
   completeQuest(s,source,'KILL');
  } else if(!source) {
-  s.blackRose.kills++; awardVictoryPoints(s,target.id,2);
-  s.log.push(`${target.name} gains +2 VP for being defeated by BR.`);
+  s.blackRose.kills++;
+  if(pending.liquefyThePain) {
+   awardVictoryPoints(s,target.id,2);
+   s.log.push(`${target.name} gains +2 VP for being defeated by BR with Liquefy the Pain.`);
+  }
  }
  appendFeedback(s,{kind:'MAGE_DEFEATED',target:feedbackTarget,sourceId:source?.id??BLACK_ROSE_ID,
   contributions,awards,returnedCubes,respawnRoomId:target.wizard.startingRoomId,...(bonusPlayerId?{bonusPlayerId}:{})});

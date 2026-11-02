@@ -121,6 +121,7 @@ describe('Liquefy the Pain free Succubus activation',()=>{
   Object.assign(s.players[0].prepared.rapid!.card,{target:'SELF',moments:[moment.pain(1)]});
   const result=reveal(applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid'}));
   expect(result.evocationActivation?.playerId).toBe('p1');expect(result.currentPlayerId).toBe('p1');
+  expect(result.players[0].victoryPoints).toBe(2);
   expect(result.blackRose.kills).toBe(1);expect(finish(result,'p1').evocationActivation).toBeNull();conserved(result);
  });
  it('replays a saved reveal and preserves suspended activation across serialization',()=>{

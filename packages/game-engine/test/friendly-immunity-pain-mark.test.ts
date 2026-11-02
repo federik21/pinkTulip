@@ -92,7 +92,7 @@ describe('Pain Mark only reacts to the bound mage’s own physical or spell dama
  });
 });
 
-describe('friendly damage and ordinary damage conversion remain blocked',()=>{
+describe('friendly damage stays blocked while damage conversion can target the caster',()=>{
  it('still converts recent foreign cubes on an enemy mage and returns their physical supply',()=>{
   const s=fixture(),mage=s.players[2].wizard;mage.damageCubes=4;mage.blackDamage=1;mage.damageByPlayer={p1:2,p3:1};mage.damageOrder=['p1','p3','black-rose','p1'];
   s.players[0].cubes.available-=2;s.players[0].cubes.onWizard+=2;s.players[2].cubes.available--;s.players[2].cubes.onWizard++;
@@ -101,7 +101,17 @@ describe('friendly damage and ordinary damage conversion remain blocked',()=>{
   expect(after.players[2].wizard).toMatchObject({damageCubes:4,blackDamage:3,damageByPlayer:{p3:1},damageOrder:['black-rose','p3','black-rose','black-rose']});
   expect(after.players[0].cubes.available).toBe(25);expect(marks(after)).toEqual([]);conserved(after);
  });
- it.each(['DAMAGE','CONVERT','BLACK_ROSE_CONVERT'] as const)('ignores %s on the caster, including stale includeFriendly flags',effect=>{
+ it('lets the caster convert foreign damage on their own mage',()=>{
+  const s=fixture(),mage=wounded(s,'p2');
+  prepare(s,[{effect:'CONVERT',amount:2,includeFriendly:true} as Moment],'SELF');
+  const after=applyAction(s,{type:'CAST_SPELL',playerId:'p2',slot:'rapid'});
+  expect(after.players[1].wizard).toMatchObject({damageCubes:2,damageByPlayer:{p2:2}});
+  expect(after.players[1].cubes).toMatchObject({available:23,onWizard:2});
+  expect(after.players[2].cubes).toMatchObject({available:25,onWizard:0});
+  expect(after.feedbackEvents!.filter(e=>e.kind==='CONVERT')).toMatchObject([{target:{id:'p2'},sourceId:'p2',amount:2,total:2}]);
+  expect(mage.damageCubes).toBe(2);conserved(after);
+ });
+ it.each(['DAMAGE','BLACK_ROSE_CONVERT'] as const)('ignores %s on the caster, including stale includeFriendly flags',effect=>{
   const s=fixture();wounded(s,'p2');const before=structuredClone(s.players[1].wizard);
   prepare(s,[{effect,amount:2,includeFriendly:true} as Moment],'SELF');
   const after=applyAction(s,{type:'CAST_SPELL',playerId:'p2',slot:'rapid'});
