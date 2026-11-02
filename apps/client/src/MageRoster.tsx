@@ -2,7 +2,7 @@ import React from 'react';
 import { BLACK_ROSE_ID, compareFinalStanding, ENDGAME_REWARDS, GameState, getContributionAwards, getMageEvocationCount, getSpellType, MAGE_DRAFT_POOL } from '@brw/game-engine';
 import { DamageBar } from './DamageBar';
 import { ModelEffects } from './ModelEffects';
-import { MAGE_SYMBOLS, MAGE_COLOR_NAMES, mageStyle } from './presentation';
+import { MAGE_SYMBOLS, MAGE_COLOR_NAMES, mageStyle, ownerColor, ownerName } from './presentation';
 
 type Props = {
  game: GameState;
@@ -38,10 +38,14 @@ export function MageRoster({game,viewerId,actingPlayerId,onViewRetinue}: Props) 
     const remaining=Object.values(p.prepared).filter(slot=>slot&&!slot.used).length;
    const status=!p.connected?'Disconnected':acting?game.phase==='EVOCATION'||game.evocationActivation?'Controlling evocations · acting now':'Acting now':p.passed?'Passed this round':p.studyDone&&game.phase==='STUDY'?'Study complete':p.preparationDone&&game.phase==='PREPARATION'?'Prepared':'In the lodge';
   const evocationCount=getMageEvocationCount(game,p.id);
-    return <details open className={`player mage-disclosure ${acting?'active-player':''}`} style={mageStyle(p.id)} data-player-id={p.id} aria-current={acting?'true':undefined} key={p.id}>
+  const contributions={...p.wizard.damageByPlayer};
+  if(p.wizard.blackDamage>0)contributions[BLACK_ROSE_ID]=(contributions[BLACK_ROSE_ID]??0)+p.wizard.blackDamage;
+  const segments=Object.entries(contributions).filter(([,count])=>count>0).sort(([a],[b])=>a===BLACK_ROSE_ID?1:b===BLACK_ROSE_ID?-1:a.localeCompare(b)).map(([id,count])=>({id,count}));
+  const recent = p.wizard.damageOrder.slice(-6).filter(Boolean).map(id => ownerName(game,id));
+    return <details className={`player mage-disclosure ${acting?'active-player':''}`} style={mageStyle(p.id)} data-player-id={p.id} aria-current={acting?'true':undefined} key={p.id}>
     <summary className="mage-summary">
      <div className="player-heading"><span><span className={acting?'acting-mage-icon':''} aria-hidden="true">{MAGE_SYMBOLS[p.id]}</span> {p.name} {p.id===game.firstPlayerId&&<span className="first-player" role="img" aria-label="First player" title="First-player token · +1 VP at endgame">♛</span>} {own&&<small>(you)</small>}<small className="mage-color-name">{MAGE_COLOR_NAMES[p.id]}{p.mageId?` · ${MAGE_DRAFT_POOL.find(mage=>mage.id===p.mageId)?.name??p.mageId}`:''}</small></span><b>{p.victoryPoints}<small> VP</small></b></div>
-     <DamageBar game={game} name={p.name} {...p.wizard}/>
+     <DamageBar game={game} name={p.name} {...p.wizard} />
     <ModelEffects game={game} viewerId={viewerId} modelId={p.id}/>
      <div className="mage-critical-stats"><dl className="mage-attributes critical-attributes"><div><dt>Cards</dt><dd>{p.hand.length}/{p.cardLimit}</dd></div></dl><span className="player-stats">⚡ {p.actionTokens} tokens</span></div>
     <span className="remaining-spells" aria-label={`${p.name} spells remaining`}>Spells left: {remaining}</span>
@@ -51,6 +55,8 @@ export function MageRoster({game,viewerId,actingPlayerId,onViewRetinue}: Props) 
     </summary>
     <div className="mage-secondary">
      <dl className="mage-attributes secondary-attributes"><div><dt>Max HP</dt><dd>{p.wizard.health}</dd></div><div><dt>Attack</dt><dd>{p.wizard.attack}</dd></div><div><dt>Movement</dt><dd>{p.wizard.movement}</dd></div><div><dt>Quest limit</dt><dd>{p.questLimit}</dd></div></dl>
+     {segments.length>0&&<div className="contributions damage-contributions">{segments.map(segment=><span key={segment.id} style={{'--mage-color':ownerColor(segment.id)} as React.CSSProperties}>{ownerName(game,segment.id)}: {segment.count}</span>)}</div>}
+     {recent.length>0&&<div className="contributions damage-history"><span>Recent wounds: {recent.join(' → ')}</span></div>}
      <div className="player-stats"><span title="Available cubes">◆ {p.cubes.available} available</span></div>
      <div className="cube-pool hint">◆ On mages: {p.cubes.onWizard} · On evocations: {p.cubes.onEvocations} · In rooms: {p.cubes.onBoard}</div>
      {p.cubes.available===0&&<p className="cube-warning hint">No cubes: room placement unavailable; damage can still wound without attribution.</p>}
