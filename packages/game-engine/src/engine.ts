@@ -297,7 +297,7 @@ export function createGame(playerCount=2): GameState {
  const players=['p1','p2','p3','p4'].slice(0,playerCount).map(id=>createMage(board,id));
  return {
   gameId:crypto.randomUUID(), hostId:'p1', round:0, phase:'LOBBY', players, board, library:createLibrary(),
-  blackRose:{victoryPoints:0,kills:0}, firstPlayerId:null, endgameScored:false, moon:1, moonEvents:[],
+  blackRose:{victoryPoints:0,kills:0,trophies:[]}, firstPlayerId:null, endgameScored:false, moon:1, moonEvents:[],
   eventDeck:createEvents(), eventDiscard:[], questDeck:createQuests(), questDiscard:[],
   powerfulDeck:createPowerfulDeck(), removedCards:[], readiedSpells:[], ongoingSpells:[], activeSpellOrder:[],
   evocations:[], evocationActivation:null, feedbackEvents:[],
@@ -313,7 +313,7 @@ export function getRoomMajorityWinners(room: Pick<Room,'cubesByPlayer'>): Player
 
 // Dense ranks: tied leaders do not consume the next distinct contribution rank.
 // Every tied contributor loses one point (minimum one for a nonzero prize).
-// Explicit zero prizes and ranks beyond the table remain zero.
+// Explicit zero prizes and later distinct ranks beyond the table remain zero.
 export function getContributionAwards(cubes:Record<PlayerId,number>,rewards:readonly number[]) {
  const entries=Object.entries(cubes).filter(([,n])=>n>0);
  const totals=[...new Set(entries.map(([,n])=>n))].sort((a,b)=>b-a);
@@ -719,13 +719,12 @@ function chooseReactiveSpell(s:GameState,owner:Player,eligible:ActiveSpell[],eve
   case 'SPELL_CAST':summary=`${actor?.name??'A mage'} casts ${card?.name??'a spell'}.`;break;
   case 'ENTER_ROOM':summary=`${model?.name??actor?.name??'A model'} enters ${room?.name??'a room'}.`;break;
   case 'ROOM_ACTIVATED':summary=`${actor?.name??'A mage'} activates ${room?.name??'a room'}${room?.effect?`: ${ROOM_EFFECT_LABELS[room.effect]}`:''}.`;break;
-  case 'DAMAGE_TAKEN':summary=card?`${card.name} resolves against ${model?.name??'a model'}.`:event.damageOrigin==='ROOM'?`${room?.name??'A room effect'} deals damage to ${model?.name??'a model'}.`:event.damageOrigin==='EVOCATION'?`${actor?.name??'An evocation'} deals damage to ${model?.name??'a model'}.`:event.damageOrigin==='MAGE_PHYSICAL'?`${actor?.name??'A mage'} attacks ${model?.name??'a model'}.`:`The Black Rose deals damage to ${model?.name??'a model'}.`;break;
+  case 'DAMAGE_TAKEN':summary=card?`${actor?.name??'An effect'} resolves ${card.name} against ${model?.name??'a model'}.`:`${actor?.name??'The Black Rose'} deals damage to ${model?.name??'a model'}.`;break;
   case 'DAMAGE_DEALT':summary=`${actor?.name??'A model'} deals damage${event.target&&event.target.id!==actor?.id?` to ${event.target.name}`:''}.`;break;
   case 'MAGE_ATTACK':case 'EVOCATION_ATTACK':summary=`${actor?.name??'A model'} attacks ${model?.name??'a target'}.`;break;
   default:summary=`${actor?.name??model?.name??'A model'} resolves ${event.event.toLowerCase().replace(/_/g,' ')}.`;
  }
- const moment=event.moment??ctx.resolving?.moment;
- throw new DecisionNeeded({kind:'REACTIVE_SPELL',playerId:owner.id,key,event:event.event,recap:{summary,...(card?{sourceCard:card}:{}),...(moment?{moment}:{})},options},ctx.answers.slice(0,ctx.cursor));
+ throw new DecisionNeeded({kind:'REACTIVE_SPELL',playerId:owner.id,key,event:event.event,recap:{summary,...(card?{sourceCard:card}:{}),...(event.moment??ctx.resolving?.moment?{moment:event.moment??ctx.resolving?.moment}:{})},options},ctx.answers.slice(0,ctx.cursor));
 }
 function resolveEvent(s:GameState,event:SpellEvent) {
  // Enhanced Athanor Eruption: Traps and Protections do not trigger while it resolves.
@@ -1043,7 +1042,8 @@ function settleMageDefeat(s:GameState,pending:PendingMageDefeat) {
   source.kills=source.trophies.length;
   completeQuest(s,source,'KILL');
  } else if(!source) {
-  s.blackRose.kills++;
+  s.blackRose.trophies=[...s.blackRose.trophies,target.id];
+  s.blackRose.kills=s.blackRose.trophies.length;
   if(pending.liquefyThePain) {
    awardVictoryPoints(s,target.id,2);
    s.log.push(`${target.name} gains +2 VP for being defeated by BR with Liquefy the Pain.`);

@@ -12,7 +12,8 @@ type Props = {
 };
 
 export function MageRoster({game,viewerId,actingPlayerId,onViewRetinue}: Props) {
- const trophyAwards=getContributionAwards(Object.fromEntries(game.players.map(player=>[player.id,player.trophies.length])),ENDGAME_REWARDS);
+ const trophyCounts={...Object.fromEntries(game.players.map(player=>[player.id,player.trophies.length])),[BLACK_ROSE_ID]:game.blackRose.trophies.length};
+ const trophyAwards=getContributionAwards(trophyCounts,ENDGAME_REWARDS);
  const questAwards=getContributionAwards(Object.fromEntries(game.players.map(player=>[player.id,player.questsCompleted])),ENDGAME_REWARDS);
  const scores=[
   ...game.players.map(player=>{
@@ -23,7 +24,7 @@ export function MageRoster({game,viewerId,actingPlayerId,onViewRetinue}: Props) 
    const currentVP=player.victoryPoints;
    return {id:player.id,name:player.name,trophies:player.trophies.length,quests:player.questsCompleted,trophyVP,questVP,firstPlayerVP,currentVP,finalVP:game.endgameScored?currentVP:currentVP+endgameVP,baseVP:game.endgameScored?currentVP-endgameVP:currentVP};
   }),
-  {id:BLACK_ROSE_ID,name:'BR',trophies:0,quests:0,trophyVP:0,questVP:0,firstPlayerVP:0,currentVP:game.blackRose.victoryPoints,finalVP:game.blackRose.victoryPoints,baseVP:game.blackRose.victoryPoints},
+  {id:BLACK_ROSE_ID,name:'BR',trophies:game.blackRose.trophies.length,quests:0,trophyVP:trophyAwards.find(award=>award.playerId===BLACK_ROSE_ID)?.points??0,questVP:0,firstPlayerVP:0,currentVP:game.blackRose.victoryPoints,finalVP:game.blackRose.victoryPoints,baseVP:game.blackRose.victoryPoints},
  ];
  const leaderboard=[...scores].sort((a,b)=>compareFinalStanding(a,b,game.firstPlayerId));
  const vpLabel=(points:number)=>points?`+${points} VP`:'—';
@@ -42,6 +43,7 @@ export function MageRoster({game,viewerId,actingPlayerId,onViewRetinue}: Props) 
   if(p.wizard.blackDamage>0)contributions[BLACK_ROSE_ID]=(contributions[BLACK_ROSE_ID]??0)+p.wizard.blackDamage;
   const segments=Object.entries(contributions).filter(([,count])=>count>0).sort(([a],[b])=>a===BLACK_ROSE_ID?1:b===BLACK_ROSE_ID?-1:a.localeCompare(b)).map(([id,count])=>({id,count}));
   const recent = p.wizard.damageOrder.slice(-6).filter(Boolean).map(id => ownerName(game,id));
+
     return <details className={`player mage-disclosure ${acting?'active-player':''}`} style={mageStyle(p.id)} data-player-id={p.id} aria-current={acting?'true':undefined} key={p.id}>
     <summary className="mage-summary">
      <div className="player-heading"><span><span className={acting?'acting-mage-icon':''} aria-hidden="true">{MAGE_SYMBOLS[p.id]}</span> {p.name} {p.id===game.firstPlayerId&&<span className="first-player" role="img" aria-label="First player" title="First-player token · +1 VP at endgame">♛</span>} {own&&<small>(you)</small>}<small className="mage-color-name">{MAGE_COLOR_NAMES[p.id]}{p.mageId?` · ${MAGE_DRAFT_POOL.find(mage=>mage.id===p.mageId)?.name??p.mageId}`:''}</small></span><b>{p.victoryPoints}<small> VP</small></b></div>

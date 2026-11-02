@@ -202,7 +202,7 @@ export type GameState = {
  setupStage?: 'SCHOOL' | 'MAGE' | null;
  moon?: 1 | 2 | 3;
  moonEvents?: (2 | 3)[];
- blackRose: { victoryPoints: number; kills: number }; firstPlayerId: PlayerId | null; endgameScored: boolean;
+ blackRose: { victoryPoints: number; kills: number; trophies: PlayerId[] }; firstPlayerId: PlayerId | null; endgameScored: boolean;
  // Server-owned, per-viewer metadata only. Undo/redo snapshots are private to the
  // server and must never be added to this shared/wire schema.
  history?: { canUndo: boolean; canRedo: boolean; undoLabel?: string; redoLabel?: string };

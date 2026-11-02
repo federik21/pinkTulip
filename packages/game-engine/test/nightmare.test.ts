@@ -46,8 +46,8 @@ describe('Nightmare school',()=>{
   const result=applyAction(s,{type:'END_ACTIVATION',playerId:'p1'});
 
   expect(result.phase).toBe('CLEANUP');
-  expect(result.blackRose).toMatchObject({kills:1,victoryPoints:2});
-    expect(result.players.map(player=>player.victoryPoints)).toEqual([4,0,0]);
+  expect(result.blackRose).toMatchObject({kills:1,victoryPoints:2,trophies:['p2']});
+  expect(result.players.map(player=>player.victoryPoints)).toEqual([4,0,0]);
   expect(result.players.map(player=>player.trophies)).toEqual([[],[],[]]);
   expect(result.evocations.some(e=>e.id===umbra.id)).toBe(false);
   expect(result.feedbackEvents!.find(event=>event.kind==='MAGE_DEFEATED')).toMatchObject({sourceId:BLACK_ROSE_ID});

@@ -9,7 +9,7 @@ export function DamageBar({game,name,damageCubes,health,damageByPlayer,blackDama
  const recent = damageOrder.slice(-6).filter(Boolean).map(id => ownerName(game,id));
  return <div className="damage-meter">
   <div className="health damage-bar" role="meter" aria-label={`${name} damage cubes`} aria-valuemin={0} aria-valuemax={health} aria-valuenow={damageCubes} aria-valuetext={`${damageCubes} damage cubes / ${health} capacity`}>
-   {segments.map(segment=><i className="damage-segment" data-owner-id={segment.id} data-cubes={segment.count} key={segment.id} style={{width:`${segment.fraction*100}%`,backgroundColor:ownerColor(segment.id)}}/>)}</div>
+   {segments.map(segment=><i className={`damage-segment ${segment.id==='unattributed'?'unattributed':''}`} data-owner-id={segment.id} data-cubes={segment.count} key={segment.id} style={{width:`${segment.fraction*100}%`,backgroundColor:ownerColor(segment.id)}}/>)}</div>
   <p className="damage-count">{damageCubes} damage cubes / {health} capacity</p>
   {segments.length>0&&<div className="contributions damage-contributions">{segments.map(segment=><span key={segment.id} style={{'--mage-color':ownerColor(segment.id)} as React.CSSProperties}>{ownerName(game,segment.id)}: {segment.count}</span>)}</div>}
   {recent.length>0&&<div className="contributions damage-history"><span>Recent wounds: {recent.join(' → ')}</span></div>}
