@@ -1821,7 +1821,7 @@ function cleanup(s: GameState) {
  if(s.round>=3 || s.blackRose.victoryPoints>=30 || s.players.some(p=>p.victoryPoints>=30)) {
   s.log.push(`Endgame triggered after Cleanup: ${s.round>=3?'round limit reached':'a competitor reached 30 VP'}.`);
   scoreEndgame(s);
-  const leaders=[...s.players,{id:BLACK_ROSE_ID,name:'BR',victoryPoints:s.blackRose.victoryPoints,questsCompleted:0,trophies:[]}].sort((a,b)=>compareFinalStanding(a,b,s.firstPlayerId));
+  const leaders=[...s.players,{id:BLACK_ROSE_ID,name:'BR',victoryPoints:s.blackRose.victoryPoints,questsCompleted:0,trophies:s.blackRose.trophies}].sort((a,b)=>compareFinalStanding(a,b,s.firstPlayerId));
   s.phase='GAME_OVER';s.winner=leaders[0].id;
   s.log.push(`${leaders[0].name} wins with ${leaders[0].victoryPoints} VP!`);
  }
@@ -1831,7 +1831,7 @@ function scoreEndgame(s:GameState) {
  if(s.endgameScored)return;
  s.endgameScored=true;
  const categories=[
-  {label:'trophy tokens majority',counts:{...Object.fromEntries(s.players.map(p=>[p.id,p.trophies.length])),[BLACK_ROSE_ID]:0}},
+  {label:'trophy tokens majority',counts:{...Object.fromEntries(s.players.map(p=>[p.id,p.trophies.length])),[BLACK_ROSE_ID]:s.blackRose.trophies.length}},
   {label:'completed quests majority',counts:Object.fromEntries(s.players.map(p=>[p.id,p.questsCompleted]))},
  ];
  for(const {label,counts} of categories) {

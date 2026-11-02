@@ -94,6 +94,14 @@ describe('capacity-dependent triple prizes and finite dense rankings',()=>{
   expect(getContributionAwards({p1:2,p2:2},[1]).map(a=>a.points)).toEqual([1,1]);
   expect(getContributionAwards({p1:1},[])[0].points).toBe(0);
  });
+ it('keeps third-place contributions nonzero whenever a reward slot exists across defeat, room, and endgame scoring',()=>{
+  const defeatCounts={p1:5,p2:4,p3:3,p4:3};
+  const roomCounts={p1:6,p2:4,p3:3,[BLACK_ROSE_ID]:1};
+  const endgameCounts={p1:4,p2:3,p3:2,[BLACK_ROSE_ID]:1};
+  expect(getContributionAwards(defeatCounts,[4,2,1]).find(a=>a.playerId==='p3')?.points).toBe(1);
+  expect(getContributionAwards(roomCounts,[6,3,1]).find(a=>a.playerId==='p3')?.points).toBe(1);
+  expect(getContributionAwards(endgameCounts,ENDGAME_REWARDS).find(a=>a.playerId==='p3')?.points).toBe(1);
+ });
  it('reports Pink Tulip room majorities alone or tied, never zero-count winners',()=>{
   expect(getRoomMajorityWinners({cubesByPlayer:{p1:1,[BLACK_ROSE_ID]:3}})).toEqual([BLACK_ROSE_ID]);
   expect(getRoomMajorityWinners({cubesByPlayer:{p1:3,[BLACK_ROSE_ID]:3,p2:0}})).toEqual(['p1',BLACK_ROSE_ID]);
@@ -109,7 +117,7 @@ describe('endgame timing, majorities and deterministic victory',()=>{
  it.each([3,4])('ends at Cleanup on round %i without requiring 30 VP, awards no zero-count prizes',round=>{
   const g=actionFixture();g.round=round;g.firstPlayerId='p2';const n=settle(g);
   expect(n.phase).toBe('GAME_OVER');expect(n.endgameScored).toBe(true);expect(n.winner).toBe('p2');
-  expect(n.players.map(p=>p.victoryPoints)).toEqual([0,1,0,0]);expect(n.blackRose).toEqual({victoryPoints:0,kills:0});
+  expect(n.players.map(p=>p.victoryPoints)).toEqual([0,1,0,0]);expect(n.blackRose).toMatchObject({victoryPoints:0,kills:0,trophies:[]});
   expect(n.log.filter(l=>l.includes('endgame')&&l.includes('majority'))).toEqual([]);
  });
  it('breaks equal final scores by solved quests, then trophies, then the crown before Pink Tulip',()=>{
