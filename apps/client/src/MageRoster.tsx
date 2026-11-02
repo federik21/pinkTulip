@@ -1,5 +1,6 @@
 import React from 'react';
-import { BLACK_ROSE_ID, compareFinalStanding, ENDGAME_REWARDS, GameState, getContributionAwards, getMageEvocationCount, getSpellType, MAGE_DRAFT_POOL } from '@brw/game-engine';
+import { BLACK_ROSE_ID, compareFinalStanding, ENDGAME_REWARDS, GameState, getContributionAwards, getMageEvocationCount, getMageMovement, getSpellType, MAGE_DRAFT_POOL } from '@brw/game-engine';
+import { JinxList } from './JinxList';
 import { DamageBar } from './DamageBar';
 import { ModelEffects } from './ModelEffects';
 import { MAGE_SYMBOLS, MAGE_COLOR_NAMES, mageStyle, ownerColor, ownerName } from './presentation';
@@ -56,11 +57,12 @@ export function MageRoster({game,viewerId,actingPlayerId,onViewRetinue}: Props) 
      <span className="mage-disclosure-hint hint"><span className="when-closed">Show mage details</span><span className="when-open">Hide mage details</span><span aria-hidden="true">⌄</span></span>
     </summary>
     <div className="mage-secondary">
-     <dl className="mage-attributes secondary-attributes"><div><dt>Max HP</dt><dd>{p.wizard.health}</dd></div><div><dt>Attack</dt><dd>{p.wizard.attack}</dd></div><div><dt>Movement</dt><dd>{p.wizard.movement}</dd></div><div><dt>Quest limit</dt><dd>{p.questLimit}</dd></div></dl>
+     <dl className="mage-attributes secondary-attributes"><div><dt>Max HP</dt><dd>{p.wizard.health}</dd></div><div><dt>Attack</dt><dd>{p.wizard.attack}</dd></div><div><dt>Movement</dt><dd>{getMageMovement(p)}</dd></div><div><dt>Quest limit</dt><dd>{p.questLimit}</dd></div></dl>
+     {!!p.jinxes?.length&&<JinxList jinxes={p.jinxes} owner={p.name}/>}
      {segments.length>0&&<div className="contributions damage-contributions">{segments.map(segment=><span key={segment.id} style={{'--mage-color':ownerColor(segment.id)} as React.CSSProperties}>{ownerName(game,segment.id)}: {segment.count}</span>)}</div>}
      {recent.length>0&&<div className="contributions damage-history"><span>Recent wounds: {recent.join(' → ')}</span></div>}
      <div className="player-stats"><span title="Available cubes">◆ {p.cubes.available} available</span></div>
-     <div className="cube-pool hint">◆ On mages: {p.cubes.onWizard} · On evocations: {p.cubes.onEvocations} · In rooms: {p.cubes.onBoard}</div>
+     <div className="cube-pool hint">◆ On mages: {p.cubes.onWizard} · On evocations: {p.cubes.onEvocations} · In rooms: {p.cubes.onBoard}{!!p.cubes.onJinxes&&<> · On jinxes: {p.cubes.onJinxes}</>}</div>
      {p.cubes.available===0&&<p className="cube-warning hint">No cubes: room placement unavailable; damage can still wound without attribution.</p>}
      <p className="hint">Grimoire {p.personalDeck.length} · Personal discard {p.discard.length} · Evocations {evocationCount}/3</p>
     <div className="player-actions"><button className="mini-toggle" aria-label={`View evocations for ${p.name} (${evocationCount})`} aria-controls={`retinue-${p.id}`} onClick={()=>onViewRetinue(p.id)}>View evocations ({evocationCount})</button></div>

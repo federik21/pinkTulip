@@ -1,4 +1,4 @@
-import { Activation, ActiveSpell, Board, Card, DamageOrigin, DecisionAnswer, DecisionDetails, EventCard, Evocation, EvocationKind, FeedbackTarget, GameAction, GameFeedbackEvent, GameState, Hex, MageDraftId, Moment, Player, PlayerId, Room, RoomId, RoomColor, RoomEffect, TriggerCondition, TriggerEvent, TriggeredInstruction, TurnRecapCard, UpgradeName } from './types';
+import { Activation, ActiveSpell, Board, Card, DamageOrigin, DecisionAnswer, DecisionDetails, EventCard, Evocation, EvocationKind, FeedbackTarget, GameAction, GameFeedbackEvent, GameState, Hex, Jinx, JinxName, MageDraftId, Moment, Player, PlayerId, Room, RoomId, RoomColor, RoomEffect, TriggerCondition, TriggerEvent, TriggeredInstruction, TurnRecapCard, UpgradeName } from './types';
 import { createEvents, createLibrary, createPowerfulDeck, createQuests, getEffectiveSpell, getSpellType, hasMoment, shuffle } from './cards';
 
 export class GameRuleError extends Error {}
@@ -57,6 +57,27 @@ export function getUpgradeSupply(s:Pick<GameState,'evocations'>):Record<UpgradeN
  for(const e of s.evocations)if(e.upgrade)supply[e.upgrade]=Math.max(0,supply[e.upgrade]-1);
  return supply;
 }
+// Jinx cards (Hex school): three copies of each, derived from what mages carry. The progress target is
+// the same for every jinx; the cubes on a jinx are a plain counter, not taken from the mage's cube supply.
+export const JINX_NAMES:readonly JinxName[]=['OBLIVION','SLOWNESS','VULNERABILITY','WEAKNESS'];
+export const JINX_COPIES=3;
+export const JINX_TARGET=3;
+export const JINX_LABELS:Readonly<Record<JinxName,string>>={OBLIVION:'Oblivion',SLOWNESS:'Slowness',VULNERABILITY:'Vulnerability',WEAKNESS:'Weakness'};
+export const JINX_RULES:Readonly<Record<JinxName,{effect:string;progress:string}>>={
+ OBLIVION:{effect:'Whenever you place cubes in a room, place 1 cube less.',progress:'Place 1 cube here whenever you place any number of cubes in a room.'},
+ SLOWNESS:{effect:'Your Mage speed is 1.',progress:'Place 1 cube here each time you use the Explore action or discard a spell to move.'},
+ VULNERABILITY:{effect:'After a mage assigns a jinx to you, they also inflict 1 damage to you.',progress:'Place 1 cube here when you discard a jinx or resolve a quest.'},
+ WEAKNESS:{effect:'When assigned, and each time you are placed in your starting cell, BR inflicts 2 damage to you.',progress:'Place 1 cube here after you resolve the effect of a yellow or green room.'},
+};
+export const getMageJinxes=(p:Pick<Player,'jinxes'>):Jinx[]=>p.jinxes??[];
+export const hasJinx=(p:Pick<Player,'jinxes'>,name:JinxName)=>getMageJinxes(p).some(j=>j.name===name);
+export function getJinxSupply(s:Pick<GameState,'players'>):Record<JinxName,number> {
+ const supply=Object.fromEntries(JINX_NAMES.map(n=>[n,JINX_COPIES])) as Record<JinxName,number>;
+ for(const p of s.players)for(const j of getMageJinxes(p))supply[j.name]=Math.max(0,supply[j.name]-1);
+ return supply;
+}
+// Slowness caps the Mage's speed at 1.
+export const getMageMovement=(p:Pick<Player,'jinxes'|'wizard'>)=>hasJinx(p,'SLOWNESS')?Math.min(1,p.wizard.movement):p.wizard.movement;
 const upgradeHealth=(kind:EvocationKind,upgrade?:UpgradeName)=>(upgrade==='REINFORCED_DERMIS'?2:0)+(kind==='CADAVER'&&upgrade?1:0);
 export const evocationMovement = (e:Evocation) => e.movement+(e.upgrade==='TENDON_IMPLANT'?1:0);
 export const evocationAttack = (e:Evocation) => e.attack+(getEvocationKind(e)==='SUCCUBUS'&&e.passive==='WOUNDED_FURY'?e.damageCubes:0)+(e.upgrade==='MUSCULAR_IMPLANT'?1:0)+(e.bonusAttack??0);
@@ -457,7 +478,7 @@ function drawQuest(s:GameState) {
 // stored in GameState; a root action remains a single clone/commit boundary.
 type ModelSnapshot = { id:string; playerId:string; kind:'MAGE'|'EVOCATION'; generation:number };
 // Local to a single effect, so a nested spell cannot replace its summoned model.
-type EffectResolution = { casterSeen?:{position:Hex}; assigned?:string[]; eventActor?:ModelSnapshot; summoned?:ModelSnapshot; activationIsExplicit:boolean; upgraded?:boolean; removed?:{position:Hex;attack:number;roomId?:string}; eventPosition?:Hex; eventKind?:EvocationKind; damaged?:ModelSnapshot[]; moved?:ModelSnapshot; spellEvent?:SpellEvent; protectedTargets?:Set<string> };
+type EffectResolution = { casterSeen?:{position:Hex}; assigned?:string[]; eventActor?:ModelSnapshot; summoned?:ModelSnapshot; activationIsExplicit:boolean; upgraded?:boolean; removed?:{position:Hex;attack:number;roomId?:string}; eventPosition?:Hex; eventKind?:EvocationKind; damaged?:ModelSnapshot[]; moved?:ModelSnapshot; spellEvent?:SpellEvent; unconverted?:number; protectedTargets?:Set<string> };
 type SpellEvent = { event:TriggerEvent; model?:ModelSnapshot; actor?:ModelSnapshot; roomId?:string; target?:FeedbackTarget; damageOrigin?:DamageOrigin; position?:Hex; kind?:EvocationKind; spellType?:Card['spellType']; sourceCard?:Card; moment?:string; prevented?:{value:boolean}; afterResolution?:()=>void };
 type PendingMageDefeat = { ref:ModelSnapshot; roomId?:string; target:FeedbackTarget; source?:Player; liquefyThePain?:boolean };
 type ReplayEntropy={ids:string[];random:number[]};
@@ -668,7 +689,10 @@ function resolveInstructionBody(s:GameState,owner:Player,instruction:TriggeredIn
   case 'CONVERT':
     // Damage can be converted on the caster's own mage, but not on friendly evocations.
     if(ref!.playerId===owner.id&&!target.mage)break;
-   convertDamageWithChoice(s,owner,target.model,target.location,instruction.amount,modelFeedbackTarget(s,ref)!);
+   {
+   const converted=convertDamageWithChoice(s,owner,target.model,target.location,instruction.amount,modelFeedbackTarget(s,ref)!);
+   if(effect)effect.unconverted=Math.max(0,instruction.amount-converted);
+   }
    break;
   }
  }
@@ -786,7 +810,7 @@ function resolveEvent(s:GameState,event:SpellEvent) {
   try {
     if(!ongoing && active.card.moments.length) {
      const refs=selectedRef?[selectedRef]:selectedRoom?[...s.players.filter(p=>inRoom(p,selectedRoom)).map(p=>snapshot(s,p.id)!),...s.evocations.filter(e=>selectedRoom.tiles.some(h=>hexKey(h)===hexKey(e.position))).map(e=>snapshot(s,e.id)!)]:[];
-     resolveEffectMoments(s,owner,active.card,selectedRoom??room,refs,ownerRef!);
+     resolveEffectMoments(s,owner,active.card,selectedRoom??room,refs,ownerRef!,'SPELL',new Set<string>(),false,event);
     } else {
    const effect:EffectResolution={activationIsExplicit:instructions.some(step=>step.effect==='ACTIVATE_EVOCATION'),eventPosition:event.position,eventKind:event.kind,eventActor:event.actor,spellEvent:event};
   if(!ongoing&&active.card.instability) {
@@ -867,7 +891,13 @@ function describeInstruction(instruction:TriggeredInstruction):string {
   case 'COMPLETE_QUEST':return 'Choose an active quest and lose VP equal to the moon level to complete it.';
   case 'RESHUFFLE_DRAW':return `Shuffle your discard into your grimoire, choose ${instruction.amount} cards from it, then shuffle your grimoire.`;
   case 'DRAW_QUEST':return 'Draw 1 quest.';
-  case 'ACTIVATE_TARGET_ROOM':return 'Activate the target room.';
+  case 'ACTIVATE_TARGET_ROOM':return instruction.used?'Activate that room, even if it was already used.':'Activate the target room.';
+  case 'ASSIGN_JINX':return instruction.jinx==='CHOICE'?`Assign a jinx of your choice to ${target}.`:`Assign ${JINX_LABELS[instruction.jinx]} to ${target}.`;
+  case 'DISCARD_QUEST_OR_JINX':return 'Discard one active quest or one jinx of yours.';
+  case 'DRAW_SPELLS':return `Draw ${instruction.amount} spells.`;
+  case 'INSTABILITY_PER_UNCONVERTED':return 'Place 1 instability in the target\u2019s room for each damage cube you could not convert.';
+  case 'INSTABILITY_PER_JINX':return 'Place 1 instability in the target\u2019s room for each jinx it carries.';
+  case 'LOSE_VP_OR_PREVENT':return `${target} loses ${instruction.amount} VP, or you ignore that spell effect.`;
   case 'MOVE_MODEL':return `Move any model to a room within range ${instruction.distance} of the target room.`;
   case 'PLACE_ALTAR_CUBES':return 'Place cubes in the target room equal to the number of Altars in play.';
   case 'PREVENT_SPELL':return 'Ignore that spell effect.';
@@ -1057,6 +1087,10 @@ function settleMageDefeat(s:GameState,pending:PendingMageDefeat) {
  target.wizard.damageOrder=[];
  target.wizard.position={...getRoom(s,target.wizard.startingRoomId).tiles[0]};
  for(const active of s.ongoingSpells!)if(active.targetPlayerId && [target.id,target.wizard.id].includes(active.targetPlayerId))bindActiveSpell(s,active);
+ if(hasJinx(target,'WEAKNESS')) {
+  s.log.push(`${target.name} is placed in their starting cell: Weakness lets BR inflict 2 damage.`);
+  damage(s,target,2);
+ }
 }
 
 // `source` is absent for Pink Tulip damage redirected onto an evocation: no physical cubes move.
@@ -1348,6 +1382,7 @@ function convertDamageWithChoice(s:GameState,p:Player,model:WoundedModel,locatio
   s.log.push(`${p.name} converts ${converted} damage cubes; total wounds is unchanged.`);
   appendFeedback(s,{kind:'CONVERT',target,sourceId:p.id,amount:converted,total:model.damageCubes});
  }
+ return converted;
 }
 
 function healModel(s:GameState,model:WoundedModel,location:Exclude<CubeLocation,'onBoard'>,amount:number,sourceId:string,target:FeedbackTarget) {
@@ -1402,8 +1437,47 @@ function mageAttackTarget(s:GameState,p:Player,id:string) {
  return target;
 }
 
+function discardJinx(s:GameState,mage:Player,jinx:Jinx,reason:string) {
+ mage.jinxes=getMageJinxes(mage).filter(j=>j.id!==jinx.id);
+ // The physical cubes on the jinx return to the mage's available supply.
+ if(jinx.cubes>0){
+  mage.cubes.available+=jinx.cubes;
+  const left=(mage.cubes.onJinxes??0)-jinx.cubes;
+  if(left>0)mage.cubes.onJinxes=left;else delete mage.cubes.onJinxes;
+ }
+ s.log.push(`${mage.name} discards ${JINX_LABELS[jinx.name]} (${reason}).`);
+ progressJinx(s,mage,'VULNERABILITY');
+}
+// Each progress trigger adds one cube; a jinx with three cubes is discarded (which itself feeds Vulnerability).
+function progressJinx(s:GameState,mage:Player,name:JinxName) {
+ const jinx=getMageJinxes(mage).find(j=>j.name===name);
+ if(!jinx)return;
+ if(mage.cubes.available<=0){s.log.push(`${mage.name} has no available cubes; ${JINX_LABELS[name]} cannot progress.`);return;}
+ mage.cubes.available--;mage.cubes.onJinxes=(mage.cubes.onJinxes??0)+1;
+ jinx.cubes++;
+ s.log.push(`${mage.name}'s ${JINX_LABELS[name]} gains a cube (${Math.min(jinx.cubes,JINX_TARGET)}/${JINX_TARGET}).`);
+ if(jinx.cubes>=JINX_TARGET)discardJinx(s,mage,jinx,'fully progressed');
+}
+function assignJinx(s:GameState,caster:Player,mage:Player,name:JinxName):boolean {
+ if(!mage.wizard.alive)return false;
+ if(hasJinx(mage,name)){s.log.push(`${mage.name} already carries ${JINX_LABELS[name]}; no jinx assigned.`);return false;}
+ if(getJinxSupply(s)[name]<=0){s.log.push(`No ${JINX_LABELS[name]} cards remain; no jinx assigned.`);return false;}
+ const hadVulnerability=hasJinx(mage,'VULNERABILITY');
+ (mage.jinxes??=[]).push({id:resolutionId(s),name,cubes:0});
+ s.log.push(`${caster.name} assigns ${JINX_LABELS[name]} to ${mage.name}.`);
+ if(name==='WEAKNESS')damage(s,mage,2);
+ if(hadVulnerability&&caster.id!==mage.id)damage(s,mage,1,caster,snapshot(s,caster.id),'SPELL');
+ return true;
+}
+
 function placeInstability(s: GameState, room: Room, amount: number, source?: Player) {
  if(room.reconstructed || room.startingFor || room.instability>=room.instabilityLimit) return 0;
+ if(source&&amount>0&&hasJinx(source,'OBLIVION')) {
+  // Oblivion: one cube less lands in the room, and the placement itself progresses the jinx.
+  amount--;
+  s.log.push(`${source.name}'s Oblivion removes 1 cube from the placement.`);
+  progressJinx(s,source,'OBLIVION');
+ }
  const actual=Math.min(amount,room.instabilityLimit-room.instability,source?.cubes.available ?? amount);
  if(actual<=0) return 0;
  const owner=source?.id ?? BLACK_ROSE_ID;
@@ -1422,6 +1496,7 @@ function placeInstability(s: GameState, room: Room, amount: number, source?: Pla
 
   if(source) completeQuest(s,source,'REBUILD');
  }
+ if(source){const ref=snapshot(s,source.id);if(ref)modelEvent(s,'CUBE_PLACED',ref,ref,room.id);}
  return actual;
 }
 function convertRoomCubes(s:GameState,p:Player,room:Room,amount:number) {
@@ -1624,7 +1699,6 @@ function activateRoomBody(s:GameState,p:Player,targetRoomId?:string,via?:{room:R
  const actor=snapshot(s,p.id)!,position={...(via?.position??p.wizard.position)};
  const targets=[...s.players.filter(t=>inRoom(t,room!)).map(t=>snapshot(s,t.id)!),...s.evocations.filter(e=>room!.tiles.some(h=>hexKey(h)===hexKey(e.position))).map(e=>snapshot(s,e.id)!)];
  s.log.push(`${p.name} activates ${room!.name} for free${reward===2?' (reconstructed special: double reward)':''}: ${ROOM_EFFECT_LABELS[room!.effect!]}.`);
- modelEvent(s,'ROOM_ACTIVATED',actor,actor,room!.id);
  if(!via)progressQuest(s,p,'ROOM_ACTIVATE');
  switch(room!.effect) {
   case 'ROOM_DAMAGE': {
@@ -1687,6 +1761,9 @@ function activateRoomBody(s:GameState,p:Player,targetRoomId?:string,via?:{room:R
    break;
   }
  }
+ if(room!.color==='amber'||room!.color==='emerald')progressJinx(s,p,'WEAKNESS');
+ // Reactions to a room activation (Suffocation) resolve after the room's effect.
+ modelEvent(s,'ROOM_ACTIVATED',actor,actor,room!.id);
 }
 
 function endExplore(s:GameState,p:Player,activate:boolean,targetRoomId?:string) {
@@ -1759,7 +1836,7 @@ export function mustLeaveCell(s:GameState,p:Player):boolean {
  if(ACTIONS_PER_TURN-a.actionsUsed!==1)return false;
  const destination=hasExitDestination(s,p);
  const discard=!a.discardedExit&&getDiscardMoveCards(p,a).length>0;
- return destination&&((p.actionTokens>0&&p.wizard.movement>0)||discard);
+ return destination&&((p.actionTokens>0&&getMageMovement(p)>0)||discard);
 }
 
 export function canPlayerAct(s: GameState, p: Player): boolean {
@@ -2055,9 +2132,9 @@ function resolveInstabilityEffect(s:GameState,owner:Player,spell:Card,actor:Mode
   try{resolveInstruction(s,owner,{...PRINTED_INSTABILITY,target:'BOUND_ROOM'},undefined,room.id,actor,effect,damageOrigin);}finally{ctx.resolving=previous;}
  }
 }
-function resolveEffectMoments(s:GameState,caster:Player,spell:Card,room:Room|undefined,refs:ModelSnapshot[],actor:ModelSnapshot,damageOrigin:DamageOrigin='SPELL',protectedTargets=new Set<string>(),preventMainEffect=false) {
+function resolveEffectMoments(s:GameState,caster:Player,spell:Card,room:Room|undefined,refs:ModelSnapshot[],actor:ModelSnapshot,damageOrigin:DamageOrigin='SPELL',protectedTargets=new Set<string>(),preventMainEffect=false,spellEvent?:SpellEvent) {
  const seen={position:{...caster.wizard.position}};
- const effect:EffectResolution={activationIsExplicit:spell.moments.some(step=>step.effect==='ACTIVATE_EVOCATION'),casterSeen:seen,protectedTargets};
+ const effect:EffectResolution={activationIsExplicit:spell.moments.some(step=>step.effect==='ACTIVATE_EVOCATION'),casterSeen:seen,protectedTargets,...(spellEvent?{spellEvent}:{})};
  // The chosen model and where it stands, remembered while it is still on the board.
  const chosen=spell.target==='ROOM'?undefined:refs[0];
  let origin=chosen?liveModel(s,chosen)?.model.position:room?.tiles[0];
@@ -2074,6 +2151,10 @@ function resolveEffectMoments(s:GameState,caster:Player,spell:Card,room:Room|und
   const label=`Moment ${index+1}/${spell.moments.length} · ${spell.name}: `;
   if(step.when==='TARGET_DEFEATED'&&(!chosen||live)) {
    s.log.push(`${label}skipped; ${chosen?'the target was not defeated':'there is no target'}.`);
+   return;
+  }
+  if(step.when==='TARGET_JINXED'&&!(live?.mage&&getMageJinxes(live.mage).length)) {
+   s.log.push(`${label}skipped; the target carries no jinx.`);
    return;
   }
   if((step.when==='UPGRADE_ASSIGNED'&&!effect.upgraded)||(step.when==='EVOCATION_REMOVED'&&!effect.removed)) {
@@ -2317,13 +2398,76 @@ function resolveMomentBody(s:GameState,caster:Player,spell:Card,step:Moment,room
   return;
  }
  if(step.effect==='ACTIVATE_TARGET_ROOM') {
-  if(!room?.effect||room.startingFor){s.log.push(`${spell.name}: the target room has no activatable effect.`);return;}
-  const targetRoomId=room.effect==='INSTABILITY'
-   ?askChoice(s,caster.id,`activate-room|${caster.id}|${spell.id}`,`${spell.name}: choose a room within range 1 of ${room.name} to receive instability.`,
-    s.board.rooms.filter(candidate=>!candidate.startingFor&&Math.min(...candidate.tiles.flatMap(h=>room.tiles.map(origin=>hexLineDistance(origin,h))))<=1)
+  const target=step.used&&effect.spellEvent?.roomId?s.board.rooms.find(r=>r.id===effect.spellEvent!.roomId)??room:room;
+  if(!target?.effect||target.startingFor){s.log.push(`${spell.name}: the target room has no activatable effect.`);return;}
+  const targetRoomId=target.effect==='INSTABILITY'
+   ?askChoice(s,caster.id,`activate-room|${caster.id}|${spell.id}`,`${spell.name}: choose a room within range 1 of ${target.name} to receive instability.`,
+    s.board.rooms.filter(candidate=>!candidate.startingFor&&Math.min(...candidate.tiles.flatMap(h=>target.tiles.map(origin=>hexLineDistance(origin,h))))<=1)
      .map(candidate=>({id:candidate.id,label:candidate.name,roomId:candidate.id})))!
    :undefined;
-  activateRoomBody(s,caster,targetRoomId,{room,position:{...room.tiles[0]}});
+  activateRoomBody(s,caster,targetRoomId,{room:target,position:{...target.tiles[0]},...(step.used?{allowUsedSpecial:true}:{})});
+  return;
+ }
+ if(step.effect==='ASSIGN_JINX') {
+  for(const ref of refs) {
+   const mage=liveModel(s,ref)?.mage;
+   if(!mage)continue;
+   let name:JinxName|undefined=step.jinx==='CHOICE'?undefined:step.jinx;
+   if(!name) {
+    const supply=getJinxSupply(s);
+    const options=JINX_NAMES.filter(n=>supply[n]>0&&!hasJinx(mage,n));
+    if(!options.length){s.log.push(`${spell.name}: no jinx can be assigned to ${mage.name}.`);continue;}
+    name=options.length===1?options[0]:askChoice(s,caster.id,`jinx|${spell.id}|${mage.id}`,`${spell.name}: choose a jinx to assign to ${mage.name}.`,
+     options.map(n=>({id:n,label:`${JINX_LABELS[n]} · ${JINX_RULES[n].effect}`})))! as JinxName;
+   }
+   assignJinx(s,caster,mage,name);
+  }
+  return;
+ }
+ if(step.effect==='DISCARD_QUEST_OR_JINX') {
+  const quests=heldQuests(caster).filter(q=>!q.completed&&!q.claimed);
+  const jinxes=getMageJinxes(caster);
+  if(!quests.length&&!jinxes.length){s.log.push(`${spell.name}: ${caster.name} has no quest or jinx to discard.`);return;}
+  const options=[...quests.map(q=>({id:`quest:${q.id}`,label:`Quest · ${q.name}`})),...jinxes.map(j=>({id:`jinx:${j.id}`,label:`Jinx · ${JINX_LABELS[j.name]}`}))];
+  const picked=options.length===1?options[0].id:askChoice(s,caster.id,`discard-quest-jinx|${caster.id}|${spell.id}`,`${spell.name}: discard one active quest or one jinx.`,options)!;
+  if(picked.startsWith('jinx:')) {
+   const jinx=jinxes.find(j=>`jinx:${j.id}`===picked);
+   if(jinx)discardJinx(s,caster,jinx,`${spell.name}`);
+  } else {
+   const quest=quests.find(q=>`quest:${q.id}`===picked);
+   if(quest) {
+    const remaining=heldQuests(caster).filter(q=>q.id!==quest.id);
+    caster.quest=remaining.shift()??null;
+    caster.additionalQuests=remaining;
+    s.questDiscard.push(quest);
+    s.log.push(`${caster.name} discards the quest “${quest.name}”.`);
+   }
+  }
+  return;
+ }
+ if(step.effect==='DRAW_SPELLS') {
+  let drawn=0;
+  for(let i=0;i<step.amount&&caster.personalDeck.length+caster.discard.length>0;i++){caster.hand.push(drawOne(s,caster.personalDeck,caster.discard));drawn++;}
+  s.log.push(`${caster.name} draws ${drawn} spell${drawn===1?'':'s'}.`);
+  return;
+ }
+ if(step.effect==='INSTABILITY_PER_UNCONVERTED'||step.effect==='INSTABILITY_PER_JINX') {
+  const live=liveModel(s,refs[0]);
+  const count=step.effect==='INSTABILITY_PER_JINX'?(live?.mage?getMageJinxes(live.mage).length:0):effect.unconverted??0;
+  const placeIn=(live?roomAt(s,live.model.position):undefined)??room;
+  if(count>0&&placeIn)placeInstability(s,placeIn,count,caster);
+  else s.log.push(`${spell.name}: no instability to place.`);
+  return;
+ }
+ if(step.effect==='LOSE_VP_OR_PREVENT') {
+  const mage=liveModel(s,refs[0])?.mage;
+  if(!mage||mage.id===caster.id)return;
+  const prevent=()=>{if(effect.spellEvent?.prevented)effect.spellEvent.prevented.value=true;s.log.push(`${caster.name} ignores the spell effect.`);};
+  if(mage.victoryPoints<step.amount){prevent();return;}
+  const choice=askChoice(s,mage.id,`lose-vp-or-prevent|${mage.id}|${spell.id}`,`${spell.name}: lose ${step.amount} VP, or let ${caster.name} ignore that spell effect?`,
+   [{id:'LOSE',label:`Lose ${step.amount} VP`},{id:'IGNORE',label:`${caster.name} ignores the effect`}]);
+  if(choice==='LOSE')awardVictoryPoints(s,mage.id,-step.amount);
+  else prevent();
   return;
  }
  if(step.effect==='MOVE_MODEL') {
@@ -2759,16 +2903,18 @@ function runAction(state: GameState, action: GameAction, answers: DecisionAnswer
    const a=requirePhysicalAction(s,p);assert(p.actionTokens>0,'No action tokens');
    assert(action.kind==='EXPLORE'||action.kind==='ATTACK','Unknown physical action kind');
    if(action.kind==='ATTACK')assert(!isInStartingRoom(s,p),'Leave the starting room before attacking');
-    if(mustLeaveCell(s,p)){assert(p.wizard.movement>0,'Discard a card to leave the cell');a.mustExitCell=true;}
+    if(mustLeaveCell(s,p)){assert(getMageMovement(p)>0,'Discard a card to leave the cell');a.mustExitCell=true;}
    p.actionTokens--;a.actionsUsed++;a.roomEffectUsed=false;
    a.physicalAction={kind:action.kind,mainEffectUsed:false,movementStarted:false};
-   s.log.push(`${p.name} begins ${action.kind}: resolve the primary and room effects in either order, or skip remaining effects.`);break;
+   s.log.push(`${p.name} begins ${action.kind}: resolve the primary and room effects in either order, or skip remaining effects.`);
+   if(action.kind==='EXPLORE')progressJinx(s,p,'SLOWNESS');
+   break;
   }
   case 'PERFORM_MOVEMENT': {
    const {a,physical}=requirePendingPhysical(s,p);
    assert(physical.kind==='EXPLORE','Movement requires a pending Explore');
    assert(!physical.mainEffectUsed && !physical.movementStarted,'Movement already started or resolved');
-   physical.movementStarted=true;a.exploring=p.wizard.movement;
+   physical.movementStarted=true;a.exploring=getMageMovement(p);
    if(a.exploring===0){physical.mainEffectUsed=true;finishPhysicalEffects(s);}
    break;
   }
@@ -2793,12 +2939,14 @@ function runAction(state: GameState, action: GameAction, answers: DecisionAnswer
   }
   case 'EXPLORE': {
     const a=requirePhysicalAction(s,p);assert(p.actionTokens>0,'No action tokens');
-    if(mustLeaveCell(s,p)){assert(p.wizard.movement>0,'Discard a card to leave the cell');a.mustExitCell=true;}
-    p.actionTokens--; a.actionsUsed++; a.exploring=p.wizard.movement;a.roomEffectUsed=false;
+    const speed=getMageMovement(p);
+    if(mustLeaveCell(s,p)){assert(speed>0,'Discard a card to leave the cell');a.mustExitCell=true;}
+    p.actionTokens--; a.actionsUsed++; a.exploring=speed;a.roomEffectUsed=false;
     const actor=snapshot(s,p.id)!;
+    progressJinx(s,p,'SLOWNESS');
     if(action.activateRoomAtStart){activateRoom(s,p,action.roomTargetId);a.roomEffectUsed=true;}
     if(!liveModel(s,actor))a.exploring=0;
-    s.log.push(`${p.name} explores: up to ${p.wizard.movement} one-step moves.`);
+    s.log.push(`${p.name} explores: up to ${speed} one-step moves.`);
     if(a.exploring===0)afterAction(s);break;
   }
   case 'EXPLORE_STEP': {
@@ -2825,6 +2973,7 @@ function runAction(state: GameState, action: GameAction, answers: DecisionAnswer
   s.log.push(`${p.name} discards ${card.name} to ${leavingStart?'leave the starting room':'move'} by 1 space (1 action, no physical token).`);
   recordRecapCard(s,'DISCARDED',p.id,card);
   moveModel(s,snapshot(s,p.id)!,action.destination);
+  progressJinx(s,p,'SLOWNESS');
   afterAction(s);break;
   }
   case 'PUNCH': {
@@ -2876,6 +3025,7 @@ function runAction(state: GameState, action: GameAction, answers: DecisionAnswer
    awardVictoryPoints(s,p.id,quest.reward); p.questsCompleted++; quest.claimed=true;
    modelEvent(s,'QUEST_SOLVED',snapshot(s,p.id)!,snapshot(s,p.id)!,roomAt(s,p.wizard.position)?.id);
    s.log.push(`${p.name} resolves “${quest.name}” for +${quest.reward} VP.`);
+   progressJinx(s,p,'VULNERABILITY');
   const remaining=heldQuests(p).filter(q=>q.id!==quest.id);
    p.quest=remaining.shift()??null; p.additionalQuests=remaining;
     s.questDiscard.push(quest);

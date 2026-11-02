@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { ENDGAME_REWARDS, GameAction, GameState, Moment, Player, Quest, getQuestRewardTargets, getRoomRewards } from '@brw/game-engine';
+import { ENDGAME_REWARDS, GameAction, GameState, Moment, Player, Quest, getMageMovement, getQuestRewardTargets, getRoomRewards, JINX_LABELS } from '@brw/game-engine';
+import { JinxList } from './JinxList';
 
 function rewardMoment(moment:Moment):string {
  switch(moment.effect) {
@@ -32,7 +33,13 @@ function rewardMoment(moment:Moment):string {
   case 'COMPLETE_QUEST':return 'Pay moon level in VP to complete a quest';
   case 'RESHUFFLE_DRAW':return `Reshuffle and draw ${moment.amount}`;
   case 'DRAW_QUEST':return 'Draw a quest';
-  case 'ACTIVATE_TARGET_ROOM':return 'Activate the target room';
+  case 'ACTIVATE_TARGET_ROOM':return moment.used?'Activate that room, even if used':'Activate the target room';
+  case 'ASSIGN_JINX':return moment.jinx==='CHOICE'?'Assign a jinx':`Assign ${JINX_LABELS[moment.jinx]}`;
+  case 'DISCARD_QUEST_OR_JINX':return 'Discard a quest or jinx';
+  case 'DRAW_SPELLS':return `Draw ${moment.amount} spells`;
+  case 'INSTABILITY_PER_UNCONVERTED':return 'Instability per unconverted cube';
+  case 'INSTABILITY_PER_JINX':return 'Instability per jinx';
+  case 'LOSE_VP_OR_PREVENT':return `Lose ${moment.amount} VP or let the spell be ignored`;
   case 'MOVE_MODEL':return `Move any model ${moment.distance}`;
   case 'PLACE_ALTAR_CUBES':return 'Place cubes per Altar';
   case 'PREVENT_SPELL':return 'Ignore that spell effect';
@@ -69,7 +76,7 @@ function QuestEntry({game,me,quest,disabled,send}:{game:GameState;me:Player;ques
 export function QuestsPanel({game,me,disabled,send}:{game:GameState;me:Player;disabled:boolean;send:(action:GameAction)=>void}) {
  const quests=[me.quest,...me.additionalQuests].filter((q):q is Quest=>!!q);
  const available=!disabled&&game.phase==='ACTION'&&game.currentPlayerId===me.id&&game.activation?.playerId===me.id&&!game.evocationActivation&&!game.pendingDecision&&!game.activation.exploring&&!game.activation.physicalAction;
- return <section className="quest-panel" aria-labelledby="quests-heading"><span className="eyebrow">Your personal quests</span><h2 id="quests-heading">Your personal quests</h2><p className="hint">Completing an objective readies its reward. Solve it during your turn as a free action, then gain its VP. It does not use either of your two turn actions.</p>{quests.map(quest=><QuestEntry key={quest.id} game={game} me={me} quest={quest} disabled={!available} send={send}/>)}{!quests.length&&<><h3>◇ Awaiting a new purpose</h3><p>You receive a quest at the end of BR if you do not have one, or from an Amber room.</p></>}<section className="quest-record" aria-label="Quests completed and trophies"><h3>Record</h3>
+ return <section className="quest-panel" aria-labelledby="quests-heading"><span className="eyebrow">Your personal quests</span><h2 id="quests-heading">Your personal quests</h2><p className="hint">Completing an objective readies its reward. Solve it during your turn as a free action, then gain its VP. It does not use either of your two turn actions.</p>{quests.map(quest=><QuestEntry key={quest.id} game={game} me={me} quest={quest} disabled={!available} send={send}/>)}{!quests.length&&<><h3>◇ Awaiting a new purpose</h3><p>You receive a quest at the end of BR if you do not have one, or from an Amber room.</p></>}{!!me.jinxes?.length&&<section className="jinx-panel" aria-labelledby="jinxes-heading"><h3 id="jinxes-heading">⛧ Your jinxes</h3><p className="hint">Each jinx is discarded when it gathers 3 progress cubes.</p><JinxList jinxes={me.jinxes} owner="Your"/></section>}<section className="quest-record" aria-label="Quests completed and trophies"><h3>Record</h3>
   <p className="quest-completed-count" data-quests-completed={me.questsCompleted}><span aria-hidden="true">✦ </span><b>{me.questsCompleted}</b> {me.questsCompleted===1?'quest':'quests'} completed</p>
   <p className="trophy-count"><span aria-hidden="true">☠ </span><b>{me.trophies.length}</b> {me.trophies.length===1?'trophy':'trophies'}</p></section></section>;
 }
@@ -79,7 +86,7 @@ export function QuickReference({game,me}:{game:GameState;me:Player}) {
   <p>Endgame follows Cleanup after <b>round 3</b>, or when a mage or BR reaches <b>30 VP</b>. Final scores determine the winner; BR can win. Equal final scores favor mage seating order, then BR.</p>
   <p><b>2 actions total per turn.</b> Explore, Attack, each spell cast (including Quick and Forgotten), discard-to-move, and paid evocation activation each use one. The turn hands off after the second action finishes, unless a usable quest reward is ready: resolve it for free or choose End turn.</p>
    <p><b>2 physical tokens per round.</b> Explore, Attack, and paid evocation activation also use a token. Spells and discard-to-move do not. Resolve a physical action's primary effect and room activation in either order, once each, or skip what remains.</p>
-   <p>Mage attacks deal <b>{me.wizard.attack} damage at distance 0</b>. Explore permits up to <b>{me.wizard.movement} movements</b>. Numbered spells are limited to one per turn, within the shared two-action budget.</p>
+   <p>Mage attacks deal <b>{me.wizard.attack} damage at distance 0</b>. Explore permits up to <b>{getMageMovement(me)} movements</b>. Numbered spells are limited to one per turn, within the shared two-action budget.</p>
   <p>Before Preparation, discard to <b>{me.cardLimit} cards</b>; excess goes to personal discard. At the end of BR, discard to <b>{me.questLimit} quests</b>.</p>
   <p><b>Cell exit:</b> if you have one turn action left and are still in your cell, spend it to move out with Explore or discard-to-move. You cannot end your turn or skip that Explore before leaving when an exit is available.</p>
   <p><b>Discard to move:</b> any unused prepared numbered or Quick spell, regardless of numbered order or whether you already cast a numbered spell this turn. Hand cards, already cast or activated spells, and Forgotten spells are ineligible. Discarding uses one turn action and no physical token; it does not count as casting a numbered spell.</p>

@@ -5,6 +5,7 @@ export const SCHOOL_ICONS:Record<string,{name:string;glyph:string}>={
  technomancy:{name:'Technomancy',glyph:'⚙'},
  alchemy:{name:'Alchemy',glyph:'☿'},
  nightmare:{name:'Nightmare',glyph:'☾'},
+ hex:{name:'Hex',glyph:'⛧'},
 };
 
 export function SchoolIcon({schoolId,powerful=false}:{schoolId?:string;powerful?:boolean}) {

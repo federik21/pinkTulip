@@ -5,7 +5,10 @@ export type MageDraftId = 'tizio' | 'caio' | 'sempronio' | 'tiriki';
 export type Hex = { q: number; r: number };
 export type SpellTarget = 'SELF' | 'ROOM' | 'MAGE' | 'EVOCATION' | 'MODEL';
 export type SpellType = 'COMBAT' | 'CONTINGENCY' | 'TRAP' | 'PROTECTION';
-export type TriggerEvent = 'ENTER_ROOM' | 'DAMAGE_TAKEN' | 'DAMAGE_DEALT' | 'SPELL_CAST' | 'SPELL_TARGETED' | 'ROOM_ACTIVATED' | 'EVOCATION_ACTIVATED' | 'MAGE_ATTACK' | 'EVOCATION_ATTACK' | 'QUEST_SOLVED' | 'MAGE_DEFEATED' | 'VP_CHANGED' | 'EVOCATION_LOST';
+export type TriggerEvent = 'ENTER_ROOM' | 'DAMAGE_TAKEN' | 'DAMAGE_DEALT' | 'SPELL_CAST' | 'SPELL_TARGETED' | 'ROOM_ACTIVATED' | 'EVOCATION_ACTIVATED' | 'MAGE_ATTACK' | 'EVOCATION_ATTACK' | 'QUEST_SOLVED' | 'MAGE_DEFEATED' | 'VP_CHANGED' | 'EVOCATION_LOST' | 'CUBE_PLACED';
+// Jinx cards (Hex school): a negative effect attached to a mage. `cubes` is a plain progress counter.
+export type JinxName = 'OBLIVION' | 'SLOWNESS' | 'VULNERABILITY' | 'WEAKNESS';
+export type Jinx = { id: string; name: JinxName; cubes: number };
 export type UpgradeName = 'CEREBRAL_IMPLANT' | 'CORROSIVE_PLASMA' | 'MUSCULAR_IMPLANT' | 'REGENERATING_ICHOR' | 'REINFORCED_DERMIS' | 'TENDON_IMPLANT';
 export type Element = 'air' | 'fire' | 'water' | 'earth' | 'evil' | 'good' | 'stars' | 'wild';
 export type DamageOrigin = 'MAGE_PHYSICAL' | 'SPELL' | 'EVOCATION' | 'ROOM' | 'QUEST' | 'NEUTRAL';
@@ -26,7 +29,7 @@ export type TriggerCondition = { event: TriggerEvent; relation: 'ENEMY' | 'SELF'
 // it resolves only if the card's chosen model has been defeated or destroyed by then
 // (a defeat rescued by a reaction does not count). `area` redirects the moment to
 // every other mage within `range` of where the chosen model was. Both compose.
-export type MomentCondition = 'TARGET_DEFEATED' | 'UPGRADE_ASSIGNED' | 'EVOCATION_REMOVED';
+export type MomentCondition = 'TARGET_DEFEATED' | 'UPGRADE_ASSIGNED' | 'EVOCATION_REMOVED' | 'TARGET_JINXED';
 export type Moment = (
  | { effect: 'DAMAGE'; amount: number }
  | { effect: 'HEAL'; amount: number }
@@ -75,7 +78,19 @@ export type Moment = (
  | { effect: 'COMPLETE_QUEST' }
  | { effect: 'RESHUFFLE_DRAW'; amount: number }
  | { effect: 'DRAW_QUEST' }
- | { effect: 'ACTIVATE_TARGET_ROOM' }
+ // `used`: the room is activated even if its reconstructed special was already used.
+ | { effect: 'ACTIVATE_TARGET_ROOM'; used?: boolean }
+ // Jinx cards (Hex school). CHOICE lets the caster pick any jinx still in the supply.
+ | { effect: 'ASSIGN_JINX'; jinx: JinxName | 'CHOICE' }
+ // The caster discards one of their active quests or jinxes.
+ | { effect: 'DISCARD_QUEST_OR_JINX' }
+ // The caster draws spells from their grimoire.
+ | { effect: 'DRAW_SPELLS'; amount: number }
+ // Cubes in the target's room for each damage the preceding CONVERT could not convert / each jinx on the target.
+ | { effect: 'INSTABILITY_PER_UNCONVERTED' }
+ | { effect: 'INSTABILITY_PER_JINX' }
+ // The target mage chooses: lose `amount` VP, or the triggering spell is ignored.
+ | { effect: 'LOSE_VP_OR_PREVENT'; amount: number }
  | { effect: 'MOVE_MODEL'; distance: number }
  | { effect: 'PLACE_ALTAR_CUBES' }
  | { effect: 'PREVENT_SPELL' }
@@ -170,10 +185,12 @@ export type Player = {
  mageId?: MageDraftId | null;
  mageSpellSupply?: Card[];
  wizard: Wizard; personalDeck: Card[]; hand: Card[]; discard: Card[]; prepared: PreparedCards;
- cubes: { available: number; onWizard: number; onBoard: number; onEvocations: number }; actionTokens: number; victoryPoints: number;
+ cubes: { available: number; onWizard: number; onBoard: number; onEvocations: number; onJinxes?: number }; actionTokens: number; victoryPoints: number;
  questsCompleted: number; kills: number; trophies: PlayerId[]; quest: Quest | null; additionalQuests: Quest[]; studyDrawn: boolean; studyDone: boolean;
  // Actual library draws this Study, private to the owner; never personal/old hand cards.
  studyCardIds?: string[];
+ // Jinx cards assigned to this mage (public); omitted on older saves.
+ jinxes?: Jinx[];
  preparationDone: boolean; passed: boolean; cardLimit: number; questLimit: number;
 };
 export type Room = {

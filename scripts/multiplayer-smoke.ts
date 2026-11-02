@@ -141,7 +141,7 @@ function checkCubes(s: GameState) {
   assert.deepEqual([p.wizard.health, p.wizard.attack, p.wizard.movement, p.cardLimit, p.questLimit], [10, 2, 2, 7, 2]);
   assert.ok(p.wizard.damageCubes >= p.wizard.blackDamage + Object.values(p.wizard.damageByPlayer).reduce((a, b) => a + b, 0), 'Unattributed wounds need not consume physical cubes');
   assert.ok(p.wizard.damageCubes < p.wizard.health, 'health is maximum HP, not remaining HP');
-  assert.equal(p.cubes.available + p.cubes.onWizard + p.cubes.onEvocations + p.cubes.onBoard, 25);
+  assert.equal(p.cubes.available + p.cubes.onWizard + p.cubes.onEvocations + p.cubes.onBoard + (p.cubes.onJinxes ?? 0), 25);
   assert.equal(p.cubes.onWizard, s.players.reduce((n, victim) => n + (victim.wizard.damageByPlayer[p.id] ?? 0), 0));
   assert.equal(p.cubes.onEvocations, s.evocations.reduce((n, victim) => n + (victim.damageByPlayer[p.id] ?? 0), 0));
   assert.equal(p.cubes.onBoard, s.board.rooms.filter(r => !r.scored).reduce((n, r) => n + (r.cubesByPlayer[p.id] ?? 0), 0));

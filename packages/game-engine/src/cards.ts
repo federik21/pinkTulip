@@ -1,4 +1,4 @@
-import { Card, Element, EvocationKind, EventCard, GameState, LibraryDeck, Moment, MomentEffect, Player, Quest, SpellType, TriggerCondition, UpgradeName } from './types';
+import { Card, Element, EvocationKind, EventCard, GameState, JinxName, LibraryDeck, Moment, MomentEffect, Player, Quest, SpellType, TriggerCondition, UpgradeName } from './types';
 
 export const ELEMENTS: readonly Element[] = ['air', 'fire', 'water', 'earth', 'evil', 'good', 'stars', 'wild'];
 export const ELEMENT_GLYPHS: Readonly<Record<Element, string>> = { air: '🜁', fire: '🜂', water: '🜄', earth: '🜃', evil: '☠', good: '✚', stars: '★', wild: '✦' };
@@ -111,6 +111,7 @@ function describeTrigger(condition:TriggerCondition):string {
    : `When ${subject('mage')} defeats a mage`;
   case 'VP_CHANGED':return `When ${subject('model')} gains or loses victory points`;
   case 'EVOCATION_LOST':return `When ${subject('evocation')} is defeated or removed`;
+  case 'CUBE_PLACED':return `When ${subject('mage')} places a cube in a room`;
  }
 }
 
@@ -398,6 +399,58 @@ export function createShamanicDeck(prefix: string, schoolId?: string): Card[] {
  return Array.from({ length: 36 }, (_, i) => ({ ...patterns[i % patterns.length], element: patterns[i % patterns.length].element ?? SHAMANIC_ELEMENTS[i % patterns.length], id: `${prefix}-${i + 1}`, kind: 'SPELL', ...(schoolId ? { schoolId } : {}) }));
 }
 
+export function createHexDeck(prefix: string, schoolId?: string): Card[] {
+ const m = moment;
+ const assign = (jinx: JinxName | 'CHOICE'): Moment => ({ effect: 'ASSIGN_JINX', jinx });
+ const moveSelf: Moment = { effect: 'MOVE_TARGET', distance: 1, scope: 'CASTER' };
+ const moveTarget: Moment = { effect: 'MOVE_TARGET', distance: 1 };
+ const steal: Moment = { effect: 'STEAL_VP', amount: 1 };
+ const anyDistance = Number.POSITIVE_INFINITY;
+ const patterns: Omit<Card, 'id' | 'kind'>[] = [
+  { name: 'Litany', element: 'air', spellType: 'CONTINGENCY', range: 0, target: 'SELF', moments: [moveTarget, { effect: 'DISCARD_QUEST_OR_JINX' }, { effect: 'DRAW_SPELLS', amount: 2 }],
+   rulesText: 'Move up to 1. Discard one active quest or jinx assigned to you. Draw 2 spells.' },
+  { name: 'Crypt fever', element: 'earth', spellType: 'CONTINGENCY', range: 2, target: 'MAGE', moments: [m.damage(2), assign('VULNERABILITY'), moveTarget, moveTarget, moveSelf],
+   rulesText: 'Inflict 2 damage and assign Vulnerability to the target. Move the target up to 1, then again up to 1. Move yourself up to 1.' },
+  { name: 'Black feather', element: 'air', spellType: 'CONTINGENCY', range: 2, target: 'MAGE', instability: true, moments: [steal, assign('WEAKNESS'), moveSelf],
+   rulesText: 'Steal 1 VP from the target and assign Weakness to it. Move yourself up to 1.' },
+  { name: 'Baleful curse', element: 'earth', spellType: 'PROTECTION', range: anyDistance, target: 'MAGE', instability: true, moments: [m.damage(2), assign('SLOWNESS')], triggerTarget: 'EVENT_ACTOR',
+   triggerText: 'When a mage inflicts damage to you',
+   rulesText: 'Target that mage: inflict 2 damage and assign Slowness.',
+   trigger: { event: 'DAMAGE_TAKEN', relation: 'SELF', relationTo: 'EVENT_MODEL', scope: 'ANY', modelKind: 'MAGE', damageOrigins: ['MAGE_PHYSICAL', 'SPELL'] } },
+  { name: 'ca\u2019Dario\u2019s amulet', element: 'stars', spellType: 'TRAP', range: anyDistance, target: 'MAGE',
+   moments: [m.convert(2), { effect: 'INSTABILITY_PER_UNCONVERTED' }, { effect: 'STEAL_VP', amount: 1, when: 'TARGET_JINXED' }, m.damage(2)], triggerTarget: 'EVENT_MODEL',
+   triggerText: 'When another mage enters a blue or purple room',
+   rulesText: 'Target that mage: convert 2 damage. For each unconverted damage, place 1 cube in its room. If it has at least 1 jinx assigned, steal 1 VP from it. Inflict 2 damage.',
+   trigger: { event: 'ENTER_ROOM', relation: 'ENEMY', scope: 'ANY', modelKind: 'MAGE', roomColors: ['azure', 'violet'] } },
+  { name: 'Cerebral worm', element: 'earth', spellType: 'TRAP', range: anyDistance, target: 'MAGE',
+   moments: [m.damage(2), assign('VULNERABILITY'), { effect: 'INSTABILITY_PER_JINX' }], triggerTarget: 'EVENT_MODEL',
+   triggerText: 'When another mage enters a red or yellow room',
+   rulesText: 'Target that mage: inflict 2 damage and assign Vulnerability. For each jinx assigned to it, place 1 cube in its room.',
+   trigger: { event: 'ENTER_ROOM', relation: 'ENEMY', scope: 'ANY', modelKind: 'MAGE', roomColors: ['crimson', 'amber'] } },
+  { name: 'Feverish dream', element: 'stars', spellType: 'COMBAT', range: 2, target: 'MAGE', instability: true, moments: [m.damage(2), assign('WEAKNESS'), moveSelf],
+   rulesText: 'Inflict 2 damage and assign Weakness to the target. Move yourself up to 1.' },
+  { name: 'An eye for an eye', element: 'air', spellType: 'PROTECTION', range: anyDistance, target: 'MAGE', instability: true, moments: [{ effect: 'LOSE_VP_OR_PREVENT', amount: 1 }, assign('OBLIVION')], triggerTarget: 'EVENT_ACTOR',
+   triggerText: 'When another mage targets you with a combat spell',
+   rulesText: 'Target that mage: it chooses to lose 1 VP or you ignore the effect. Assign Oblivion to it.',
+   trigger: { event: 'SPELL_TARGETED', relation: 'SELF', relationTo: 'EVENT_MODEL', scope: 'ANY', spellTypes: ['COMBAT'] } },
+  { name: 'Suffocation', element: 'stars', spellType: 'TRAP', range: anyDistance, target: 'MAGE', instability: true, moments: [{ effect: 'ACTIVATE_TARGET_ROOM', used: true }, assign('OBLIVION')], triggerTarget: 'EVENT_MODEL',
+   triggerText: 'When another mage resolves a room effect',
+   rulesText: 'Target that mage: activate that room, even if it was already used. Assign Oblivion to it.',
+   trigger: { event: 'ROOM_ACTIVATED', relation: 'ENEMY', scope: 'ANY', modelKind: 'MAGE' } },
+  { name: 'Curse', element: 'stars', spellType: 'COMBAT', range: 2, target: 'MAGE', moments: [m.damage(1), m.convert(2), assign('CHOICE'), moveSelf],
+   rulesText: 'Inflict 1 damage and convert 2 damage on the target. Assign a jinx of your choice to it. Move yourself up to 1.' },
+  { name: 'Bad luck', element: 'good', spellType: 'TRAP', range: anyDistance, target: 'ROOM', moments: [m.convert(2)], triggerTarget: 'EVENT_ROOM',
+   triggerText: 'When another mage places a cube in a room',
+   rulesText: 'Target that room: convert 2 cubes there.',
+   trigger: { event: 'CUBE_PLACED', relation: 'ENEMY', scope: 'ANY' } },
+  { name: 'Cursed oracle', element: 'good', spellType: 'TRAP', range: anyDistance, target: 'MAGE', instability: true, moments: [steal, assign('SLOWNESS')], triggerTarget: 'EVENT_MODEL',
+   triggerText: 'When another mage solves a quest',
+   rulesText: 'Target that mage: steal 1 VP from it and assign Slowness to it.',
+   trigger: { event: 'QUEST_SOLVED', relation: 'ENEMY', scope: 'ANY' } },
+ ];
+ return Array.from({ length: 36 }, (_, i) => ({ ...patterns[i % patterns.length], id: `${prefix}-${i + 1}`, kind: 'SPELL', ...(schoolId ? { schoolId } : {}) }));
+}
+
 export function createLibrary(): LibraryDeck[] {
  return [
   { id: 'agony', name: 'Agony', cards: shuffle(createAgonyDeck('agony', 'agony')), discard: [] },
@@ -405,6 +458,7 @@ export function createLibrary(): LibraryDeck[] {
   { id: 'alchemy', name: 'Alchemy', cards: shuffle(createAlchemyDeck('alchemy', 'alchemy')), discard: [] },
   { id: 'nightmare', name: 'Nightmare', cards: shuffle(createNightmareDeck('nightmare', 'nightmare')), discard: [] },
   { id: 'shamanic', name: 'Shamanic', cards: shuffle(createShamanicDeck('shamanic', 'shamanic')), discard: [] },
+  { id: 'hex', name: 'Hex', cards: shuffle(createHexDeck('hex', 'hex')), discard: [] },
  ];
 }
 

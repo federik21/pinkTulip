@@ -68,7 +68,7 @@ export const TRIGGER_LABELS: Record<TriggerEvent, string> = {
  EVOCATION_ACTIVATED: 'An evocation activates', MAGE_ATTACK: 'A mage attacks',
  EVOCATION_ATTACK: 'An evocation attacks', DAMAGE_DEALT: 'A model inflicts damage',
  QUEST_SOLVED: 'A mage solves a quest', MAGE_DEFEATED: 'A mage is defeated', VP_CHANGED: 'Victory points change',
- EVOCATION_LOST: 'An evocation is defeated or removed',
+ EVOCATION_LOST: 'An evocation is defeated or removed', CUBE_PLACED: 'A mage places cubes in the room',
 };
 
 /** Consume public resolution facts, never infer hidden reactions from card disappearance. */

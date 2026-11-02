@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { GameAction, GameState, Player, ROOM_EFFECT_LABELS, CENTRAL_ROOM_DISCARD_COST, getCentralDiscardOptions, getDiscardMoveCards, hexDistance, hexKey, isInStartingRoom, mustLeaveCell } from '@brw/game-engine';
+import { GameAction, GameState, Player, ROOM_EFFECT_LABELS, CENTRAL_ROOM_DISCARD_COST, getCentralDiscardOptions, getDiscardMoveCards, getMageMovement, hexDistance, hexKey, isInStartingRoom, mustLeaveCell } from '@brw/game-engine';
 import { targetModels } from './EvocationsPanel';
 
 type Props = {
@@ -32,7 +32,7 @@ export function PhysicalBannerActions({game,me,pending,effectTargetId,beginRoomP
  return <div className="physical-shortcuts" role="group" aria-label={`${physical.kind==='EXPLORE'?'Explore':'Attack'} shortcuts`} data-physical-kind={physical.kind}>
   {physical.kind==='EXPLORE'?(exploring
   ?<button type="button" disabled={pending||mustMove} onClick={()=>send({type:'END_EXPLORE',playerId:me.id})}>Finish moving early</button>
-   :!physical.movementStarted&&!physical.mainEffectUsed&&<button type="button" className="primary" disabled={pending} onClick={()=>send({type:'PERFORM_MOVEMENT',playerId:me.id})}>Move {me.wizard.movement}</button>)
+   :!physical.movementStarted&&!physical.mainEffectUsed&&<button type="button" className="primary" disabled={pending} onClick={()=>send({type:'PERFORM_MOVEMENT',playerId:me.id})}>Move {getMageMovement(me)}</button>)
    :!physical.mainEffectUsed&&targets.map(t=><button type="button" className="primary" key={t.id} disabled={pending} title={`Inflict ${me.wizard.attack} damage on ${t.name}`} onClick={()=>send({type:'INFLICT_ATTACK',playerId:me.id,targetId:t.id})}>Attack {t.name}</button>)}
   {roomAvailable&&!active?.roomEffectUsed&&!exploring&&<button type="button" disabled={pending||!targetValid} onClick={()=>currentRoom?.effect==='INSTABILITY'?beginRoomPick():send(activateRoom(me.id))}>Activate room</button>}
   <button type="button" disabled={pending||mustMove} title="Skip any remaining effects and finish this physical action" onClick={()=>send({type:'SKIP_PHYSICAL_EFFECTS',playerId:me.id})}>Finish action</button>
@@ -62,7 +62,7 @@ export function PhysicalActionsPanel({game,me,enabled,pending,exitCardId,setExit
    </>:<div className="physical-effects" data-physical-kind={physical.kind}>
     <p>Choose either effect first, once each. Resolving effects costs no extra token. You may skip anything remaining.</p>
     {physical.kind==='EXPLORE'?<>
-     <button className="primary" disabled={pending||physical.movementStarted||physical.mainEffectUsed} onClick={()=>send({type:'PERFORM_MOVEMENT',playerId:me.id})}>Perform {me.wizard.movement} movements<small>{physical.mainEffectUsed?'Movement resolved':'Move one adjacent space at a time'}</small></button>
+     <button className="primary" disabled={pending||physical.movementStarted||physical.mainEffectUsed} onClick={()=>send({type:'PERFORM_MOVEMENT',playerId:me.id})}>Perform {getMageMovement(me)} movements<small>{physical.mainEffectUsed?'Movement resolved':'Move one adjacent space at a time'}</small></button>
     {!!active?.exploring&&<div className="notice movement-progress"><strong>{active.exploring} movement remaining</strong><p>Select a highlighted adjacent hex.</p><button disabled={pending||mustMove} onClick={()=>send({type:'END_EXPLORE',playerId:me.id})}>Finish movement early</button></div>}
     </>:<>
      <button className="primary" disabled={pending||physical.mainEffectUsed||targets.length===0} onClick={()=>setChoosingTarget(true)}>Inflict {me.wizard.attack} damage to a model at distance 0<small>{physical.mainEffectUsed?'Attack resolved':'Choose an enemy in your room'}</small></button>
