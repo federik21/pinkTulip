@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { applyAction, createGame, summonEvocation } from '../packages/game-engine/src';
 import { createEnchantmentFixtures } from '../packages/game-engine/test/enchantment-fixtures';
-import type { Card, GameAction, GameState } from '../packages/game-engine/src';
+import type { Card, GameAction, GameState, TriggerEvent } from '../packages/game-engine/src';
 import { ActionHistory } from '../apps/server/src/action-history';
 import { publicState } from '../apps/server/src/public-state';
 import { closeControls, selectControlTab, selectSpells } from './layout-ui';
@@ -17,6 +17,17 @@ function fixture(name='Torment') {
  s.players[0].prepared.slot1={card:card!,used:false};
  return s;
 }
+
+function seedContextTrigger(game:GameState,event:TriggerEvent) {
+ const card:Card={id:'context-trap-card',name:'Context Snare',kind:'SPELL',moments:[],spellType:'TRAP',range:Number.POSITIVE_INFINITY,target:'MAGE',
+  trigger:{event,relation:'ENEMY',scope:'ANY'},triggerTarget:'EVENT_ACTOR',triggerEffects:[],rulesText:'This hidden spell waits for its matching event.'};
+ game.readiedSpells=[{id:'context-trap-active',playerId:'p1',card}];game.activeSpellOrder=['context-trap-active'];
+ game.players[0].prepared.slot1=null;game.currentPlayerId='p2';
+ game.activation={playerId:'p2',actionsUsed:0,exploring:0,sequencedSpellUsed:false,spellsCast:0,discardedExit:false,roomEffectUsed:false};
+ return game;
+}
+
+function hexDistance(a:{q:number;r:number},b:{q:number;r:number}) {return Math.max(Math.abs(a.q-b.q),Math.abs(a.r-b.r),Math.abs(a.q+a.r-b.q-b.r));}
 
 async function mount(page:Page,initial:GameState) {
  let game=initial,publish=()=>{};const actions:GameAction[]=[],errors:string[]=[];
@@ -106,6 +117,7 @@ for(const viewport of [{width:1440,height:1000},{width:390,height:844}]) {
   wire.dispatch({type:'INFLICT_ATTACK',playerId:'p2',targetId:'p1'});
    const dialog=page.getByRole('dialog',{name:'Reveal an active spell?',exact:true});
    await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('region',{name:'Effect currently resolving'})).toContainText('deals damage to');
    await dialog.getByRole('button',{name:'Keep all hidden'}).click();
    await expect(dialog).toBeHidden();expect(wire.state.readiedSpells![0].id).toBe(activeId);
    wire.dispatch({type:'SKIP_PHYSICAL_EFFECTS',playerId:'p2'});
@@ -122,6 +134,78 @@ for(const viewport of [{width:1440,height:1000},{width:390,height:844}]) {
   expect(wire.state.players[0].wizard.damageCubes).toBe(4);
    expect(wire.state.players[0].discard.some(c=>c.name==='Torment')).toBe(true);
    expect(wire.state.evocations[0]).toMatchObject({name:'Succubus',playerId:'p1'});
+   expect(wire.errors).toEqual([]);
+  });
+
+  test('spell-cast prompt identifies the spell and shows its rules',async({page})=>{
+   const initial=seedContextTrigger(fixture('Submission'),'SPELL_CAST');
+   const source:Card={id:'source-torment',name:'Torment',kind:'SPELL',spellType:'COMBAT',range:Number.POSITIVE_INFINITY,target:'MAGE',moments:[{effect:'DAMAGE',amount:1}],rulesText:'Deal 1 damage to the target mage.'};
+   initial.players[1].prepared.slot1={card:source,used:false};
+   const wire=await mount(page,initial);
+   wire.dispatch({type:'CAST_SPELL',playerId:'p2',slot:'slot1',targetPlayerId:'p1'});
+   const dialog=page.getByRole('dialog',{name:'Reveal an active spell?',exact:true});
+   await expect(dialog).toBeVisible();
+   const recap=dialog.getByRole('region',{name:'Effect currently resolving'});
+   await expect(recap).toContainText(`${wire.state.players[1].name} casts Torment.`);
+   await expect(recap).toContainText('Card rules · Torment');
+   await expect(recap).toContainText('Deal 1 damage to the target mage.');
+   await expect(recap).toContainText('Inflict 1');
+   expect(wire.errors).toEqual([]);
+  });
+
+  test('nested Torment interrupt shows the resolving moment and Torment rules',async({page})=>{
+   const initial=fixture('Torment');
+   const torment=initial.players[0].prepared.slot1!.card;
+   initial.players[0].prepared.slot1=null;
+  initial.activation!.actionsUsed=1;
+   const followup:Card={id:'moment-followup',name:'Moment Follow-up',kind:'SPELL',spellType:'PROTECTION',moments:[],range:Number.POSITIVE_INFINITY,target:'SELF',
+    trigger:{event:'DAMAGE_DEALT',relation:'ANY',scope:'ANY',damageOrigins:['SPELL']},triggerTarget:'EVENT_ACTOR',triggerEffects:[{effect:'HEAL',amount:1,target:'EVENT_ACTOR'}],
+    triggerText:'When a spell deals damage',rulesText:'Heal 1 on your mage after a spell deals damage.'};
+   initial.readiedSpells=[{id:'torment-active',playerId:'p1',card:torment},{id:'followup-active',playerId:'p1',card:followup}];
+   initial.activeSpellOrder=['torment-active','followup-active'];
+   const wire=await mount(page,initial);
+   wire.dispatch({type:'END_ACTIVATION',playerId:'p1'});
+   wire.dispatch({type:'BEGIN_PHYSICAL_ACTION',playerId:'p2',kind:'ATTACK'});
+   wire.dispatch({type:'INFLICT_ATTACK',playerId:'p2',targetId:'p1'});
+   const dialog=page.getByRole('dialog',{name:'Reveal an active spell?',exact:true});
+   await expect(dialog).toBeVisible();
+   await expect(dialog.locator('select[aria-label="Spell to reveal"] option')).toHaveText(['Torment']);
+   await dialog.getByRole('button',{name:'Reveal and resolve'}).click();
+   await expect(dialog).toBeVisible();
+   const recap=dialog.getByRole('region',{name:'Effect currently resolving'});
+   await expect(recap).toContainText('Card rules · Torment');
+   await expect(recap).toContainText('When an enemy model deals damage');
+   await expect(recap).toContainText('Inflict 2');
+   await expect(recap).toContainText('Current moment:');
+  await expect(recap).toContainText('Deal 2 damage to the target model.');
+   expect(wire.errors).toEqual([]);
+  });
+
+  test('room-entry prompt identifies the mage and room',async({page})=>{
+   const initial=seedContextTrigger(fixture('Submission'),'ENTER_ROOM');
+   const p2=initial.players[1];
+   const origin={...p2.wizard.position};
+   const destination=initial.board.rooms.filter(room=>!room.startingFor).flatMap(room=>room.tiles.map(tile=>({room,tile})))
+    .find(({room,tile})=>hexDistance(origin,tile)===1&&!room.startingFor);
+   expect(destination).toBeTruthy();
+   const wire=await mount(page,initial);
+   wire.dispatch({type:'BEGIN_PHYSICAL_ACTION',playerId:'p2',kind:'EXPLORE'});
+   wire.dispatch({type:'PERFORM_MOVEMENT',playerId:'p2'});
+   wire.dispatch({type:'EXPLORE_STEP',playerId:'p2',destination:destination!.tile});
+   const recap=page.getByRole('dialog',{name:'Reveal an active spell?',exact:true}).getByRole('region',{name:'Effect currently resolving'});
+   await expect(recap).toContainText(`${p2.name} enters ${destination!.room.name}.`);
+   expect(wire.errors).toEqual([]);
+  });
+
+  test('room-activation prompt identifies the mage and activated room',async({page})=>{
+   const initial=seedContextTrigger(fixture('Submission'),'ROOM_ACTIVATED');
+   const room=initial.board.rooms.find(candidate=>!candidate.startingFor&&candidate.effect&&candidate.effect!=='DRAW_POWERFUL');
+   expect(room).toBeTruthy();initial.players[1].wizard.position={...room!.tiles[0]};
+   const wire=await mount(page,initial);
+   wire.dispatch({type:'BEGIN_PHYSICAL_ACTION',playerId:'p2',kind:'EXPLORE'});
+   wire.dispatch({type:'ACTIVATE_ROOM',playerId:'p2'});
+   const recap=page.getByRole('dialog',{name:'Reveal an active spell?',exact:true}).getByRole('region',{name:'Effect currently resolving'});
+   await expect(recap).toContainText(`${wire.state.players[1].name} activates ${room!.name}:`);
    expect(wire.errors).toEqual([]);
   });
 

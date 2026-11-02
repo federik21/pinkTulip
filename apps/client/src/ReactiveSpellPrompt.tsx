@@ -31,10 +31,16 @@ function RevealDecision({decision,disabled,send}:{decision:Extract<PendingDecisi
  const option=decision.options.find(o=>o.activeSpellId===spellId)!;
  const [targetId,setTargetId]=useState('');
  const resolvedTargetId=option.card.triggerTarget?option.targets[0]?.id:targetId;
+ const recap=decision.recap??{summary:`The ${decision.event.toLowerCase().replace(/_/g,' ')} event is resolving.`};
  const respond=(reveal:boolean)=>send({type:'RESPOND_REACTIVE_SPELL',playerId:decision.playerId,key:decision.key,...(reveal?{activeSpellId:spellId,targetId:resolvedTargetId}:{} )});
  return <DecisionDialog ariaLabel="Reveal an active spell?" summary="Reveal an active spell?">
   <h2>Reveal an active spell?</h2>
-  <p>The current moment has finished. You may reveal a matching Trap or Protection, or keep all of them hidden for a later trigger. Use Minimize to look over the board first.</p>
+  <p>A matching Trap or Protection may interrupt this effect. Reveal one now, or keep them hidden for a later trigger. Use Minimize to inspect the board first.</p>
+  <aside className="reactive-effect-recap" role="region" aria-label="Effect currently resolving">
+  <strong>Triggering action</strong><p>{recap.summary}</p>
+  {recap.moment&&<p><b>Current moment:</b> {recap.moment}</p>}
+  {recap.sourceCard&&<div className="reactive-source-rules"><h3>Card rules · {recap.sourceCard.name}</h3><SpellDescription card={recap.sourceCard} showMoments/></div>}
+  </aside>
   <label>Spell to resolve next<select aria-label="Spell to reveal" value={spellId} disabled={disabled} onChange={event=>{setSpellId(event.target.value);setTargetId('');}}>{decision.options.map(o=><option key={o.activeSpellId} value={o.activeSpellId}>{o.card.name}</option>)}</select></label>
   <SpellDescription card={option.card}/>
     {option.card.triggerTarget?<p className="forced-trigger-target" role="status">Target fixed by trigger: <strong>{option.targets[0]?.name}</strong></p>:

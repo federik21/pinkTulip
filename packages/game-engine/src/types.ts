@@ -132,12 +132,14 @@ export type Evocation = {
 // A root action paused until a mage answers. `resume` is server-private: the
 // original action and the answers given so far, replayed once the next answer arrives.
 export type DecisionAnswer = { key: string; accept: boolean; activeSpellId?: string; targetId?: string };
+export type ReactiveResolutionRecap = { summary: string; sourceCard?: Card; moment?: string };
 export type DecisionDetails = {
  kind: 'SOUL_TITHE'; playerId: PlayerId; key: string; evocationId: string; evocationName: string;
  evocationWounds: number; evocationHealth: number; targetId: string; targetName: string;
  sourceName: string; amount: number;
 } | {
  kind: 'REACTIVE_SPELL'; playerId: PlayerId; key: string; event: TriggerEvent;
+ recap?: ReactiveResolutionRecap;
  options: Array<{ activeSpellId: string; card: Card; targets: FeedbackTarget[] }>;
 } | {
  kind: 'CHOICE'; playerId: PlayerId; key: string; prompt: string; optional: boolean;

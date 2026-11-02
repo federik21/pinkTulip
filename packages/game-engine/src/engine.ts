@@ -458,10 +458,10 @@ function drawQuest(s:GameState) {
 type ModelSnapshot = { id:string; playerId:string; kind:'MAGE'|'EVOCATION'; generation:number };
 // Local to a single effect, so a nested spell cannot replace its summoned model.
 type EffectResolution = { casterSeen?:{position:Hex}; assigned?:string[]; eventActor?:ModelSnapshot; summoned?:ModelSnapshot; activationIsExplicit:boolean; upgraded?:boolean; removed?:{position:Hex;attack:number;roomId?:string}; eventPosition?:Hex; eventKind?:EvocationKind; damaged?:ModelSnapshot[]; moved?:ModelSnapshot; spellEvent?:SpellEvent; protectedTargets?:Set<string> };
-type SpellEvent = { event:TriggerEvent; model?:ModelSnapshot; actor?:ModelSnapshot; roomId?:string; target?:FeedbackTarget; damageOrigin?:DamageOrigin; position?:Hex; kind?:EvocationKind; spellType?:Card['spellType']; prevented?:{value:boolean}; afterResolution?:()=>void };
+type SpellEvent = { event:TriggerEvent; model?:ModelSnapshot; actor?:ModelSnapshot; roomId?:string; target?:FeedbackTarget; damageOrigin?:DamageOrigin; position?:Hex; kind?:EvocationKind; spellType?:Card['spellType']; sourceCard?:Card; moment?:string; prevented?:{value:boolean}; afterResolution?:()=>void };
 type PendingMageDefeat = { ref:ModelSnapshot; roomId?:string; target:FeedbackTarget; source?:Player; liquefyThePain?:boolean };
 type ReplayEntropy={ids:string[];random:number[]};
-type InstructionContext = { generations:Map<string,number>; bindings:Map<string,ModelSnapshot>; defeats:Map<string,PendingMageDefeat>; resolutions:number; interruptId?:string; answers:DecisionAnswer[]; cursor:number; momentDepth:number; events:SpellEvent[]; entropy:ReplayEntropy; idCursor:number; randomCursor:number; suppress?:boolean };
+type InstructionContext = { generations:Map<string,number>; bindings:Map<string,ModelSnapshot>; defeats:Map<string,PendingMageDefeat>; resolutions:number; interruptId?:string; answers:DecisionAnswer[]; cursor:number; momentDepth:number; events:SpellEvent[]; entropy:ReplayEntropy; idCursor:number; randomCursor:number; suppress?:boolean; resolving?:{sourceCard?:Card;moment?:string} };
 const instructionContexts=new WeakMap<GameState,InstructionContext>();
 const context=(s:GameState)=>instructionContexts.get(s)!;
 // IDs and random outcomes encountered before a pause must be identical on
@@ -674,7 +674,8 @@ function resolveInstructionBody(s:GameState,owner:Player,instruction:TriggeredIn
  }
 }
 function emitEvent(s:GameState,event:SpellEvent) {
- const frozen={...event,target:event.target??modelFeedbackTarget(s,event.model)??modelFeedbackTarget(s,event.actor)};
+ const resolving=context(s).resolving;
+ const frozen={...event,...(!event.sourceCard&&resolving?.sourceCard?{sourceCard:resolving.sourceCard}:{}),...(!event.moment&&resolving?.moment?{moment:resolving.moment}:{}),target:event.target??modelFeedbackTarget(s,event.model)??modelFeedbackTarget(s,event.actor)};
  if(context(s).momentDepth>0)context(s).events.push(frozen);
  else resolveQueuedEvent(s,frozen);
 }
@@ -711,7 +712,20 @@ function chooseReactiveSpell(s:GameState,owner:Player,eligible:ActiveSpell[],eve
  const ctx=context(s),key=`reactive|${event.event}|${owner.id}|${event.model?.id??event.roomId??''}|${ctx.cursor}`;
  const answer=ctx.answers[ctx.cursor];
  if(answer?.key===key){ctx.cursor++;return answer.accept?answer:undefined;}
- throw new DecisionNeeded({kind:'REACTIVE_SPELL',playerId:owner.id,key,event:event.event,options},ctx.answers.slice(0,ctx.cursor));
+ const actor=modelFeedbackTarget(s,event.actor),model=modelFeedbackTarget(s,event.model),room=event.roomId?s.board.rooms.find(r=>r.id===event.roomId):undefined;
+ const card=event.sourceCard??ctx.resolving?.sourceCard;
+ let summary:string;
+ switch(event.event) {
+  case 'SPELL_CAST':summary=`${actor?.name??'A mage'} casts ${card?.name??'a spell'}.`;break;
+  case 'ENTER_ROOM':summary=`${model?.name??actor?.name??'A model'} enters ${room?.name??'a room'}.`;break;
+  case 'ROOM_ACTIVATED':summary=`${actor?.name??'A mage'} activates ${room?.name??'a room'}${room?.effect?`: ${ROOM_EFFECT_LABELS[room.effect]}`:''}.`;break;
+  case 'DAMAGE_TAKEN':summary=card?`${card.name} resolves against ${model?.name??'a model'}.`:event.damageOrigin==='ROOM'?`${room?.name??'A room effect'} deals damage to ${model?.name??'a model'}.`:event.damageOrigin==='EVOCATION'?`${actor?.name??'An evocation'} deals damage to ${model?.name??'a model'}.`:event.damageOrigin==='MAGE_PHYSICAL'?`${actor?.name??'A mage'} attacks ${model?.name??'a model'}.`:`The Black Rose deals damage to ${model?.name??'a model'}.`;break;
+  case 'DAMAGE_DEALT':summary=`${actor?.name??'A model'} deals damage${event.target&&event.target.id!==actor?.id?` to ${event.target.name}`:''}.`;break;
+  case 'MAGE_ATTACK':case 'EVOCATION_ATTACK':summary=`${actor?.name??'A model'} attacks ${model?.name??'a target'}.`;break;
+  default:summary=`${actor?.name??model?.name??'A model'} resolves ${event.event.toLowerCase().replace(/_/g,' ')}.`;
+ }
+ const moment=event.moment??ctx.resolving?.moment;
+ throw new DecisionNeeded({kind:'REACTIVE_SPELL',playerId:owner.id,key,event:event.event,recap:{summary,...(card?{sourceCard:card}:{}),...(moment?{moment}:{})},options},ctx.answers.slice(0,ctx.cursor));
 }
 function resolveEvent(s:GameState,event:SpellEvent) {
  // Enhanced Athanor Eruption: Traps and Protections do not trigger while it resolves.
@@ -795,6 +809,7 @@ function resolveEvent(s:GameState,event:SpellEvent) {
   if(ongoingPrevented)s.log.push(`${active.card.name}: its effect on ${modelFeedbackTarget(s,bound!)!.name} is ignored.`);
   for(const [index,instruction] of (ongoingPrevented?[]:instructions).entries()) {
    s.log.push(`Moment ${index+1}/${instructions.length} · ${active.card.name}: ${describeInstruction(instruction)}`);
+    const ctx=context(s),previous=ctx.resolving;ctx.resolving={sourceCard:active.card,moment:describeInstruction(instruction)};
     let ref:ModelSnapshot|undefined,roomId:string|undefined;
     switch(instruction.target) {
      case 'BOUND_MODEL':ref=bound;break;
@@ -806,7 +821,7 @@ function resolveEvent(s:GameState,event:SpellEvent) {
     }
     if(instruction.effect==='INSTABILITY'&&instruction.scope==='CASTER_ROOM')roomId=roomAt(s,owner.wizard.position)?.id;
     if(instruction.effect==='SUMMON'&&instruction.position==='TARGET'&&!liveModel(s,ref))roomId??=room?.id;
-    resolveInstruction(s,owner,instruction,ref,roomId,ownerRef,effect);
+    try{resolveInstruction(s,owner,instruction,ref,roomId,ownerRef,effect);}finally{ctx.resolving=previous;}
    }
     }
   } finally { context(s).interruptId=previousInterruptId; }
@@ -861,9 +876,9 @@ function describeInstruction(instruction:TriggeredInstruction):string {
   case 'IGNORE_DAMAGE':return `Ignore up to ${instruction.amount} of that damage; inflict 1 damage on the source for each point ignored.`;
  }
 }
-function modelEvent(s:GameState,event:TriggerEvent,ref:ModelSnapshot,actor=ref,roomId?:string,damageOrigin?:DamageOrigin) {
+function modelEvent(s:GameState,event:TriggerEvent,ref:ModelSnapshot,actor=ref,roomId?:string,damageOrigin?:DamageOrigin,target?:FeedbackTarget) {
  const model=liveModel(s,ref);
- emitEvent(s,{event,model:ref,actor,roomId:roomId??(model?roomAt(s,model.model.position)?.id:undefined),damageOrigin});
+ emitEvent(s,{event,model:ref,actor,roomId:roomId??(model?roomAt(s,model.model.position)?.id:undefined),damageOrigin,target});
 }
 function moveModel(s:GameState,ref:ModelSnapshot,destination:Hex) {
  const target=liveModel(s,ref);if(!target)return;
@@ -972,7 +987,7 @@ function damage(s: GameState, target: Player, amount: number, source?: Player, a
  s.log.push(`${target.name} suffers ${inflicted} ${source ? 'damage' : 'black damage'}.`);
  appendFeedback(s,{kind:'DAMAGE',target:feedbackTarget,sourceId:source?.id??BLACK_ROSE_ID,amount:inflicted});
  if(source && eventActor)cerebralImplant(s,source,eventActor);
- if(source && eventActor)modelEvent(s,'DAMAGE_DEALT',eventActor,eventActor,undefined,damageOrigin);
+ if(source && eventActor)modelEvent(s,'DAMAGE_DEALT',eventActor,eventActor,undefined,damageOrigin,feedbackTarget);
  emitEvent(s,{event:'DAMAGE_TAKEN',model:ref,actor:eventActor,roomId,target:feedbackTarget,damageOrigin});
  if(target.wizard.damageCubes<target.wizard.health)return;
  const existing=context(s).defeats.get(ref.id);
@@ -1062,7 +1077,7 @@ function damageEvocation(s:GameState,e:Evocation,amount:number,source?:Player,ac
  s.log.push(source?`${e.name} suffers ${inflicted} damage; ${source.name} places ${cubes} damage cubes.`:`${e.name} suffers ${inflicted} black damage.`);
  appendFeedback(s,{kind:'DAMAGE',target:feedbackTarget,sourceId:source?.id??BLACK_ROSE_ID,amount:inflicted});
  if(source && actor)cerebralImplant(s,source,actor);
- if(source && actor)modelEvent(s,'DAMAGE_DEALT',actor,actor,undefined,damageOrigin);
+ if(source && actor)modelEvent(s,'DAMAGE_DEALT',actor,actor,undefined,damageOrigin,feedbackTarget);
  if(e.damageCubes<e.health){emitEvent(s,{event:'DAMAGE_TAKEN',model:ref,actor,roomId,target:feedbackTarget,damageOrigin});return;}
  invalidateModel(s,ref);
  for(const owner of s.players) {
@@ -2034,7 +2049,11 @@ function resolveInstabilityEffect(s:GameState,owner:Player,spell:Card,actor:Mode
  const effect:EffectResolution={activationIsExplicit:false,casterSeen:seen};
  const room=roomAt(s,casterPosition(s,owner,actor,effect));
  s.log.push(`Effect 1/${total} · ${spell.name}: ${describeInstruction(PRINTED_INSTABILITY)}`);
- if(room)resolveInstruction(s,owner,{...PRINTED_INSTABILITY,target:'BOUND_ROOM'},undefined,room.id,actor,effect,damageOrigin);
+ if(room) {
+  const ctx=context(s),previous=ctx.resolving;
+  ctx.resolving={sourceCard:spell,moment:describeInstruction({...PRINTED_INSTABILITY,target:'BOUND_ROOM'})};
+  try{resolveInstruction(s,owner,{...PRINTED_INSTABILITY,target:'BOUND_ROOM'},undefined,room.id,actor,effect,damageOrigin);}finally{ctx.resolving=previous;}
+ }
 }
 function resolveEffectMoments(s:GameState,caster:Player,spell:Card,room:Room|undefined,refs:ModelSnapshot[],actor:ModelSnapshot,damageOrigin:DamageOrigin='SPELL',protectedTargets=new Set<string>(),preventMainEffect=false) {
  const seen={position:{...caster.wizard.position}};
@@ -2046,7 +2065,10 @@ function resolveEffectMoments(s:GameState,caster:Player,spell:Card,room:Room|und
  if(spell.instability)resolveInstabilityEffect(s,caster,spell,actor,effects,seen,damageOrigin);
  if(spell.instability&&spell.moments.length)s.log.push(`Effect 2/${effects} · ${spell.name}: main effect.`);
  if(preventMainEffect){s.log.push(`${spell.name}: its main effect is ignored.`);return;}
- for(const [index,step] of spell.moments.entries())atMomentEnd(s,()=>{
+ for(const [index,step] of spell.moments.entries()) {
+  const ctx=context(s),previous=ctx.resolving;
+  ctx.resolving={sourceCard:spell,moment:describeInstruction({...step,target:spell.target==='SELF'?'OWNER':spell.target==='ROOM'?'BOUND_ROOM':'BOUND_MODEL'})};
+  try{atMomentEnd(s,()=>{
   const live=liveModel(s,chosen);
   if(live)origin={...live.model.position};
   const label=`Moment ${index+1}/${spell.moments.length} · ${spell.name}: `;
@@ -2066,7 +2088,8 @@ function resolveEffectMoments(s:GameState,caster:Player,spell:Card,room:Room|und
    stepRefs=origin?s.players.filter(p=>p.wizard.alive&&p.wizard.id!==chosen?.id&&hexDistance(origin!,p.wizard.position)<=area.range).map(p=>snapshot(s,p.id)!):[];
   }
   resolveMomentBody(s,caster,spell,step,room,stepRefs,actor,effect,damageOrigin);
- });
+  });}finally{ctx.resolving=previous;}
+ }
 }
 function resolveMomentBody(s:GameState,caster:Player,spell:Card,step:Moment,room:Room|undefined,refs:ModelSnapshot[],actor:ModelSnapshot,effect:EffectResolution,damageOrigin:DamageOrigin) {
  if(step.scope==='CASTER')refs=[actor];
@@ -2408,11 +2431,11 @@ function castSpell(s: GameState, p: Player, command: Extract<GameAction,{type:'C
  if(!reactive||action.dummy)recordRecapCard(s,'CAST',p.id,printed);
  if(spell.ongoing&&!action.dummy)s.log.push(`${spell.name} remains ongoing: ${spell.ongoing.effects.map(describeInstruction).join(' ')}`);
  // Activation is not a cast and cannot trigger "when a spell is cast".
- if(!reactive)emitEvent(s,{event:'SPELL_CAST',actor,model:actor,roomId:room?.id,spellType:getSpellType(spell)});
+ if(!reactive)emitEvent(s,{event:'SPELL_CAST',actor,model:actor,roomId:room?.id,spellType:getSpellType(spell),sourceCard:spell});
  const protectedTargets=new Set<string>();
  if(!reactive&&getSpellType(spell)==='COMBAT')for(const ref of refs) {
   const prevented={value:false};
-  emitEvent(s,{event:'SPELL_TARGETED',actor,model:ref,roomId:modelFeedbackTarget(s,ref)?.roomId,spellType:'COMBAT',prevented});
+  emitEvent(s,{event:'SPELL_TARGETED',actor,model:ref,roomId:modelFeedbackTarget(s,ref)?.roomId,spellType:'COMBAT',sourceCard:spell,prevented});
   if(prevented.value)protectedTargets.add(ref.id);
  }
  if(!reactive || action.dummy) {
