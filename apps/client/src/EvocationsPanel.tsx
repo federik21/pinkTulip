@@ -8,7 +8,7 @@ export type TargetModel = {id:string;playerId:string;name:string;position:Hex;ev
 export function targetModels(game:GameState):TargetModel[] {
  return [
   ...game.players.map(p=>({id:p.id,playerId:p.id,name:p.name,position:p.wizard.position,evocation:false})),
-  ...game.evocations.map(e=>({id:e.id,playerId:e.playerId,name:`${e.name} #${evocationNumber(game,e)} (${ownerName(game,e.playerId)})`,position:e.position,evocation:true})),
+  ...game.evocations.map(e=>({id:e.id,playerId:e.playerId,name:`${e.name} #${evocationNumber(game,e)} (${ownerName(game,e.assignedTo??e.playerId)})`,position:e.position,evocation:true})),
  ];
 }
 

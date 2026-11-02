@@ -153,8 +153,6 @@ export function spellFilterAllows(card:Card,casterId:string,model:{playerId:stri
  return true;
 }
 export function spellCanTargetModel(card:Card,casterId:string,ownerId:string,kind:'MAGE'|'EVOCATION'):boolean {
- // Nightmares belong to the Black Rose and are never chosen as a spell's model target.
- if(kind==='EVOCATION'&&ownerId===BLACK_ROSE_ID)return false;
  if(card.target==='SELF')return kind==='MAGE' && casterId===ownerId;
  // Support, Protection and ongoing cards do not bypass the printed Self target.
  if(kind==='MAGE' && casterId===ownerId)return false;
@@ -429,7 +427,7 @@ function progressQuest(s: GameState, p: Player, kind: NonNullable<Player['quest'
 export function getQuestRewardTargets(s:GameState,p:Player,card:Card):FeedbackTarget[] {
  if(card.target==='ROOM')return s.board.rooms.filter(room=>!room.startingFor && room.tiles.some(h=>isWithinSpellRange(p.wizard.position,h,card.range))).map(roomFeedbackTarget);
  const models=[...s.players.map(m=>({id:m.id,name:m.name,playerId:m.id,position:m.wizard.position,kind:'MAGE' as const})),
-  ...s.evocations.filter(e=>e.archetype!=='NIGHTMARE').map(e=>({id:e.id,name:`${e.name} #${e.number??1} · ${getPlayer(s,e.playerId).name}`,playerId:e.playerId,position:e.position,kind:'EVOCATION' as const}))];
+  ...s.evocations.map(e=>({id:e.id,name:`${e.name} #${e.number??1} · ${getPlayer(s,e.assignedTo??e.playerId).name}`,playerId:e.playerId,position:e.position,kind:'EVOCATION' as const}))];
  return models.filter(model=>spellCanTargetModel(card,p.id,model.playerId,model.kind)
   && spellFilterAllows(card,p.id,{playerId:model.playerId,evocation:s.evocations.find(e=>e.id===model.id)})
   && (card.target==='SELF' || !roomAt(s,model.position)?.startingFor)
@@ -457,6 +455,7 @@ function resolveQuestRewardAction(s: GameState, p: Player, card: Card, action: {
   const target=modelTarget(s,id);
   assert(inferSelf || (action.targetPlayerId?!!target.mage:!!target.evocation),'Target payload does not match the quest reward model kind');
   assert(spellCanTargetModel(card,p.id,target.playerId,target.mage?'MAGE':'EVOCATION'),'Quest reward cannot target this model category or ownership');
+  assert(spellFilterAllows(card,p.id,target),'Quest reward cannot target this model');
   room=s.board.rooms.find(r=>r.tiles.some(h=>hexKey(h)===hexKey(target.position)));
   if (!inferSelf && room?.startingFor) assert(false,'Cannot target a model in its starting room with a quest reward');
   assert(isWithinSpellRange(p.wizard.position,target.position,card.range),'Quest reward target out of range');
@@ -1854,10 +1853,11 @@ export function canPlayerAct(s: GameState, p: Player): boolean {
   const card=prepared.card;
   if(['TRAP','PROTECTION'].includes(getSpellType(card)))return !!card.trigger;
   if(card.target==='ROOM' || canUseSpellDummy(card))return s.board.rooms.some(r=>!r.startingFor && r.tiles.some(h=>isWithinSpellRange(p.wizard.position,h,card.range)));
-  const legal=(ownerId:string,kind:'MAGE'|'EVOCATION',position:Hex)=>spellCanTargetModel(card,p.id,ownerId,kind)
+  const legal=(ownerId:string,kind:'MAGE'|'EVOCATION',position:Hex,evocation?:Evocation)=>spellCanTargetModel(card,p.id,ownerId,kind)
+   && spellFilterAllows(card,p.id,{playerId:ownerId,evocation})
    && !s.board.rooms.some(r=>r.startingFor && r.tiles.some(h=>hexKey(h)===hexKey(position)))
    && isWithinSpellRange(p.wizard.position,position,card.range);
-  return s.players.some(t=>legal(t.id,'MAGE',t.wizard.position)) || s.evocations.some(e=>legal(e.playerId,'EVOCATION',e.position));
+  return s.players.some(t=>legal(t.id,'MAGE',t.wizard.position)) || s.evocations.some(e=>legal(e.playerId,'EVOCATION',e.position,e));
  });
 }
 

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
- applyAction, createGame, createShamanicDeck, EVOCATION_TYPES, getEvocationKind, getEvocationSupply, summonEvocation,
+ applyAction, BLACK_ROSE_ID, createGame, createShamanicDeck, EVOCATION_TYPES, getEvocationKind, getEvocationSupply, getQuestRewardTargets, spellCanTargetModel, spellFilterAllows, summonEvocation,
 } from '../src';
 import type { GameState } from '../src';
 
@@ -166,6 +166,47 @@ describe('Shamanic school',()=>{
   const result=applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',targetEvocationId:target.id});
   expect(result.evocations.some(e=>e.id===target.id)).toBe(false);
   expect(result.players[0].victoryPoints).toBe(1);
+ });
+
+ it('lets Pyre Spirit and ordinary evocation spells target an assigned Umbra',()=>{
+  const s=fixture(),umbra={
+   id:'assigned-umbra',playerId:BLACK_ROSE_ID,assignedTo:'p2',slot:1,number:1,kind:'UMBRA' as const,
+   name:'Umbra',archetype:'NIGHTMARE' as const,movement:0,attack:1,health:2,
+   position:{...s.players[1].wizard.position},damageCubes:0,damageByPlayer:{},activated:true,
+  };
+  s.evocations.push(umbra);
+  const pyre=createShamanicDeck('shamanic','shamanic').find(c=>c.name==='Pyre Spirit')!;
+  expect(spellCanTargetModel(pyre,'p1',BLACK_ROSE_ID,'EVOCATION')).toBe(true);
+  expect(spellFilterAllows(pyre,'p1',{playerId:umbra.playerId,evocation:umbra})).toBe(true);
+  expect(getQuestRewardTargets(s,s.players[0],pyre).some(target=>target.id===umbra.id)).toBe(true);
+  s.players[0].prepared.rapid={card:pyre,used:false};
+  const result=applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',targetEvocationId:umbra.id});
+  expect(result.evocations.some(e=>e.id===umbra.id)).toBe(false);
+  expect(result.players[0].victoryPoints).toBe(1);
+  expect(getEvocationSupply(result).UMBRA).toBe(9);
+
+  const ordinary={...pyre,id:'ordinary-spell',name:'Ordinary spell',targetFilter:undefined,moments:[{effect:'DAMAGE' as const,amount:1}]};
+  expect(spellCanTargetModel(ordinary,'p1',BLACK_ROSE_ID,'EVOCATION')).toBe(true);
+  expect(spellFilterAllows(ordinary,'p1',{playerId:umbra.playerId,evocation:umbra})).toBe(true);
+  expect(getQuestRewardTargets(s,s.players[0],ordinary).some(target=>target.id===umbra.id)).toBe(true);
+  s.players[0].prepared.rapid={card:ordinary,used:false};
+  const damaged=applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',targetEvocationId:umbra.id});
+  expect(damaged.evocations.find(e=>e.id===umbra.id)?.damageCubes).toBe(1);
+ });
+
+ it('excludes assigned Umbras from MOVE_MODEL choices',()=>{
+  const s=fixture(),umbra={
+   id:'assigned-umbra',playerId:BLACK_ROSE_ID,assignedTo:'p2',slot:1,number:1,kind:'UMBRA' as const,
+   name:'Umbra',archetype:'NIGHTMARE' as const,movement:0,attack:1,health:2,
+   position:{...s.players[1].wizard.position},damageCubes:0,damageByPlayer:{},activated:true,
+  };
+  s.evocations.push(umbra);
+  const card={id:'move-model',name:'Move Model',kind:'SPELL' as const,target:'ROOM' as const,range:2,moments:[{effect:'MOVE_MODEL' as const,distance:1}]};
+  s.players[0].prepared.rapid={card,used:false};
+  const result=applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:'room-0,0'});
+  expect(result.pendingDecision?.kind).toBe('CHOICE');
+  if(result.pendingDecision?.kind!=='CHOICE')throw new Error('Expected model choice for MOVE_MODEL');
+  expect(result.pendingDecision.options.some(option=>option.id===umbra.id)).toBe(false);
  });
 
  it('lets Source of Life move any model near the selected room, then heal all models in that room',()=>{
