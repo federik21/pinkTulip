@@ -1,6 +1,20 @@
 import { test, expect } from '@playwright/test';
 import { completeSetupDraft, selectControlTab, viewRetinue } from './layout-ui';
 
+test('landing page offers online and solo play with a dev-only sandbox button', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: 'Online play', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Solo play', exact: true })).toBeVisible();
+  await expect(page.getByText('Choose how you want to begin', { exact: false })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Sandbox mode', exact: true })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Solo play', exact: true }).click();
+  await expect(page.locator('.lobby-panel')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Add AI opponent', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Remove AI/i })).toHaveCount(0);
+  await expect(page.locator('.seat strong')).toContainText('You');
+});
+
 test('creating and joining a room renders the lobby without React hook errors', async ({ browser }) => {
   const hostContext = await browser.newContext();
   const guestContext = await browser.newContext();

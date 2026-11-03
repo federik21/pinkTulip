@@ -2179,9 +2179,14 @@ function activateRoomBody(s:GameState,p:Player,targetRoomId?:string,via?:{room:R
   awardVictoryPoints(s,BLACK_ROSE_ID,1);break;
   }
   case 'PLEASURE_REBUILT':drawAndDiscardQuests(s,p,3,2);break;
-  case 'THRONE_STANDARD':
-  awardVictoryPoints(s,p.id,-1);s.firstPlayerId=p.id;
-  s.log.push(`${p.name} loses 1 VP and takes the first-player token.`);break;
+  case 'THRONE_STANDARD': {
+  const before=p.victoryPoints;
+  awardVictoryPoints(s,p.id,-1);
+  s.firstPlayerId=p.id;
+  if(p.victoryPoints<before) s.log.push(`${p.name} loses 1 VP and takes the first-player token.`);
+  else s.log.push(`${p.name} takes the first-player token without losing any VP.`);
+  break;
+  }
   case 'THRONE_REBUILT':
   s.firstPlayerId=p.id;awardVictoryPoints(s,p.id,1);
   s.log.push(`${p.name} takes the first-player token and gains 1 VP.`);break;

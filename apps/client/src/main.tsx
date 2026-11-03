@@ -48,6 +48,10 @@ type Send=(action:GameAction)=>void;
 type Slot='slot1'|'slot2'|'slot3'|'rapid';
 const slotKeys:Slot[]=['slot1','slot2','slot3','rapid'];
 const randomName=()=>['Ember','Moon','Storm','Rune','Thorn'][Math.floor(Math.random()*5)]+['Warden','Seer','Mancer','Sage','Bloom'][Math.floor(Math.random()*5)];
+const isSandboxAvailable=()=>{
+ const host=location.hostname;
+ return import.meta.env.DEV || host==='localhost' || host==='127.0.0.1' || host==='0.0.0.0' || host.endsWith('.local');
+};
 function roomEffectLines(text:string):string[] {
  const lines:string[]=[];
  let line='';
@@ -142,6 +146,7 @@ function QuestLimitPanel({me,send}:{me:Player;send:Send}) {
 function App() {
  const [game,setGame]=useState<GameState|null>(null),[playerId,setPlayerId]=useState<string|null>(null);
  const [connected,setConnected]=useState(false),[error,setError]=useState('');
+ const [entryMode,setEntryMode]=useState<'start'|'online'|'solo'|'sandbox'>('start');
  const [roomId,setRoomId]=useState('demo'),[playerName,setPlayerName]=useState(randomName),[roomPassword,setRoomPassword]=useState('');
  const [roomList,setRoomList]=useState<Array<{id:string;players:number;status:string;mages?:string[];passwordProtected?:boolean}>>([]);
  const [canSave,setCanSave]=useState(false);
@@ -299,7 +304,35 @@ function App() {
   if(wsRef.current?.readyState!==WebSocket.OPEN){setError('Wait for the server connection.');return;}
   setError('');wsRef.current.send(JSON.stringify({type:create?'CREATE_ROOM':'JOIN',roomId,playerName,password:roomPassword,reconnectToken:localStorage.getItem(`pinkTulip:reconnect:${roomId}`)??''}));
  };
- if(!game || !playerId)return <div className="entry"><div className="entry-decoration">✺</div><div className="entry-card"><span className="eyebrow">A lodge of ambition and ruin</span><h1>BRW<br/><em>BATTLES</em></h1><p>A {MIN_MAGES}–{MAX_MAGES} mage online battle. Build your grimoire. Shape the lodge. Claim BRW.</p><label>Mage name<input value={playerName} maxLength={32} onChange={e=>setPlayerName(e.target.value)}/></label><label>Room name<input value={roomId} maxLength={48} onChange={e=>setRoomId(e.target.value)}/></label><label>Room password<input type="password" autoComplete="current-password" value={roomPassword} maxLength={128} onChange={e=>setRoomPassword(e.target.value)}/></label><span className="hint">Optional for public rooms. Password-protected rooms require a password of at least 8 characters.</span><div className="button-row"><button disabled={!connected} onClick={()=>join(false)}>Join room</button><button className="primary" disabled={!connected} onClick={()=>join(true)}>Create room</button></div><span className="hint">{connected?'● Connected to the lodge':'○ Connecting to server…'}</span>{error&&<p className="error" role="alert">{error}</p>}{roomList.length>0&&<div className="room-list"><h3>Open lodges</h3>{roomList.map(r=><button key={r.id} onClick={()=>setRoomId(r.id)}><b>{r.passwordProtected?'🔒 ':''}{r.id}</b><span>{r.players}/{MAX_MAGES} · {r.status}{r.mages?`: ${r.mages.join(', ')}`:''}</span></button>)}</div>}</div></div>;
+ const startOnlineEntry=()=>{setEntryMode('online');setError('');};
+ const startSoloGame=()=>{
+  const soloRoomId=`solo-${Date.now()}`;
+  setPlayerName('You');
+  setRoomId(soloRoomId);
+  setRoomPassword('');
+  setEntryMode('solo');
+  setError('');
+ };
+ const startSandboxMode=()=>{
+  const sandboxRoomId=`sandbox-${Date.now()}`;
+  setPlayerName('You');
+  setRoomId(sandboxRoomId);
+  setRoomPassword('');
+  setEntryMode('sandbox');
+  setError('');
+ };
+ useEffect(()=>{
+  if((entryMode==='solo'||entryMode==='sandbox')&&connected&&wsRef.current?.readyState===WebSocket.OPEN&&!game){
+   const localRoomId=roomId;
+   const localPlayerName=entryMode==='solo'?'You':'You';
+   setPlayerName(localPlayerName);
+   wsRef.current.send(JSON.stringify({type:'CREATE_ROOM',roomId:localRoomId,playerName:localPlayerName,password:'',reconnectToken:''}));
+  }
+ },[entryMode,connected,game,roomId]);
+ if(!game || !playerId) {
+  if(entryMode==='start')return <div className="entry"><div className="entry-decoration">✺</div><div className="entry-card"><span className="eyebrow">A lodge of ambition and ruin</span><h1>BRW<br/><em>BATTLES</em></h1><p>Choose how you want to begin. Play online with friends, start a solo lodge against AI mages, or open a local sandbox.</p><div className="button-row"><button type="button" onClick={startOnlineEntry}>Online play</button><button type="button" className="primary" onClick={startSoloGame}>Solo play</button></div>{isSandboxAvailable()&&<div className="button-row"><button type="button" onClick={startSandboxMode}>Sandbox mode</button></div>}<span className="hint">{connected?'● Connected to the lodge':'○ Connecting to server…'}</span>{error&&<p className="error" role="alert">{error}</p>}</div></div>;
+  return <div className="entry"><div className="entry-decoration">✺</div><div className="entry-card"><span className="eyebrow">A lodge of ambition and ruin</span><h1>BRW<br/><em>BATTLES</em></h1><p>A {MIN_MAGES}–{MAX_MAGES} mage online battle. Build your grimoire. Shape the lodge. Claim BRW.</p><label>Mage name<input value={playerName} maxLength={32} onChange={e=>setPlayerName(e.target.value)}/></label><label>Room name<input value={roomId} maxLength={48} onChange={e=>setRoomId(e.target.value)}/></label><label>Room password<input type="password" autoComplete="current-password" value={roomPassword} maxLength={128} onChange={e=>setRoomPassword(e.target.value)}/></label><span className="hint">Optional for public rooms. Password-protected rooms require a password of at least 8 characters.</span><div className="button-row"><button disabled={!connected} onClick={()=>join(false)}>Join room</button><button className="primary" disabled={!connected} onClick={()=>join(true)}>Create room</button></div><span className="hint">{connected?'● Connected to the lodge':'○ Connecting to server…'}</span>{error&&<p className="error" role="alert">{error}</p>}{roomList.length>0&&<div className="room-list"><h3>Open lodges</h3>{roomList.map(r=><button key={r.id} onClick={()=>setRoomId(r.id)}><b>{r.passwordProtected?'🔒 ':''}{r.id}</b><span>{r.players}/{MAX_MAGES} · {r.status}{r.mages?`: ${r.mages.join(', ')}`:''}</span></button>)}</div>}</div></div>;
+ }
  const me=game.players.find(p=>p.id===playerId)!;
  const isHost=game.hostId===me.id;
  const paused=game.phase!=='LOBBY'&&!game.players.every(p=>p.connected);

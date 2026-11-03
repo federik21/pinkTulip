@@ -23,6 +23,16 @@ describe('Throne room: first-player token',()=>{
   expect(after.players[0].victoryPoints).toBe(0);
   expect(after.firstPlayerId).toBe('p1');
  });
+ it('still takes the first-player token when it has no VP to lose',()=>{
+  const s=fixture(),violet=s.board.rooms.find(r=>r.name==='Throne Room')!;
+  s.players[0].victoryPoints=0;
+  stand(s,violet.id);
+  const after=activate(s);
+  expect(after.players[0].victoryPoints).toBe(0);
+  expect(after.firstPlayerId).toBe('p1');
+  expect(after.log.some(line=>line.includes('takes the first-player token'))).toBe(true);
+  expect(after.log.some(line=>line.includes('loses 1 VP and takes the first-player token'))).toBe(false);
+ });
  it('starts the next phase with the new first player, not the current turn order',()=>{
   const s=fixture(),violet=s.board.rooms.find(r=>r.name==='Throne Room')!;
   stand(s,violet.id);
