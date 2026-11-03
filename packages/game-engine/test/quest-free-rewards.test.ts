@@ -9,7 +9,14 @@ function fixture():GameState {
  return s;
 }
 function takeQuest(s:GameState,kind:Quest['kind']='ROOM_ACTIVATE',completed=true):Quest {
- const index=s.questDeck.findIndex(q=>q.kind===kind),quest=s.questDeck.splice(index,1)[0];
+ const quest=s.questDeck.shift()!;
+ quest.kind=kind;delete quest.trigger;
+ quest.amount=kind==='INSTABILITY'?2:kind==='ROOM_ACTIVATE'?3:1;
+ quest.rewardAction=kind==='REBUILD'
+  ?{id:'test-room-reward',name:'Test room reward',kind:'SPELL',moments:[{effect:'INSTABILITY',amount:1}],range:2,target:'ROOM'}
+  :kind==='INSTABILITY'
+    ?{id:'test-model-reward',name:'Test model reward',kind:'SPELL',moments:[{effect:'DAMAGE',amount:1}],range:2,target:'MODEL'}
+    :{id:'test-self-reward',name:'Test self reward',kind:'SPELL',moments:[{effect:'HEAL',amount:2}],range:0,target:'SELF'};
  expect(quest).toBeDefined();Object.assign(quest,{progress:completed?quest.amount:0,completed,claimed:false});
  s.players[0].quest=quest;return quest;
 }
@@ -46,7 +53,7 @@ describe('quest objectives complete without automatically solving or paying rewa
  });
  it('records room activation progress for every held quest and readies each independently',()=>{
   const s=fixture(),quest=takeQuest(s,'ROOM_ACTIVATE',false);quest.progress=2;
-  const index=s.questDeck.findIndex(q=>q.kind==='ROOM_ACTIVATE'),additional=s.questDeck.splice(index,1)[0];
+    const additional=s.questDeck.shift()!;additional.kind='ROOM_ACTIVATE';additional.amount=3;delete additional.trigger;
   additional.progress=1;s.players[0].additionalQuests.push(additional);
   s.activation!.physicalAction={kind:'EXPLORE',mainEffectUsed:false,movementStarted:false};
   s.board.rooms.find(r=>r.id==='room-0,0')!.effect='DRAW_GRIMOIRE';
@@ -83,7 +90,8 @@ describe('completed quest rewards are free and recycle their physical quest',()=
  });
  it('keeps the free window open when one reward completes another quest, then hands off exactly once',()=>{
   const s=fixture();s.activation!.actionsUsed=2;const first=takeQuest(s,'INSTABILITY');
-  const index=s.questDeck.findIndex(q=>q.kind==='ROOM_ACTIVATE'),second=s.questDeck.splice(index,1)[0];
+  const second=s.questDeck.shift()!;second.kind='ROOM_ACTIVATE';second.amount=3;delete second.trigger;
+  second.rewardAction={id:'test-second-self',name:'Test second reward',kind:'SPELL',moments:[{effect:'HEAL',amount:1}],range:0,target:'SELF'};
   Object.assign(second,{kind:'KILL',amount:1,completed:false,progress:0});s.players[0].additionalQuests.push(second);s.players[1].wizard.health=1;
   const ids=allQuestIds(s),ready=solve(s,{targetPlayerId:'p2'});
   expect(ready.currentPlayerId).toBe('p1');expect(ready.activation!.actionsUsed).toBe(2);
@@ -97,7 +105,8 @@ describe('completed quest rewards are free and recycle their physical quest',()=
   expect(allQuestIds(after)).toEqual(ids);
  });
  it('solves an additional quest by its own ID, leaving the primary quest in place',()=>{
-  const s=fixture(),primary=takeQuest(s);const index=s.questDeck.findIndex(q=>q.kind==='ROOM_ACTIVATE'),additional=s.questDeck.splice(index,1)[0];
+  const s=fixture(),primary=takeQuest(s);const additional=s.questDeck.shift()!;additional.kind='ROOM_ACTIVATE';additional.amount=3;delete additional.trigger;
+  additional.rewardAction={id:'test-additional-self',name:'Test additional reward',kind:'SPELL',moments:[{effect:'HEAL',amount:1}],range:0,target:'SELF'};
   additional.completed=true;s.players[0].additionalQuests.push(additional);
   const after=solve(s,{questId:additional.id});expect(after.players[0].quest).toEqual(primary);expect(after.questDiscard[0].id).toBe(additional.id);
  });

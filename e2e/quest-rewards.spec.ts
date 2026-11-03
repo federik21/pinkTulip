@@ -6,7 +6,13 @@ import { publicState } from '../apps/server/src/public-state';
 import { selectControlTab } from './layout-ui';
 
 function take(s:GameState,kind:Quest['kind']='ROOM_ACTIVATE',ready=true) {
- const index=s.questDeck.findIndex(q=>q.kind===kind),quest=s.questDeck.splice(index,1)[0];
+ const quest=s.questDeck.shift()!;quest.kind=kind;delete quest.trigger;
+ quest.amount=kind==='INSTABILITY'?2:kind==='ROOM_ACTIVATE'?3:1;
+ quest.rewardAction=kind==='REBUILD'
+  ?{id:'e2e-room-reward',name:'Test room reward',kind:'SPELL',moments:[{effect:'INSTABILITY',amount:1}],range:2,target:'ROOM'}
+  :kind==='INSTABILITY'
+  ?{id:'e2e-model-reward',name:'Test model reward',kind:'SPELL',moments:[{effect:'DAMAGE',amount:1}],range:2,target:'MODEL'}
+  :{id:'e2e-self-reward',name:'Test self reward',kind:'SPELL',moments:[{effect:'HEAL',amount:2}],range:0,target:'SELF'};
  Object.assign(quest,{completed:ready,claimed:false,progress:ready?quest.amount:0});return quest;
 }
 function fixture(kind:Quest['kind']='ROOM_ACTIVATE') {
@@ -32,7 +38,7 @@ async function mount(page:Page,initial:GameState) {
    }catch(error){errors.push(String(error));route.send(JSON.stringify({type:'ERROR',requestId:message.requestId,message:String(error)}));}
   });
  });
- await page.goto('/');await page.getByRole('button',{name:'Create room',exact:true}).click();
+ await page.goto('/');await page.getByRole('button',{name:'Online play',exact:true}).click();await page.getByRole('button',{name:'Create room',exact:true}).click();
  await expect(page.locator('.phase-overlay')).toBeVisible();await page.locator('.phase-overlay').click();
  return {actions,errors,get state(){return game;},update(next:GameState){game=structuredClone(next);history.clear();publish();},
   dispatch(action:GameAction){game=history.apply(game,action,action.playerId);publish();}};

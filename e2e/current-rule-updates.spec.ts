@@ -115,7 +115,9 @@ for(const viewport of [{width:1440,height:1000},{width:390,height:844}])test.des
   if(source==='ROOM')s.board.rooms.find(r=>r.id==='room-0,0')!.effect='ROOM_DAMAGE';
   if(source==='SPELL')s.players[0].prepared.rapid={used:false,card:{id:s.library[0].cards.shift()!.id,name:'UI damage',kind:'SPELL',spellType:'COMBAT',range:1,target:'MAGE',moments:[{effect:'DAMAGE',amount:1}]}};
   if(source==='QUEST'){
-   const index=s.questDeck.findIndex(q=>q.kind==='INSTABILITY');s.players[0].quest=s.questDeck.splice(index,1)[0];s.players[0].quest!.completed=true;
+    const quest=s.questDeck.shift()!;quest.kind='INSTABILITY';quest.amount=1;delete quest.trigger;
+    quest.rewardAction={id:'quest-pain-mark-test',name:'Quest damage',kind:'SPELL',moments:[{effect:'DAMAGE',amount:1}],range:2,target:'MODEL'};
+    s.players[0].quest=quest;s.players[0].quest.completed=true;
   }
   const wire=await mount(page,s);
   if(source==='EVOCATION'){

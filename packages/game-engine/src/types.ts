@@ -49,7 +49,7 @@ export type Moment = (
  // Activates the room effect where the chosen (own) evocation stands, even if used; never the central or violet room.
  | { effect: 'ACTIVATE_ROOM' }
  // The owner chooses one of their evocations to activate; optional bonus attack and damage inflicted by the Black Rose when it ends.
- | { effect: 'ACTIVATE_CHOICE'; archetype?: 'CONSTRUCT'; attackBonus?: number; endDamage?: number }
+ | { effect: 'ACTIVATE_CHOICE'; archetype?: 'CONSTRUCT' | 'UNDEAD'; attackBonus?: number; endDamage?: number }
  | { effect: 'ACTIVATE_EVOCATION'; kind: EvocationKind }
  // Activates the chosen evocation under the caster's control (borrowed if it belongs to another mage).
  | { effect: 'ACTIVATE_TARGET' }
@@ -60,6 +60,10 @@ export type Moment = (
  // Fixed `amount` and `models` (evocations too) override the removed model's attack / mages-only default.
  | { effect: 'REMOVED_BLAST'; amount?: number; models?: boolean }
  | { effect: 'LOOK_LIBRARY'; cards: number }
+ | { effect: 'SEARCH_GRIMOIRE' }
+ | { effect: 'DRAW_SCHOOL'; amount: number }
+ | { effect: 'RETURN_REVEALED'; elements: Element[] }
+ | { effect: 'IF_UNWOUNDED'; draw: number; otherwiseHeal: number }
  // Nightmares (Black Rose evocations attached to mages). The caster picks the slot of each assignment.
  | { effect: 'MOVE_TARGET'; distance: number }
  | { effect: 'ASSIGN_NIGHTMARE'; count?: number; others?: boolean }
@@ -112,6 +116,10 @@ export type TargetFilter = { own?: boolean; archetype?: 'CONSTRUCT'; maxHealth?:
 export type Card = { id: string; name: string; kind: 'SPELL'; moments: Moment[]; instability?: boolean; range: number; target: SpellTarget; element?: Element; enhancement?: Enhancement; targetFilter?: TargetFilter; suppressReactions?: boolean; schoolId?: string; powerful?: boolean; spellType?: SpellType; triggerText?: string; rulesText?: string; trigger?: TriggerCondition; triggerTarget?: 'EVENT_MODEL' | 'EVENT_ACTOR' | 'EVENT_ROOM'; triggerSight?: number; targetFrom?: 'EVENT_MODEL'; triggerEffects?: TriggeredInstruction[]; ongoing?: { trigger: TriggerCondition; effects: TriggeredInstruction[] } };
 export type ActiveSpell = { id: string; playerId: string; card: Card; targetPlayerId?: string; targetEvocationId?: string; roomId?: string; cleanupDestination?: 'HAND' | 'MEMORIES' };
 export type RoomColor = 'crimson' | 'azure' | 'emerald' | 'amber' | 'violet' | 'grey';
+export type QuestTrigger =
+ | { event: 'SPELL_EFFECT'; spellType?: SpellType; summon?: boolean; elementGroup?: Element[]; minimumElements?: number }
+ | { event: 'ROOM_EFFECT'; roomColor: RoomColor }
+ | { event: 'INSTABILITY_EFFECT' };
 export type RoomEffect =
  | 'ROOM_DAMAGE' | 'DRAW_DISCARD' | 'INSTABILITY' | 'DRAW_QUEST' | 'DRAW_GRIMOIRE' | 'SUMMON_CADAVER' | 'DRAW_POWERFUL' | 'FIRST_PLAYER'
  | 'BR_STANDARD' | 'BR_REBUILT'
@@ -131,7 +139,8 @@ export type EventCard = {
  ongoing?: OngoingEventRules; effect?: EventEffect; boardSlot?: 0 | 1 | 2; entryPoints?: number; exitPoints?: number; crown?: boolean;
 };
 export type Quest = {
- id: string; name: string; description: string; kind: 'KILL' | 'REBUILD' | 'INSTABILITY' | 'ROOM_ACTIVATE'; amount: number; reward: number;
+ id: string; name: string; description: string; kind: 'KILL' | 'REBUILD' | 'INSTABILITY' | 'ROOM_ACTIVATE' | 'SPELL_EFFECT' | 'ROOM_EFFECT' | 'INSTABILITY_EFFECT'; amount: number; reward: number;
+ trigger?: QuestTrigger;
  progress?: number; completed?: boolean; claimed?: boolean; rewardAction?: Card;
 };
 export type PreparedCard = { card: Card; used: boolean };

@@ -8,7 +8,8 @@ function fixture() {
  const s=createGame(2);s.phase='ACTION';s.round=1;s.currentPlayerId='p1';s.firstPlayerId='p1';
  s.activation={playerId:'p1',actionsUsed:0,spellsCast:0,sequencedSpellUsed:false,exploring:0,discardedExit:false,roomEffectUsed:false};
  for(const p of s.players){p.connected=true;p.wizard.position={q:0,r:0};}
- const index=s.questDeck.findIndex(q=>q.kind==='ROOM_ACTIVATE'),quest=s.questDeck.splice(index,1)[0];
+ const quest=s.questDeck.shift()!;quest.kind='ROOM_ACTIVATE';quest.amount=3;delete quest.trigger;
+ quest.rewardAction={id:'server-test-reward',name:'Server test reward',kind:'SPELL',moments:[{effect:'HEAL',amount:2}],range:0,target:'SELF'};
  Object.assign(quest,{progress:quest.amount,completed:true,claimed:false});s.players[0].quest=quest;
  return s;
 }

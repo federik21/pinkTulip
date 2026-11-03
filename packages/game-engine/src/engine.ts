@@ -1,5 +1,5 @@
-import { Activation, ActiveSpell, Board, Card, DamageOrigin, DecisionAnswer, DecisionDetails, EventCard, Evocation, EvocationKind, FeedbackTarget, GameAction, GameFeedbackEvent, GameState, Hex, Jinx, JinxName, MageDraftId, Moment, Player, PlayerId, Room, RoomId, RoomColor, RoomEffect, TriggerCondition, TriggerEvent, TriggeredInstruction, TurnRecapCard, UpgradeName } from './types';
-import { createEvents, createLibrary, createPowerfulDeck, createQuests, getEffectiveSpell, getSpellType, hasMoment, shuffle } from './cards';
+import { Activation, ActiveSpell, Board, Card, DamageOrigin, DecisionAnswer, DecisionDetails, Element, EventCard, Evocation, EvocationKind, FeedbackTarget, GameAction, GameFeedbackEvent, GameState, Hex, Jinx, JinxName, MageDraftId, Moment, Player, PlayerId, Quest, QuestTrigger, Room, RoomId, RoomColor, RoomEffect, SpellType, TriggerCondition, TriggerEvent, TriggeredInstruction, TurnRecapCard, UpgradeName } from './types';
+import { createEvents, createLibrary, createPowerfulDeck, createQuests, getEffectiveSpell, getRevealedElements, getSpellType, hasMoment, shuffle } from './cards';
 
 export class GameRuleError extends Error {}
 export const PHYSICAL_TOKENS_PER_ROUND = 2;
@@ -551,6 +551,29 @@ function progressQuest(s: GameState, p: Player, kind: NonNullable<Player['quest'
  }
 }
 
+type QuestProgressEvent =
+ | {event:'SPELL_EFFECT';spellType:SpellType;summon:boolean;elements:Element[]}
+ | {event:'ROOM_EFFECT';roomColor:RoomColor}
+ | {event:'INSTABILITY_EFFECT'};
+function progressTriggeredQuests(s:GameState,p:Player,trigger:QuestProgressEvent) {
+ for(const quest of heldQuests(p)) {
+  const condition=quest.trigger;
+  if(!condition||condition.event!==trigger.event||quest.completed||quest.claimed)continue;
+  if(condition.event==='SPELL_EFFECT'&&trigger.event==='SPELL_EFFECT') {
+   if(condition.spellType&&condition.spellType!==trigger.spellType)continue;
+   if(condition.summon&&!trigger.summon)continue;
+  if(condition.elementGroup&&trigger.elements.filter(element=>condition.elementGroup!.includes(element)).length<(condition.minimumElements??1))continue;
+  } else if(condition.event==='ROOM_EFFECT'&&trigger.event==='ROOM_EFFECT'&&condition.roomColor!==trigger.roomColor)continue;
+  const progress=Math.min(quest.amount,(quest.progress??0)+1);
+  quest.progress=progress;
+  s.log.push(`${p.name} advances “${quest.name}” (${progress}/${quest.amount}).`);
+  if(progress>=quest.amount) {
+   quest.completed=true;
+   s.log.push(`${p.name} completes “${quest.name}” and may spend its reward action.`);
+  }
+ }
+}
+
 /** Public target choices for the quest panel, with the same printed targeting rules as resolution. */
 export function getQuestRewardTargets(s:GameState,p:Player,card:Card):FeedbackTarget[] {
  if(card.target==='ROOM')return s.board.rooms.filter(room=>!room.startingFor && room.tiles.some(h=>isWithinSpellRange(p.wizard.position,h,card.range))).map(roomFeedbackTarget);
@@ -605,7 +628,7 @@ function drawQuest(s:GameState) {
 // stored in GameState; a root action remains a single clone/commit boundary.
 type ModelSnapshot = { id:string; playerId:string; kind:'MAGE'|'EVOCATION'; generation:number };
 // Local to a single effect, so a nested spell cannot replace its summoned model.
-type EffectResolution = { casterSeen?:{position:Hex}; assigned?:string[]; eventActor?:ModelSnapshot; summoned?:ModelSnapshot; activationIsExplicit:boolean; upgraded?:boolean; removed?:{position:Hex;attack:number;roomId?:string}; eventPosition?:Hex; eventKind?:EvocationKind; damaged?:ModelSnapshot[]; moved?:ModelSnapshot; spellEvent?:SpellEvent; unconverted?:number; protectedTargets?:Set<string> };
+type EffectResolution = { casterSeen?:{position:Hex}; assigned?:string[]; eventActor?:ModelSnapshot; summoned?:ModelSnapshot; activationIsExplicit:boolean; upgraded?:boolean; removed?:{position:Hex;attack:number;roomId?:string}; eventPosition?:Hex; eventKind?:EvocationKind; damaged?:ModelSnapshot[]; moved?:ModelSnapshot; spellEvent?:SpellEvent; unconverted?:number; instabilityPlaced?:number; protectedTargets?:Set<string> };
 type SpellEvent = { event:TriggerEvent; model?:ModelSnapshot; actor?:ModelSnapshot; roomId?:string; target?:FeedbackTarget; damageOrigin?:DamageOrigin; position?:Hex; kind?:EvocationKind; spellType?:Card['spellType']; sourceCard?:Card; moment?:string; prevented?:{value:boolean}; afterResolution?:()=>void };
 type PendingMageDefeat = { ref:ModelSnapshot; roomId?:string; target:FeedbackTarget; source?:Player; liquefyThePain?:boolean };
 type ReplayEntropy={ids:string[];random:number[]};
@@ -750,7 +773,8 @@ function resolveInstruction(s:GameState,owner:Player,instruction:TriggeredInstru
 function resolveInstructionBody(s:GameState,owner:Player,instruction:TriggeredInstruction,ref:ModelSnapshot|undefined,roomId:string|undefined,actor:ModelSnapshot|undefined,effect?:EffectResolution,damageOrigin:DamageOrigin='SPELL') {
  const target=liveModel(s,ref),room=roomId?s.board.rooms.find(r=>r.id===roomId):undefined;
  if(instruction.effect==='INSTABILITY') {
-  if(room)placeInstability(s,room,instruction.amount,owner);
+  if(room&&effect)effect.instabilityPlaced=(effect.instabilityPlaced??0)+placeInstability(s,room,instruction.amount,owner);
+  else if(room)placeInstability(s,room,instruction.amount,owner);
  } else if(instruction.effect==='CONVERT' && room) {
   if(!room.scored&&!room.reconstructed)convertRoomCubes(s,owner,room,instruction.amount);
  } else if(instruction.effect==='BLACK_ROSE_CONVERT' && target && target.mage) {
@@ -979,7 +1003,13 @@ function resolveEvent(s:GameState,event:SpellEvent) {
     if(instruction.effect==='INSTABILITY'&&instruction.scope==='CASTER_ROOM')roomId=roomAt(s,owner.wizard.position)?.id;
     if(instruction.effect==='SUMMON'&&instruction.position==='TARGET'&&!liveModel(s,ref))roomId??=room?.id;
     try{resolveInstruction(s,owner,instruction,ref,roomId,ownerRef,effect);}finally{ctx.resolving=previous;}
-   }
+     }
+     if(!ongoingPrevented&&instructions.length) {
+    if((effect.instabilityPlaced??0)>0)progressTriggeredQuests(s,owner,{event:'INSTABILITY_EFFECT'});
+      const elements=getRevealedElements(s,owner,active.card);
+      if(active.card.element)elements.push(active.card.element);
+      progressTriggeredQuests(s,owner,{event:'SPELL_EFFECT',spellType:getSpellType(active.card),summon:!!effect.summoned,elements});
+     }
     }
   } finally { context(s).interruptId=previousInterruptId; }
   s.log.push(`Resume ${event.event} after ${active.card.name}.`);
@@ -1006,8 +1036,12 @@ function describeInstruction(instruction:TriggeredInstruction):string {
   case 'ATTACK_BONUS':return `The chosen evocation gets +${instruction.amount} attack on its next activation.`;
   case 'MOVE_DAMAGED':return `Move one model damaged by this effect up to ${instruction.distance} ${instruction.distance===1?'space':'spaces'}.`;
   case 'ACTIVATE_ROOM':return 'Activate the room effect where the chosen evocation stands.';
-  case 'ACTIVATE_CHOICE':return `Activate one of your ${instruction.archetype==='CONSTRUCT'?'constructs':'evocations'}${instruction.attackBonus?` with +${instruction.attackBonus} attack`:''}${instruction.endDamage?`; when it ends BR inflicts ${instruction.endDamage} damage on it`:''}.`;
+  case 'ACTIVATE_CHOICE':return `Activate one of your ${instruction.archetype==='CONSTRUCT'?'constructs':instruction.archetype==='UNDEAD'?'undead evocations':'evocations'}${instruction.attackBonus?` with +${instruction.attackBonus} attack`:''}${instruction.endDamage?`; when it ends BR inflicts ${instruction.endDamage} damage on it`:''}.`;
   case 'LOOK_LIBRARY':return `Look at ${instruction.cards} cards of one school, take 1 and discard the rest.`;
+  case 'SEARCH_GRIMOIRE':return 'Search your grimoire, draw one card, then shuffle it.';
+  case 'DRAW_SCHOOL':return `Draw ${instruction.amount} card${instruction.amount===1?'':'s'} from any shared school.`;
+  case 'RETURN_REVEALED':return `Return a revealed ${instruction.elements.map(element=>element[0].toUpperCase()+element.slice(1)).join(' or ')} spell to your hand.`;
+  case 'IF_UNWOUNDED':return `If you have no damage, draw ${instruction.draw}; otherwise heal ${instruction.otherwiseHeal}.`;
   case 'MOVE_TARGET':return `Move ${target} up to ${instruction.distance} ${instruction.distance===1?'space':'spaces'}.`;
   case 'ASSIGN_NIGHTMARE':return `Assign ${instruction.count??1} Umbra${(instruction.count??1)===1?'':'s'} to ${instruction.scope==='TARGET_ROOM'?`each ${instruction.others?'other ':''}mage in the target room`:target}; you choose each Umbra’s evocation slot.`;
   case 'ASSIGN_PER_EVENT':return 'For each event on the event board, assign an Umbra to a mage of your choice.';
@@ -2125,6 +2159,7 @@ function activateRoomBody(s:GameState,p:Player,targetRoomId?:string,via?:{room:R
  }
  const actor=snapshot(s,p.id)!,position={...(via?.position??p.wizard.position)};
  const targets=[...s.players.filter(t=>inRoom(t,room!)).map(t=>snapshot(s,t.id)!),...s.evocations.filter(e=>room!.tiles.some(h=>hexKey(h)===hexKey(e.position))).map(e=>snapshot(s,e.id)!)];
+ const instabilityBefore=s.board.rooms.reduce((total,candidate)=>total+candidate.instability,0);
  s.log.push(`${p.name} activates ${room!.name} for free${room!.reconstructed?' (rebuilt effect)':''}: ${ROOM_EFFECT_LABELS[effect!]}.`);
  if(!via)progressQuest(s,p,'ROOM_ACTIVATE');
  switch(effect) {
@@ -2309,6 +2344,8 @@ function activateRoomBody(s:GameState,p:Player,targetRoomId?:string,via?:{room:R
   s.firstPlayerId=p.id;awardVictoryPoints(s,p.id,1);
   s.log.push(`${p.name} takes the first-player token and gains 1 VP.`);break;
  }
+ if(s.board.rooms.reduce((total,candidate)=>total+candidate.instability,0)>instabilityBefore)progressTriggeredQuests(s,p,{event:'INSTABILITY_EFFECT'});
+ if(room!.color)progressTriggeredQuests(s,p,{event:'ROOM_EFFECT',roomColor:room!.color});
  if(room!.color==='amber'||room!.color==='emerald')progressJinx(s,p,'WEAKNESS');
  // Reactions to a room activation (Suffocation) resolve after the room's effect.
  modelEvent(s,'ROOM_ACTIVATED',actor,actor,room!.id);
@@ -2630,7 +2667,7 @@ function chooseMove(s:GameState,caster:Player,spell:Card,ref:ModelSnapshot,dista
  if(dest){s.log.push(`${caster.name} moves ${name(ref)} to ${roomAt(s,dest)?.name??hexKey(dest)}.`);moveModel(s,ref,dest);}
 }
 // Silver of the Sages, Fountain of the Three: activate one of your own evocations from an effect.
-function activateChoice(s:GameState,owner:Player,step:{archetype?:'CONSTRUCT';attackBonus?:number;endDamage?:number},label:string) {
+function activateChoice(s:GameState,owner:Player,step:{archetype?:'CONSTRUCT'|'UNDEAD';attackBonus?:number;endDamage?:number},label:string) {
  if(s.phase!=='ACTION'&&s.phase!=='EVOCATION'){s.log.push(`${label}: evocations can only be activated in the Action or Evocation phase.`);return;}
  const options=s.evocations.filter(e=>e.playerId===owner.id&&!isControlledByOther(s,e)&&(!step.archetype||e.archetype===step.archetype));
  if(!options.length){s.log.push(`${owner.name} has no eligible evocation to activate.`);return;}
@@ -2680,6 +2717,7 @@ function resolveInstabilityEffect(s:GameState,owner:Player,spell:Card,actor:Mode
   ctx.resolving={sourceCard:spell,moment:describeInstruction({...PRINTED_INSTABILITY,target:'BOUND_ROOM'})};
   try{resolveInstruction(s,owner,{...PRINTED_INSTABILITY,target:'BOUND_ROOM'},undefined,room.id,actor,effect,damageOrigin);}finally{ctx.resolving=previous;}
  }
+ if((effect.instabilityPlaced??0)>0)progressTriggeredQuests(s,owner,{event:'INSTABILITY_EFFECT'});
 }
 function resolveEffectMoments(s:GameState,caster:Player,spell:Card,room:Room|undefined,refs:ModelSnapshot[],actor:ModelSnapshot,damageOrigin:DamageOrigin='SPELL',protectedTargets=new Set<string>(),preventMainEffect=false,spellEvent?:SpellEvent) {
  const seen={position:{...caster.wizard.position}};
@@ -2720,9 +2758,14 @@ function resolveEffectMoments(s:GameState,caster:Player,spell:Card,room:Room|und
   resolveMomentBody(s,caster,spell,step,room,stepRefs,actor,effect,damageOrigin);
   });}finally{ctx.resolving=previous;}
  }
+ if((effect.instabilityPlaced??0)>0)progressTriggeredQuests(s,caster,{event:'INSTABILITY_EFFECT'});
+ if(spell.moments.length&&damageOrigin==='SPELL') {
+  const elements=getRevealedElements(s,caster,spell);
+  if(spell.element)elements.push(spell.element);
+  progressTriggeredQuests(s,caster,{event:'SPELL_EFFECT',spellType:getSpellType(spell),summon:!!effect.summoned,elements});
+ }
 }
 function resolveMomentBody(s:GameState,caster:Player,spell:Card,step:Moment,room:Room|undefined,refs:ModelSnapshot[],actor:ModelSnapshot,effect:EffectResolution,damageOrigin:DamageOrigin) {
- if(step.scope==='CASTER')refs=[actor];
  if(step.scope==='ALL_MAGES')refs=s.players.filter(p=>p.wizard.alive).map(p=>snapshot(s,p.id)!);
  if(step.scope==='DAMAGED')refs=(effect.damaged??[]).filter(ref=>!!liveModel(s,ref));
  if(step.scope==='MOVED')refs=effect.moved&&liveModel(s,effect.moved)?[effect.moved]:[];
@@ -2817,6 +2860,34 @@ function resolveMomentBody(s:GameState,caster:Player,spell:Card,step:Moment,room
    ...(step.models?s.evocations.filter(e=>near.some(r=>inRoomPosition(r,e.position))).map(e=>snapshot(s,e.id)!):[])];
   for(const victim of victims)
    resolveInstruction(s,caster,{effect:'DAMAGE',amount:blast,target:'BOUND_MODEL'},victim,undefined,actor,effect,damageOrigin);
+  return;
+ }
+ if(step.effect==='SEARCH_GRIMOIRE') {
+  if(!caster.personalDeck.length){s.log.push(`${caster.name}'s grimoire is empty.`);return;}
+  const cardId=caster.personalDeck.length===1?caster.personalDeck[0].id:askChoice(s,caster.id,`quest-grimoire|${caster.id}|${spell.id}`,`${spell.name}: choose a card from your grimoire.`,caster.personalDeck.map(card=>({id:card.id,label:card.name})))!;
+  const index=caster.personalDeck.findIndex(card=>card.id===cardId);
+  if(index>=0){caster.hand.push(caster.personalDeck.splice(index,1)[0]);caster.personalDeck=shuffle(caster.personalDeck,()=>resolutionRandom(s));}
+  return;
+ }
+ if(step.effect==='DRAW_SCHOOL') {
+  drawSchoolCards(s,caster,step.amount);
+  return;
+ }
+ if(step.effect==='RETURN_REVEALED') {
+  const hidden=new Set((s.readiedSpells??[]).filter(active=>active.playerId===caster.id).map(active=>active.card.id));
+  const options=Object.entries(caster.prepared).filter(([,slot])=>!!slot?.used&&!!slot.card.element&&step.elements.includes(slot.card.element)&&!hidden.has(slot.card.id));
+  if(!options.length){s.log.push(`${spell.name}: no matching revealed spell can be returned.`);return;}
+  const slotId=options.length===1?options[0][0]:askChoice(s,caster.id,`quest-return|${caster.id}|${spell.id}`,`${spell.name}: choose a revealed spell to return to your hand.`,options.map(([id,slot])=>({id,label:`${slot!.card.name} · ${slot!.card.element}`})))!;
+  const selected=caster.prepared[slotId as keyof Player['prepared']];
+  if(selected?.used&&selected.card.element&&step.elements.includes(selected.card.element)&&!hidden.has(selected.card.id)) {
+   caster.prepared[slotId as keyof Player['prepared']]=null;
+   caster.hand.push(selected.card);
+  }
+  return;
+ }
+ if(step.effect==='IF_UNWOUNDED') {
+  if(caster.wizard.damageCubes===0&&caster.wizard.blackDamage===0)drawPersonalCards(s,caster,step.draw);
+  else healDamageWithChoice(s,caster,caster.wizard,'onWizard',step.otherwiseHeal,modelFeedbackTarget(s,actor)!);
   return;
  }
  if(step.effect==='LOOK_LIBRARY') {

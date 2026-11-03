@@ -480,19 +480,19 @@ export function createEvents(): EventCard[] {
   id, name, description, kind: 'INSTANT', effect, amount: 0, rooms: 0, entryPoints, crown,
  });
  return shuffle([
-  ongoing('event-gift-to-fools', 'Gift to Fools', 'Each Black Rose phase, every mage draws 1 card from a shared library. Enters the first slot; BR gains 2 VP on entry and 2 VP when it leaves.', 'GIFT_TO_FOOLS', 0, 2, 2),
+  ongoing('event-gift-to-fools', 'Gift to Fools', 'Each Black Rose phase, every mage draws 1 card from a shared library.', 'GIFT_TO_FOOLS', 0, 2, 2),
   instant('event-awakening', 'Awakening', 'The Black Rose places 5 instability in its chamber.', 'AWAKENING', 1),
   instant('event-dislocation', 'Dislocation', 'In player order, each mage chooses any room and is placed there.', 'DISLOCATION', 2),
   instant('event-a-hard-lesson', 'A Hard Lesson', 'Each mage loses 1 VP, then chooses a room within 1 space of their starting cell.', 'A_HARD_LESSON', 1),
-  ongoing('event-rebirth-at-noon', 'Rebirth at Noon', 'Each Black Rose phase, the Black Rose places 1 instability in every Azure and Violet room. Enters the second slot; BR gains 2 VP on entry.', 'REBIRTH_AT_NOON', 1, 2, 0),
-  { id: 'event-black-thorns', name: 'Black Thorns', description: 'The Black Rose inflicts 2 damage on every mage; the last player becomes first.', kind: 'BLACK_DAMAGE', effect: 'BLACK_THORNS', amount: 2, rooms: 0, entryPoints: 2, crown: true },
-  ongoing('event-rebirth-at-dawn', 'Rebirth at Dawn', 'Each Black Rose phase, the Black Rose places 1 instability in every Crimson and Amber room. Enters the second slot; BR gains 2 VP on entry.', 'REBIRTH_AT_DAWN', 1, 2, 0),
-  ongoing('event-rebirth-at-sunset', 'Rebirth at Sunset', 'Each Black Rose phase, the Black Rose places 1 instability in every Emerald and Grey room. Enters the second slot; BR gains 2 VP on entry.', 'REBIRTH_AT_SUNSET', 1, 2, 0),
-  ongoing('event-puppeteer', 'Puppeteer', 'During the Action phase, whenever an evocation is defeated or removed, the Black Rose places 1 instability in its room. The last player becomes first; BR gains 1 VP on entry and exit.', 'PUPPETEER', 2, 1, 1, true),
-  ongoing('event-midnight-rebirth', 'Midnight Rebirth', 'Each Black Rose phase, the Black Rose places 2 instability in its chamber. Enters the second slot; BR gains 3 VP on entry.', 'MIDNIGHT_REBIRTH', 1, 3, 0),
-  ongoing('event-black-overload', 'Black Overload', 'Whenever a mage places instability in a room, the Black Rose places 1 there too. The last player becomes first; enters the first slot; BR gains 1 VP on entry and exit.', 'BLACK_OVERLOAD', 0, 1, 1, true),
-  ongoing('event-hidden-resources', 'Hidden Resources', 'Whenever a mage is placed in their starting cell, they gain 1 VP. The last player becomes first; BR gains 2 VP on entry.', 'HIDDEN_RESOURCES', 0, 2, 0, true),
-  ongoing('event-undead-army', 'Undead Army', 'Each Black Rose phase, each mage may summon a Cadaver in their room (not in a starting cell). Enters the third slot; BR gains 2 VP on entry and exit.', 'UNDEAD_ARMY', 2, 2, 2),
+  ongoing('event-rebirth-at-noon', 'Rebirth at Noon', 'Each Black Rose phase, the Black Rose places 1 instability in every Azure and Violet room.', 'REBIRTH_AT_NOON', 1, 2, 0),
+  { id: 'event-black-thorns', name: 'Black Thorns', description: 'The Black Rose inflicts 2 damage on every mage.', kind: 'BLACK_DAMAGE', effect: 'BLACK_THORNS', amount: 2, rooms: 0, entryPoints: 2, crown: true },
+  ongoing('event-rebirth-at-dawn', 'Rebirth at Dawn', 'Each Black Rose phase, the Black Rose places 1 instability in every Crimson and Amber room.', 'REBIRTH_AT_DAWN', 1, 2, 0),
+  ongoing('event-rebirth-at-sunset', 'Rebirth at Sunset', 'Each Black Rose phase, the Black Rose places 1 instability in every Emerald and Grey room.', 'REBIRTH_AT_SUNSET', 1, 2, 0),
+  ongoing('event-puppeteer', 'Puppeteer', 'During the Action phase, whenever an evocation is defeated or removed, the Black Rose places 1 instability in its room.', 'PUPPETEER', 2, 1, 1, true),
+  ongoing('event-midnight-rebirth', 'Midnight Rebirth', 'On each Black Rose phase, the Black Rose places 2 instability in its chamber.', 'MIDNIGHT_REBIRTH', 1, 3, 0),
+  ongoing('event-black-overload', 'Black Overload', 'Whenever a mage places instability in a room, the Black Rose places 1 there too.', 'BLACK_OVERLOAD', 0, 1, 1, true),
+  ongoing('event-hidden-resources', 'Hidden Resources', 'Whenever a mage is placed in their starting cell, they gain 1 VP.', 'HIDDEN_RESOURCES', 0, 2, 0, true),
+  ongoing('event-undead-army', 'Undead Army', 'Each Black Rose phase, each mage may summon a Cadaver in their room.', 'UNDEAD_ARMY', 2, 2, 2),
  ]);
 }
 
@@ -502,11 +502,26 @@ export function createOngoingEvents(): EventCard[] {
 }
 
 export function createQuests(): Quest[] {
- const smallReward = (name: string, moments: Moment[], range = 0, target: Card['target'] = 'SELF'): Card => ({ id: `${name.toLowerCase().replace(/[^a-z]+/g, '-')}-reward`, name, kind: 'SPELL', moments, range, target });
- const patterns: Omit<Quest, 'id'>[] = [
-  { name: 'Architect of Ruin', description: 'Place the final instability cube in a room.', kind: 'REBUILD', amount: 1, reward: 3, rewardAction: smallReward('Ruin Sigil', [moment.instability(1)], 2, 'ROOM') },
-  { name: 'Fracture the Lodge', description: 'Place at least 2 instability in one room with a single spell.', kind: 'INSTABILITY', amount: 2, reward: 2, rewardAction: smallReward('Crack the Wall', [moment.damage(1)], 2, 'MODEL') },
-  { name: 'Warden of the Rooms', description: 'Activate 3 rooms.', kind: 'ROOM_ACTIVATE', amount: 3, reward: 2, progress: 0, completed: false, rewardAction: smallReward('Lodge Blessing', [moment.heal(2)], 0, 'SELF') },
+ const reward = (name: string, moments: Moment[], range = 0, target: Card['target'] = 'SELF', targetFilter?: Card['targetFilter']): Card => ({
+  id: `${name.toLowerCase().replace(/[^a-z]+/g, '-')}-reward`, name, kind: 'SPELL', moments, range, target, ...(targetFilter?{targetFilter}:{})
+ });
+ const spell = (spellType: SpellType) => ({event:'SPELL_EFFECT' as const,spellType});
+ const patterns: Omit<Quest, 'id'|'progress'|'completed'|'claimed'>[] = [
+  {name:'Conspirator Mage',description:'After you resolve a Trap spell effect.',kind:'SPELL_EFFECT',amount:1,reward:1,trigger:spell('TRAP'),rewardAction:reward('Conspirator Mage',[moment.damage(2),moment.instability(1)],Infinity,'MAGE')},
+  {name:'Channeling Instability',description:'Reveal. After you resolve an effect that places at least 1 cube in a room.',kind:'INSTABILITY_EFFECT',amount:4,reward:1,trigger:{event:'INSTABILITY_EFFECT'},rewardAction:reward('Channeling Instability',[moment.convert(2),moment.instability(1)],2,'ROOM')},
+  {name:'Contingent Mage',description:'Reveal. After you resolve a Contingency spell effect.',kind:'SPELL_EFFECT',amount:3,reward:1,trigger:spell('CONTINGENCY'),rewardAction:reward('Contingent Mage',[{effect:'SEARCH_GRIMOIRE'},moment.instability(1)])},
+  {name:'Warrior Wizard',description:'Reveal. After you resolve a Combat spell effect.',kind:'SPELL_EFFECT',amount:3,reward:1,trigger:spell('COMBAT'),rewardAction:reward('Warrior Wizard',[{effect:'REMOVE_EVOCATION',chosen:true},moment.instability(1)],Infinity,'EVOCATION',{maxHealth:3})},
+  {name:'Summoner Wizard',description:'Reveal. After you resolve an effect with a summon (not assign).',kind:'SPELL_EFFECT',amount:3,reward:2,trigger:{event:'SPELL_EFFECT',summon:true},rewardAction:reward('Summoner Wizard',[{effect:'ACTIVATE_CHOICE'},moment.instability(1)])},
+  {name:'Dominate Fear',description:'After you resolve the effect of a Grey room.',kind:'ROOM_EFFECT',amount:2,reward:2,trigger:{event:'ROOM_EFFECT',roomColor:'grey'},rewardAction:reward('Dominate Fear',[{effect:'ACTIVATE_CHOICE',archetype:'UNDEAD'},moment.instability(1)])},
+  {name:'Shattered Illusion',description:'After you resolve the effect of a Blue room.',kind:'ROOM_EFFECT',amount:2,reward:1,trigger:{event:'ROOM_EFFECT',roomColor:'azure'},rewardAction:reward('Shattered Illusion',[moment.instability(1),moment.instability(1)],1,'ROOM')},
+  {name:'Guarding Wisdom',description:'After you resolve the effect of an Amber room.',kind:'ROOM_EFFECT',amount:2,reward:1,trigger:{event:'ROOM_EFFECT',roomColor:'amber'},rewardAction:reward('Guarding Wisdom',[{effect:'IF_UNWOUNDED',draw:2,otherwiseHeal:3},moment.instability(1)])},
+  {name:'Acquire Wealth',description:'After you resolve the effect of an Emerald room.',kind:'ROOM_EFFECT',amount:2,reward:2,trigger:{event:'ROOM_EFFECT',roomColor:'emerald'},rewardAction:reward('Acquire Wealth',[moment.instability(1)],0,'ROOM')},
+  {name:'Field Test',description:'After you resolve the effect of a Crimson room.',kind:'ROOM_EFFECT',amount:2,reward:1,trigger:{event:'ROOM_EFFECT',roomColor:'crimson'},rewardAction:reward('Field Test',[moment.damage(2),moment.instability(1)],2,'MODEL')},
+  {name:'Rest the Limbs',description:'After you resolve the effect of a Violet room.',kind:'ROOM_EFFECT',amount:1,reward:1,trigger:{event:'ROOM_EFFECT',roomColor:'violet'},rewardAction:reward('Rest the Limbs',[{effect:'FIRST_PLAYER'},moment.instability(1)])},
+  {name:'Guardian Mage',description:'After you resolve a Protection spell effect.',kind:'SPELL_EFFECT',amount:1,reward:1,trigger:spell('PROTECTION'),rewardAction:reward('Guardian Mage',[{effect:'DRAW_SCHOOL',amount:1},moment.instability(1)])},
+  {name:'Magic Stream',description:'Reveal. After you resolve a spell effect while you have 3 Fire or Water elements on your revealed cards.',kind:'SPELL_EFFECT',amount:1,reward:2,trigger:{event:'SPELL_EFFECT',elementGroup:['fire','water'],minimumElements:3},rewardAction:reward('Magic Stream',[{effect:'RETURN_REVEALED',elements:['fire','water']},moment.convert(1)],Infinity,'ROOM')},
+  {name:'Earth Tempest',description:'Reveal. After you resolve a spell effect while you have 3 Earth or Air elements on your revealed cards.',kind:'SPELL_EFFECT',amount:1,reward:2,trigger:{event:'SPELL_EFFECT',elementGroup:['earth','air'],minimumElements:3},rewardAction:reward('Earth Tempest',[{effect:'RETURN_REVEALED',elements:['earth','air']},moment.damage(2)],2,'ROOM')},
+  {name:'Holy Corruption',description:'Reveal. After you resolve a spell effect while you have 3 Good or Evil elements on your revealed cards.',kind:'SPELL_EFFECT',amount:1,reward:2,trigger:{event:'SPELL_EFFECT',elementGroup:['good','evil'],minimumElements:3},rewardAction:reward('Holy Corruption',[{effect:'RETURN_REVEALED',elements:['earth','good','evil']},moment.convert(2)],2,'ROOM')},
  ];
  return shuffle(Array.from({ length: 24 }, (_, i) => ({ ...patterns[i % patterns.length], id: `quest-${i}`, progress: 0, completed: false, claimed: false })));
 }
