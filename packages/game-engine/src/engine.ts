@@ -838,6 +838,10 @@ function resolveQueuedEvent(s:GameState,event:SpellEvent) {
   if(!mage||mage.wizard.damageCubes<mage.wizard.health){event.afterResolution();return;}
  }
  resolveEvent(s,event);
+ if(event.event==='EVOCATION_LOST'&&s.phase==='ACTION'&&event.roomId&&hasActiveEvent(s,'PUPPETEER')) {
+  const room=s.board.rooms.find(candidate=>candidate.id===event.roomId);
+  if(room)placeInstability(s,room,1);
+ }
  event.afterResolution?.();
 }
 function reactiveTargets(s:GameState,active:ActiveSpell,event:SpellEvent):FeedbackTarget[] {
@@ -1046,6 +1050,7 @@ function moveModel(s:GameState,ref:ModelSnapshot,destination:Hex) {
  if(target.mage)syncNightmares(s,target.mage.id);
  if(target.mage&&s.activation?.playerId===target.mage.id&&!isInStartingRoom(s,target.mage))delete s.activation.mustExitCell;
  const to=roomAt(s,destination)?.id;
+ if(target.mage&&roomAt(s,destination)?.startingFor===target.mage.id)onMagePlacedInCell(s,target.mage);
  if(to && from!==to)modelEvent(s,'ENTER_ROOM',ref,ref,to);
  if(to && from!==to && target.mage)entryShock(s,target.mage.id);
 }
@@ -1216,6 +1221,7 @@ function settleMageDefeat(s:GameState,pending:PendingMageDefeat) {
  target.wizard.damageByPlayer={};
  target.wizard.damageOrder=[];
  target.wizard.position={...getRoom(s,target.wizard.startingRoomId).tiles[0]};
+ onMagePlacedInCell(s,target);
  for(const active of s.ongoingSpells!)if(active.targetPlayerId && [target.id,target.wizard.id].includes(active.targetPlayerId))bindActiveSpell(s,active);
  if(hasJinx(target,'WEAKNESS')) {
   s.log.push(`${target.name} is placed in their starting cell: Weakness lets BR inflict 2 damage.`);
@@ -1616,6 +1622,7 @@ function placeInstability(s: GameState, room: Room, amount: number, source?: Pla
  room.instabilityOrder??=[];
  for(let i=0;i<actual;i++)room.instabilityOrder.push(owner);
  if(source) { source.cubes.available-=actual; source.cubes.onBoard+=actual; completeQuest(s,source,'INSTABILITY',actual); }
+ if(source&&hasActiveEvent(s,'BLACK_OVERLOAD'))placeInstability(s,room,1);
  s.log.push(`${source?.name ?? 'BR'} places ${actual} instability in ${room.name} (${room.instability}/${room.instabilityLimit}).`);
  if(room.instability===room.instabilityLimit) {
   s.log.push(`${room.name} is full and cannot accept more instability; rebuilding, room VP and upgraded actions wait until Cleanup.`);
@@ -1676,9 +1683,38 @@ function eventBoardOf(s:GameState):(EventCard|null)[] {
  return board;
 }
 
+function hasActiveEvent(s:GameState,effect:NonNullable<EventCard['effect']>) {
+ return eventBoardOf(s).some(event=>event?.effect===effect);
+}
+
+function onMagePlacedInCell(s:GameState,mage:Player) {
+ if(!hasActiveEvent(s,'HIDDEN_RESOURCES'))return;
+ awardVictoryPoints(s,mage.id,1);
+ s.log.push(`${mage.name} gains 1 VP from Hidden Resources in their starting cell.`);
+}
+
+function playerOrder(s:GameState):Player[] {
+ const first=Math.max(0,s.players.findIndex(player=>player.id===s.firstPlayerId));
+ return [...s.players.slice(first),...s.players.slice(0,first)];
+}
+
+function crownLastPlayer(s:GameState,event:EventCard) {
+ if(!event.crown)return;
+ const order=playerOrder(s),last=order[order.length-1];
+ if(!last)return;
+ s.firstPlayerId=last.id;
+ s.log.push(`${last.name} becomes first from ${event.name}'s crown.`);
+}
+
+function eventPoints(event:EventCard,which:'entry'|'exit') {
+ return which==='entry'
+  ? event.entryPoints??event.ongoing?.entryPoints??0
+  : event.exitPoints??event.ongoing?.exitPoints??0;
+}
+
 function leaveEventBoard(s:GameState,event:EventCard) {
  s.eventDiscard.push(event);
- const points=event.ongoing?.exitPoints??0;
+ const points=eventPoints(event,'exit');
  s.log.push(`BR — ${event.name} leaves the event board${points?`, BR gains ${points} VP`:''}.`);
  if(points)awardVictoryPoints(s,BLACK_ROSE_ID,points);
 }
@@ -1691,15 +1727,95 @@ function shiftEventBoard(s:GameState) {
  if(out)leaveEventBoard(s,out);
 }
 
-// New event takes `slot`; any occupant is pushed to the next place, and so on.
+// New event takes its printed slot; any occupant is pushed toward the exit.
 function enterEventBoard(s:GameState,event:EventCard,slot=0) {
  const board=eventBoardOf(s);
- const points=event.ongoing?.entryPoints??0;
+ const points=eventPoints(event,'entry');
  s.log.push(`BR — ${event.name} enters the event board${points?`, BR gains ${points} VP`:''}.`);
  if(points)awardVictoryPoints(s,BLACK_ROSE_ID,points);
+ const insertion=event.boardSlot??slot;
  let carry:EventCard|null=event;
- for(let i=slot;i<board.length&&carry;i++) { const next:EventCard|null=board[i]; board[i]=carry; carry=next; }
+ for(let i=insertion;i<board.length&&carry;i++) { const next:EventCard|null=board[i]; board[i]=carry; carry=next; }
  if(carry)leaveEventBoard(s,carry);
+ crownLastPlayer(s,event);
+}
+
+function chooseEventRoom(s:GameState,p:Player,rooms:Room[],prompt:string):Room|undefined {
+ if(!rooms.length)return;
+ const selected=rooms.length===1?rooms[0].id:askChoice(s,p.id,`event-room|${s.round}|${p.id}|${prompt}`,prompt,rooms.map(room=>({id:room.id,label:room.name,roomId:room.id})))!;
+ return rooms.find(room=>room.id===selected);
+}
+
+function placeMageForEvent(s:GameState,p:Player,rooms:Room[],prompt:string) {
+ const room=chooseEventRoom(s,p,rooms,prompt);
+ if(room)moveModel(s,snapshot(s,p.id)!,room.tiles[0]);
+}
+
+function resolveInstantEvent(s:GameState,event:EventCard) {
+ switch(event.effect) {
+  case 'AWAKENING': {
+   const room=s.board.rooms.find(candidate=>candidate.effect==='BR_STANDARD');
+   if(room)placeInstability(s,room,5);
+   break;
+  }
+  case 'DISLOCATION': {
+   const rooms=s.board.rooms.filter(room=>room.tiles.length>0);
+   for(const p of playerOrder(s).filter(mage=>mage.wizard.alive))placeMageForEvent(s,p,rooms,`${p.name}: choose a room for Dislocation.`);
+   break;
+  }
+  case 'A_HARD_LESSON':
+   for(const p of playerOrder(s).filter(mage=>mage.wizard.alive)) {
+    awardVictoryPoints(s,p.id,-1);
+    const start=getRoom(s,p.wizard.startingRoomId).tiles[0];
+    const rooms=s.board.rooms.filter(room=>!room.startingFor&&room.tiles.some(tile=>hexDistance(tile,start)<=1));
+    placeMageForEvent(s,p,rooms,`${p.name}: choose a room within 1 of your starting cell.`);
+   }
+   break;
+  case 'BLACK_THORNS':
+    for(const p of playerOrder(s))damage(s,p,event.amount||2);
+   break;
+  default:
+   if(event.kind==='BLACK_DAMAGE')for(const p of playerOrder(s))damage(s,p,event.amount);
+   else if(event.kind==='INSTABILITY') {
+    const candidates=shuffle(s.board.rooms.filter(room=>!room.startingFor&&!room.reconstructed&&room.instability<room.instabilityLimit),()=>resolutionRandom(s));
+    for(const room of candidates.slice(0,event.rooms))placeInstability(s,room,event.amount);
+   }
+ }
+}
+
+function resolveOngoingEvents(s:GameState) {
+ const events=eventBoardOf(s).filter((event):event is EventCard=>!!event);
+ for(const event of events) {
+  switch(event.effect) {
+   case 'GIFT_TO_FOOLS':
+    for(const p of playerOrder(s))drawSchoolCards(s,p,1);
+    break;
+   case 'REBIRTH_AT_NOON':
+    for(const room of s.board.rooms.filter(candidate=>candidate.color==='azure'||candidate.color==='violet'))placeInstability(s,room,1);
+    break;
+   case 'REBIRTH_AT_DAWN':
+    for(const room of s.board.rooms.filter(candidate=>candidate.color==='crimson'||candidate.color==='amber'))placeInstability(s,room,1);
+    break;
+   case 'REBIRTH_AT_SUNSET':
+    for(const room of s.board.rooms.filter(candidate=>candidate.color==='emerald'||candidate.color==='grey'))placeInstability(s,room,1);
+    break;
+   case 'MIDNIGHT_REBIRTH': {
+    const room=s.board.rooms.find(candidate=>candidate.effect==='BR_STANDARD');
+    if(room)placeInstability(s,room,2);
+    break;
+   }
+   case 'UNDEAD_ARMY':
+    for(const p of playerOrder(s)) {
+     const room=roomAt(s,p.wizard.position);
+     if(!p.wizard.alive||!room||room.startingFor||getMageEvocationCount(s,p.id)>=3||getEvocationSupply(s).CADAVER<=0)continue;
+     const choice=askChoice(s,p.id,`undead-army|${s.round}|${p.id}`,`${p.name}: summon a Cadaver in your room?`,[{id:'summon',label:'Summon a Cadaver'}],true);
+     if(choice==='summon')summonEvocation(s,p,'CADAVER',p.wizard.position);
+    }
+    break;
+   default:
+    break;
+  }
+ }
 }
 
 function startBlackRose(s: GameState) {
@@ -1723,16 +1839,18 @@ function startBlackRose(s: GameState) {
  s.usedEvent=event;
  s.log.push(`Round ${s.round} · BR — ${event.name}.`);
  resolveDrawnEvent(s,event);
+ resolveOngoingEvents(s);
 }
 // A drawn event enters the board (ongoing) or resolves at once and is discarded.
 function resolveDrawnEvent(s:GameState,event:EventCard) {
- if(event.kind==='ONGOING') enterEventBoard(s,event);
- else s.eventDiscard.push(event);
- if(event.kind==='ONGOING') return;
- if(event.kind==='BLACK_DAMAGE') for(const p of s.players) damage(s,p,event.amount);
+ if(event.kind==='ONGOING')enterEventBoard(s,event);
  else {
-  const candidates=shuffle(s.board.rooms.filter(r=>!r.startingFor && !r.reconstructed && r.instability<r.instabilityLimit),()=>resolutionRandom(s));
-  for(const room of candidates.slice(0,event.rooms)) placeInstability(s,room,event.amount);
+  s.eventDiscard.push(event);
+  const points=eventPoints(event,'entry');
+  s.log.push(`BR — ${event.name} enters${points?`, BR gains ${points} VP`:''}.`);
+  if(points)awardVictoryPoints(s,BLACK_ROSE_ID,points);
+  crownLastPlayer(s,event);
+  resolveInstantEvent(s,event);
  }
 }
 function drawExtraEvent(s:GameState) {

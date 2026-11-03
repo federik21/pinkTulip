@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ACTIONS_PER_TURN, ELEMENT_GLYPHS, getEffectiveSpell, spellFilterAllows, spellReaches, getSpellType, getDiscardMoveCards, canUseSpellDummy, spellCanTargetModel, upgradeLegacyCards, getMageEvocationCount, getRoomEffect, roomEffectNeedsTarget, Card, GameAction, GameState, Player, Room, MAX_MAGES, MIN_MAGES, ROOM_COLORS, ROOM_EFFECT_LABELS, isInStartingRoom, isWithinSpellRange, mustLeaveCell, hexDistance, hexKey } from '@brw/game-engine';
+import { ACTIONS_PER_TURN, ELEMENT_GLYPHS, getEffectiveSpell, spellFilterAllows, spellReaches, getSpellType, getDiscardMoveCards, canUseSpellDummy, spellCanTargetModel, upgradeLegacyCards, getMageEvocationCount, getRoomEffect, roomEffectNeedsTarget, Card, EventCard, GameAction, GameState, Player, Room, MAX_MAGES, MIN_MAGES, ROOM_COLORS, ROOM_EFFECT_LABELS, isInStartingRoom, isWithinSpellRange, mustLeaveCell, hexDistance, hexKey } from '@brw/game-engine';
 import type { TurnRecapCard } from '@brw/game-engine';
 import { ActiveEvocationControls, EvocationSupply, EvocationsPanel, evocationIcon, targetModels } from './EvocationsPanel';
 import { PhysicalActionsPanel, PhysicalBannerActions, physicalContext } from './PhysicalActionsPanel';
@@ -61,6 +61,17 @@ function roomEffectLines(text:string):string[] {
  }
  if(line)lines.push(line);
  return lines;
+}
+
+function eventNotice(event:EventCard|undefined|null) {
+ if(!event)return 'Waiting for the event to resolve.';
+ const entry=event.entryPoints??event.ongoing?.entryPoints??0;
+ const exit=event.exitPoints??event.ongoing?.exitPoints??0;
+ const parts=[event.kind==='ONGOING'?'Ongoing event on the event board.':'Instant event resolved.'];
+ if(event.crown)parts.push('Crown: the last player becomes first.');
+ if(entry)parts.push(`BR gains ${entry} VP on entry.`);
+ if(exit)parts.push(`BR gains ${exit} VP when it leaves.`);
+ return `${parts.join(' ')} See the log for resolved effects.`;
 }
 
 function renderAlphaMarkdown(markdown:string) {
@@ -490,7 +501,7 @@ function App() {
     {paused&&<div className="notice">Game paused. Waiting for the disconnected mage to rejoin room <b>{roomId}</b>.</div>}
     {game.phase==='LOBBY'&&<LobbyPanel game={game} me={me} connected={connected} pending={pending} send={send}/>}
     {game.phase==='SETUP'&&<SetupPanel game={game} me={me} connected={connected} pending={pending} send={send}/>}
-    {game.phase==='BLACK_ROSE'&&<section className="phase-panel event-panel"><span className="eyebrow">Event revealed · Round {game.round}</span><h2>✺ {game.usedEvent?.name}</h2><p>{game.usedEvent?.description}</p><div className="notice">{game.usedEvent?.kind==='ONGOING'?`Ongoing event: enters the event board, BR gains ${game.usedEvent.ongoing?.entryPoints??0} VP now and ${game.usedEvent.ongoing?.exitPoints??0} VP when it shifts out.`:game.usedEvent?.kind==='BLACK_DAMAGE'?`${game.usedEvent.amount} black damage to every mage.`:`${game.usedEvent?.amount} neutral instability in ${game.usedEvent?.rooms} random unfinished rooms.`} See the log for resolved effects.</div><p className="hint">At the end of BR, discard excess active quests to meet your limit of {me.questLimit}; completed quests do not count. Study and its 2 grimoire draws wait until all mages meet their limits.</p>{game.blackRoseResolved?<fieldset disabled={!enabled||pending}><QuestLimitPanel key={`quests-${game.round}`} me={me} send={send}/></fieldset>:isHost?<button className="primary" disabled={!enabled||pending} onClick={continuePhase}>Receive quests & begin Study →</button>:<p className="waiting">Waiting for the creator to begin Study…</p>}</section>}
+    {game.phase==='BLACK_ROSE'&&<section className="phase-panel event-panel"><span className="eyebrow">Event revealed · Round {game.round}</span><h2>✺ {game.usedEvent?.name}{game.usedEvent?.crown&&<span className="event-crown" title="The last player becomes first"> ♛</span>}</h2><p>{game.usedEvent?.description}</p><div className="notice">{eventNotice(game.usedEvent)}</div><p className="hint">At the end of BR, discard excess active quests to meet your limit of {me.questLimit}; completed quests do not count. Study and its 2 grimoire draws wait until all mages meet their limits.</p>{game.blackRoseResolved?<fieldset disabled={!enabled||pending}><QuestLimitPanel key={`quests-${game.round}`} me={me} send={send}/></fieldset>:isHost?<button className="primary" disabled={!enabled||pending} onClick={continuePhase}>Receive quests & begin Study →</button>:<p className="waiting">Waiting for the creator to begin Study…</p>}</section>}
     {game.phase==='STUDY'&&<fieldset disabled={!enabled||pending}><StudyPanel key={`study-${game.round}`} game={game} me={me} send={send}/></fieldset>}
     {game.phase==='PREPARATION'&&<fieldset disabled={!enabled||pending}><PreparationPanel key={`prep-${game.round}`} me={me} send={send}/></fieldset>}
     {game.phase==='CLEANUP'&&<section className="phase-panel"><span className="eyebrow">The end of the round</span><h2>❖ The lodge settles</h2><p>Full rooms have rebuilt, awarded contribution points and returned their cubes once. They accept no more instability; their double specials are now ready. Endgame follows Cleanup in round 3, or when any mage or the BR reaches 30 VP.</p>{isHost?<button className="primary" disabled={!enabled||pending} onClick={continuePhase}>Begin round {game.round+1} →</button>:<p className="waiting">Waiting for the creator to begin the next round…</p>}</section>}

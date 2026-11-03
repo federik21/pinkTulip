@@ -4,7 +4,8 @@ import { EVENT_BOARD_SIZE, EventCard, GameState } from '@brw/game-engine';
 const SLOT_LABELS = ['Newest', 'Next out', 'Leaves next'];
 
 function pointsText(event: EventCard) {
- const { entryPoints = 0, exitPoints = 0 } = event.ongoing ?? {};
+ const entryPoints = event.entryPoints ?? event.ongoing?.entryPoints ?? 0;
+ const exitPoints = event.exitPoints ?? event.ongoing?.exitPoints ?? 0;
  return `Entered: BR +${entryPoints} VP · Shifts out: BR +${exitPoints} VP`;
 }
 
@@ -17,7 +18,7 @@ export function EventBoard({ game }: { game: GameState }) {
    {slots.map((event, i) => <li key={i} className={`event-slot${event ? ' occupied' : ''}`} data-slot={i + 1} data-event-id={event?.id}>
     <small className="event-slot-label">{i + 1} · {SLOT_LABELS[i] ?? `Place ${i + 1}`}</small>
     {event
-     ? <><strong>{event.name}</strong><span className="event-slot-points">{pointsText(event)}</span><span className="hint">{event.description}</span></>
+      ? <><strong>{event.name}{event.crown&&<span className="event-crown" title="Crown: the last player becomes first" aria-label="Crown: the last player becomes first"> ♛</span>}</strong><span className="event-slot-points">{pointsText(event)}</span><span className="hint">{event.description}</span></>
      : <span className="hint">Empty</span>}
    </li>)}
   </ol>

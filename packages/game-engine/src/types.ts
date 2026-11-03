@@ -125,7 +125,11 @@ export type LibraryDeck = { id: string; name: string; cards: Card[]; discard: Ca
 // ONGOING events skip the discard on reveal and sit on GameState.eventBoard.
 // entryPoints go to BR when the event enters; exitPoints when it shifts out.
 export type OngoingEventRules = { entryPoints: number; exitPoints: number };
-export type EventCard = { id: string; name: string; description: string; kind: 'INSTABILITY' | 'BLACK_DAMAGE' | 'ONGOING'; amount: number; rooms: number; ongoing?: OngoingEventRules };
+export type EventEffect = 'GIFT_TO_FOOLS' | 'AWAKENING' | 'DISLOCATION' | 'A_HARD_LESSON' | 'REBIRTH_AT_NOON' | 'BLACK_THORNS' | 'REBIRTH_AT_DAWN' | 'REBIRTH_AT_SUNSET' | 'PUPPETEER' | 'MIDNIGHT_REBIRTH' | 'BLACK_OVERLOAD' | 'HIDDEN_RESOURCES' | 'UNDEAD_ARMY';
+export type EventCard = {
+ id: string; name: string; description: string; kind: 'INSTABILITY' | 'BLACK_DAMAGE' | 'ONGOING' | 'INSTANT'; amount: number; rooms: number;
+ ongoing?: OngoingEventRules; effect?: EventEffect; boardSlot?: 0 | 1 | 2; entryPoints?: number; exitPoints?: number; crown?: boolean;
+};
 export type Quest = {
  id: string; name: string; description: string; kind: 'KILL' | 'REBUILD' | 'INSTABILITY' | 'ROOM_ACTIVATE'; amount: number; reward: number;
  progress?: number; completed?: boolean; claimed?: boolean; rewardAction?: Card;

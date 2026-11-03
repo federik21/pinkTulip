@@ -473,25 +473,32 @@ export function createPowerfulDeck(): Card[] {
 }
 
 export function createEvents(): EventCard[] {
- const instant: EventCard[] = Array.from({ length: 12 }, (_, i) => i % 2 === 0
-  ? { id: `event-${i}`, name: 'The Lodge Trembles', description: 'Place 1–2 BR instability in two random unfinished rooms.', kind: 'INSTABILITY' as const, amount: 1 + (i % 3 === 0 ? 1 : 0), rooms: 2 }
-  : { id: `event-${i}`, name: 'Thorns of BR', description: 'Every mage suffers black damage. No player receives kill credit.', kind: 'BLACK_DAMAGE' as const, amount: i % 3 === 0 ? 2 : 1, rooms: 0 });
- return shuffle([...instant, ...createOngoingEvents()]);
+ const ongoing = (id: string, name: string, description: string, effect: EventCard['effect'], boardSlot: 0 | 1 | 2, entryPoints: number, exitPoints: number, crown = false): EventCard => ({
+  id, name, description, kind: 'ONGOING', effect, boardSlot, amount: 0, rooms: 0, crown, entryPoints, exitPoints, ongoing: { entryPoints, exitPoints },
+ });
+ const instant = (id: string, name: string, description: string, effect: EventCard['effect'], entryPoints: number, crown = false): EventCard => ({
+  id, name, description, kind: 'INSTANT', effect, amount: 0, rooms: 0, entryPoints, crown,
+ });
+ return shuffle([
+  ongoing('event-gift-to-fools', 'Gift to Fools', 'Each Black Rose phase, every mage draws 1 card from a shared library. Enters the first slot; BR gains 2 VP on entry and 2 VP when it leaves.', 'GIFT_TO_FOOLS', 0, 2, 2),
+  instant('event-awakening', 'Awakening', 'The Black Rose places 5 instability in its chamber.', 'AWAKENING', 1),
+  instant('event-dislocation', 'Dislocation', 'In player order, each mage chooses any room and is placed there.', 'DISLOCATION', 2),
+  instant('event-a-hard-lesson', 'A Hard Lesson', 'Each mage loses 1 VP, then chooses a room within 1 space of their starting cell.', 'A_HARD_LESSON', 1),
+  ongoing('event-rebirth-at-noon', 'Rebirth at Noon', 'Each Black Rose phase, the Black Rose places 1 instability in every Azure and Violet room. Enters the second slot; BR gains 2 VP on entry.', 'REBIRTH_AT_NOON', 1, 2, 0),
+  { id: 'event-black-thorns', name: 'Black Thorns', description: 'The Black Rose inflicts 2 damage on every mage; the last player becomes first.', kind: 'BLACK_DAMAGE', effect: 'BLACK_THORNS', amount: 2, rooms: 0, entryPoints: 2, crown: true },
+  ongoing('event-rebirth-at-dawn', 'Rebirth at Dawn', 'Each Black Rose phase, the Black Rose places 1 instability in every Crimson and Amber room. Enters the second slot; BR gains 2 VP on entry.', 'REBIRTH_AT_DAWN', 1, 2, 0),
+  ongoing('event-rebirth-at-sunset', 'Rebirth at Sunset', 'Each Black Rose phase, the Black Rose places 1 instability in every Emerald and Grey room. Enters the second slot; BR gains 2 VP on entry.', 'REBIRTH_AT_SUNSET', 1, 2, 0),
+  ongoing('event-puppeteer', 'Puppeteer', 'During the Action phase, whenever an evocation is defeated or removed, the Black Rose places 1 instability in its room. The last player becomes first; BR gains 1 VP on entry and exit.', 'PUPPETEER', 2, 1, 1, true),
+  ongoing('event-midnight-rebirth', 'Midnight Rebirth', 'Each Black Rose phase, the Black Rose places 2 instability in its chamber. Enters the second slot; BR gains 3 VP on entry.', 'MIDNIGHT_REBIRTH', 1, 3, 0),
+  ongoing('event-black-overload', 'Black Overload', 'Whenever a mage places instability in a room, the Black Rose places 1 there too. The last player becomes first; enters the first slot; BR gains 1 VP on entry and exit.', 'BLACK_OVERLOAD', 0, 1, 1, true),
+  ongoing('event-hidden-resources', 'Hidden Resources', 'Whenever a mage is placed in their starting cell, they gain 1 VP. The last player becomes first; BR gains 2 VP on entry.', 'HIDDEN_RESOURCES', 0, 2, 0, true),
+  ongoing('event-undead-army', 'Undead Army', 'Each Black Rose phase, each mage may summon a Cadaver in their room (not in a starting cell). Enters the third slot; BR gains 2 VP on entry and exit.', 'UNDEAD_ARMY', 2, 2, 2),
+ ]);
 }
 
-// Ongoing events sit on the 3-place event board and score for BR on entry/exit.
+// Kept as a compatibility export; the event deck now contains the complete revised event set.
 export function createOngoingEvents(): EventCard[] {
- const patterns: { name: string; entryPoints: number; exitPoints: number }[] = [
-  { name: 'Gathering Dread', entryPoints: 2, exitPoints: 0 },
-  { name: 'Slow Harvest', entryPoints: 0, exitPoints: 3 },
-  { name: 'Rose Tithe', entryPoints: 1, exitPoints: 1 },
-  { name: 'Fading Echo', entryPoints: 1, exitPoints: 2 },
- ];
- return Array.from({ length: patterns.length * 2 }, (_, i) => {
-  const { name, entryPoints, exitPoints } = patterns[i % patterns.length];
-  const parts = [entryPoints ? `BR gains ${entryPoints} VP when it enters.` : '', exitPoints ? `BR gains ${exitPoints} VP when it shifts out.` : ''].filter(Boolean);
-  return { id: `ongoing-event-${i}`, name, description: `Ongoing. ${parts.join(' ')}`, kind: 'ONGOING' as const, amount: 0, rooms: 0, ongoing: { entryPoints, exitPoints } };
- });
+ return createEvents().filter(event => event.kind === 'ONGOING');
 }
 
 export function createQuests(): Quest[] {
