@@ -1,4 +1,4 @@
-# B Battles — online prototype
+# BRW Battles — online prototype
 
 Two-to-four-mage, unofficial TypeScript prototype with an authoritative WebSocket server, a shared rules engine, and a React client. Card names and effects are original placeholders, not a reproduction of the published card set.
 

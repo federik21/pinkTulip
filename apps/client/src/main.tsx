@@ -63,6 +63,17 @@ function roomEffectLines(text:string):string[] {
  return lines;
 }
 
+function renderAlphaMarkdown(markdown:string) {
+ const blocks=markdown.trim().split(/\n\s*\n/).filter(Boolean);
+ return blocks.map((block,index)=>{
+  const lines=block.split('\n').map(line=>line.trim()).filter(Boolean);
+  if(lines.every(line=>line.startsWith('- '))) return <ul key={`alpha-list-${index}`}>{lines.map((line,liIndex)=><li key={`alpha-item-${index}-${liIndex}`}>{line.replace(/^-\s*/, '')}</li>)}</ul>;
+  if(lines[0]?.startsWith('## ')) return <h3 key={`alpha-heading-${index}`}>{lines[0].replace(/^##\s*/, '')}</h3>;
+  if(lines[0]?.startsWith('# ')) return <h2 key={`alpha-heading-${index}`}>{lines[0].replace(/^#\s*/, '')}</h2>;
+  return <p key={`alpha-paragraph-${index}`}>{lines.join(' ')}</p>;
+ });
+}
+
 function SpellCard({card,label,selected,disabled,onClick,used=false}:{card:Card;label?:string;selected?:boolean;disabled?:boolean;onClick?:()=>void;used?:boolean}) {
  const spellType=getSpellType(card);
  return <button type="button" className={`spell ${card.powerful?'powerful':''} ${selected?'chosen':''} ${used?'used':''}`} aria-pressed={onClick?!!selected:undefined} disabled={disabled} onClick={onClick}>
@@ -160,6 +171,8 @@ function App() {
  const [quickControls,setQuickControls]=useState(false),[quickMode,setQuickMode]=useState(false);
  const quickOpener=useRef<HTMLElement|null>(null);
  const [infoPopup,setInfoPopup]=useState<'lodge'|'reference'|null>(null);
+ const [alphaVersionOpen,setAlphaVersionOpen]=useState(false);
+ const [alphaVersionMarkdown,setAlphaVersionMarkdown]=useState('');
  const [showRoomEffects,setShowRoomEffects]=useState(false);
  const [historyRevision,setHistoryRevision]=useState(0);
  const [slowAi,setSlowAi]=useState(()=>localStorage.getItem('slowAi')==='1');
@@ -205,6 +218,9 @@ function App() {
   const timer=window.setTimeout(()=>setPlayedCards(previous=>previous.slice(1)),3000);
   return()=>window.clearTimeout(timer);
  },[playedCards[0]?.key]);
+ useEffect(()=>{
+  fetch('/alpha-version.md').then(response=>response.ok?response.text():Promise.reject(new Error('missing'))).then(setAlphaVersionMarkdown).catch(()=>setAlphaVersionMarkdown('# Alpha version\n\nThis is an early build of BRW Battles.\n\n- You can play a browser battle with friends or AI.\n- We are still testing the rules, visuals, and room flow.\n- Expect rough edges, balance changes, and resets while the prototype evolves.\n\n## What is included\n\nYou can create a room, invite mages, draft schools and a mage, then play through combat, room effects, and quests in a shared lobby.\n\n## What to keep in mind\n\nThis is an unfinished prototype for testing and feedback, not a final version of the game.'));
+ },[]);
  useEffect(()=>{
   const ws=new WebSocket(WS_URL); wsRef.current=ws;
   ws.onopen=()=>setConnected(true);ws.onerror=()=>setError('Cannot reach the WebSocket server. Check that it is running on port 8080.');
@@ -330,8 +346,9 @@ function App() {
   }
  },[entryMode,connected,game,roomId]);
  if(!game || !playerId) {
-  if(entryMode==='start')return <div className="entry"><div className="entry-decoration">✺</div><div className="entry-card"><span className="eyebrow">A lodge of ambition and ruin</span><h1>BRW<br/><em>BATTLES</em></h1><p>Choose how you want to begin. Play online with friends, start a solo lodge against AI mages, or open a local sandbox.</p><div className="button-row"><button type="button" onClick={startOnlineEntry}>Online play</button><button type="button" className="primary" onClick={startSoloGame}>Solo play</button></div>{isSandboxAvailable()&&<div className="button-row"><button type="button" onClick={startSandboxMode}>Sandbox mode</button></div>}<span className="hint">{connected?'● Connected to the lodge':'○ Connecting to server…'}</span>{error&&<p className="error" role="alert">{error}</p>}</div></div>;
-  return <div className="entry"><div className="entry-decoration">✺</div><div className="entry-card"><span className="eyebrow">A lodge of ambition and ruin</span><h1>BRW<br/><em>BATTLES</em></h1><p>A {MIN_MAGES}–{MAX_MAGES} mage online battle. Build your grimoire. Shape the lodge. Claim BRW.</p><label>Mage name<input value={playerName} maxLength={32} onChange={e=>setPlayerName(e.target.value)}/></label><label>Room name<input value={roomId} maxLength={48} onChange={e=>setRoomId(e.target.value)}/></label><label>Room password<input type="password" autoComplete="current-password" value={roomPassword} maxLength={128} onChange={e=>setRoomPassword(e.target.value)}/></label><span className="hint">Optional for public rooms. Password-protected rooms require a password of at least 8 characters.</span><div className="button-row"><button disabled={!connected} onClick={()=>join(false)}>Join room</button><button className="primary" disabled={!connected} onClick={()=>join(true)}>Create room</button></div><span className="hint">{connected?'● Connected to the lodge':'○ Connecting to server…'}</span>{error&&<p className="error" role="alert">{error}</p>}{roomList.length>0&&<div className="room-list"><h3>Open lodges</h3>{roomList.map(r=><button key={r.id} onClick={()=>setRoomId(r.id)}><b>{r.passwordProtected?'🔒 ':''}{r.id}</b><span>{r.players}/{MAX_MAGES} · {r.status}{r.mages?`: ${r.mages.join(', ')}`:''}</span></button>)}</div>}</div></div>;
+  const alphaPopup=alphaVersionOpen&&<InfoPopup id="alpha-info" title="Alpha version: what is included" onClose={()=>setAlphaVersionOpen(false)}><div className="alpha-version-content">{alphaVersionMarkdown?renderAlphaMarkdown(alphaVersionMarkdown):<p>Loading the alpha overview…</p>}</div></InfoPopup>;
+  if(entryMode==='start')return <div className="entry-shell"><div className="entry"><div className="entry-decoration">✺</div><div className="entry-card"><span className="eyebrow">A lodge of ambition and ruin</span><h1>BRW<br/><em>BATTLES</em></h1><p>Choose how you want to begin. Play online with friends, start a solo lodge against AI mages, or open a local sandbox.</p><button type="button" className="alpha-disclaimer" onClick={()=>setAlphaVersionOpen(true)}>This is an Alpha version: see what is included</button><div className="button-row"><button type="button" onClick={startOnlineEntry}>Online play</button><button type="button" className="primary" onClick={startSoloGame}>Solo play</button></div>{isSandboxAvailable()&&<div className="button-row"><button type="button" onClick={startSandboxMode}>Sandbox mode</button></div>}<span className="hint">{connected?'● Connected to the lodge':'○ Connecting to server…'}</span>{error&&<p className="error" role="alert">{error}</p>}</div>{alphaPopup}</div><SiteFooter/></div>;
+  return <div className="entry-shell"><div className="entry"><div className="entry-decoration">✺</div><div className="entry-card"><span className="eyebrow">A lodge of ambition and ruin</span><h1>BRW<br/><em>BATTLES</em></h1><p>A {MIN_MAGES}–{MAX_MAGES} mage online battle. Build your grimoire. Shape the lodge. Claim BRW.</p><button type="button" className="alpha-disclaimer" onClick={()=>setAlphaVersionOpen(true)}>This is an Alpha version: see what is included</button><label>Mage name<input value={playerName} maxLength={32} onChange={e=>setPlayerName(e.target.value)}/></label><label>Room name<input value={roomId} maxLength={48} onChange={e=>setRoomId(e.target.value)}/></label><label>Room password<input type="password" autoComplete="current-password" value={roomPassword} maxLength={128} onChange={e=>setRoomPassword(e.target.value)}/></label><span className="hint">Optional for public rooms. Password-protected rooms require a password of at least 8 characters.</span><div className="button-row"><button disabled={!connected} onClick={()=>join(false)}>Join room</button><button className="primary" disabled={!connected} onClick={()=>join(true)}>Create room</button></div><span className="hint">{connected?'● Connected to the lodge':'○ Connecting to server…'}</span>{error&&<p className="error" role="alert">{error}</p>}{roomList.length>0&&<div className="room-list"><h3>Open lodges</h3>{roomList.map(r=><button key={r.id} onClick={()=>setRoomId(r.id)}><b>{r.passwordProtected?'🔒 ':''}{r.id}</b><span>{r.players}/{MAX_MAGES} · {r.status}{r.mages?`: ${r.mages.join(', ')}`:''}</span></button>)}</div>}</div>{alphaPopup}</div><SiteFooter/></div>;
  }
  const me=game.players.find(p=>p.id===playerId)!;
  const isHost=game.hostId===me.id;
