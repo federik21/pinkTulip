@@ -552,7 +552,7 @@ function progressQuest(s: GameState, p: Player, kind: NonNullable<Player['quest'
 }
 
 type QuestProgressEvent =
- | {event:'SPELL_EFFECT';spellType:SpellType;summon:boolean;elements:Element[]}
+ | {event:'SPELL_EFFECT';spellType?:SpellType;summon?:boolean;elements?:Element[]}
  | {event:'ROOM_EFFECT';roomColor:RoomColor}
  | {event:'INSTABILITY_EFFECT'};
 function progressTriggeredQuests(s:GameState,p:Player,trigger:QuestProgressEvent) {
@@ -562,7 +562,7 @@ function progressTriggeredQuests(s:GameState,p:Player,trigger:QuestProgressEvent
   if(condition.event==='SPELL_EFFECT'&&trigger.event==='SPELL_EFFECT') {
    if(condition.spellType&&condition.spellType!==trigger.spellType)continue;
    if(condition.summon&&!trigger.summon)continue;
-  if(condition.elementGroup&&trigger.elements.filter(element=>condition.elementGroup!.includes(element)).length<(condition.minimumElements??1))continue;
+    if(condition.elementGroup&&(!trigger.elements||trigger.elements.filter(element=>condition.elementGroup!.includes(element)).length<(condition.minimumElements??1)))continue;
   } else if(condition.event==='ROOM_EFFECT'&&trigger.event==='ROOM_EFFECT'&&condition.roomColor!==trigger.roomColor)continue;
   const progress=Math.min(quest.amount,(quest.progress??0)+1);
   quest.progress=progress;
@@ -632,7 +632,7 @@ type EffectResolution = { casterSeen?:{position:Hex}; assigned?:string[]; eventA
 type SpellEvent = { event:TriggerEvent; model?:ModelSnapshot; actor?:ModelSnapshot; roomId?:string; target?:FeedbackTarget; damageOrigin?:DamageOrigin; position?:Hex; kind?:EvocationKind; spellType?:Card['spellType']; sourceCard?:Card; moment?:string; prevented?:{value:boolean}; afterResolution?:()=>void };
 type PendingMageDefeat = { ref:ModelSnapshot; roomId?:string; target:FeedbackTarget; source?:Player; liquefyThePain?:boolean };
 type ReplayEntropy={ids:string[];random:number[]};
-type InstructionContext = { generations:Map<string,number>; bindings:Map<string,ModelSnapshot>; defeats:Map<string,PendingMageDefeat>; resolutions:number; interruptId?:string; answers:DecisionAnswer[]; cursor:number; momentDepth:number; events:SpellEvent[]; entropy:ReplayEntropy; idCursor:number; randomCursor:number; suppress?:boolean; resolving?:{sourceCard?:Card;moment?:string} };
+type InstructionContext = { generations:Map<string,number>; bindings:Map<string,ModelSnapshot>; defeats:Map<string,PendingMageDefeat>; resolutions:number; interruptId?:string; answers:DecisionAnswer[]; cursor:number; momentDepth:number; events:SpellEvent[]; entropy:ReplayEntropy; idCursor:number; randomCursor:number; suppress?:boolean; resolving?:{sourceCard?:Card;moment?:string}; frames?:GameState[]; frameKey?:string };
 const instructionContexts=new WeakMap<GameState,InstructionContext>();
 const context=(s:GameState)=>instructionContexts.get(s)!;
 // IDs and random outcomes encountered before a pause must be identical on
@@ -765,6 +765,12 @@ function atMomentEnd(s:GameState,resolve:()=>void) {
  if(ctx.momentDepth===0) {
   const events=ctx.events.splice(0);
   for(const event of events)resolveQueuedEvent(s,event);
+  // Opt-in: snapshot the settled board so observers can show each moment.
+  if(ctx.frames) {
+   // A moment that changed nothing visible is not worth a frame.
+   const key=JSON.stringify(s);
+   if(key!==ctx.frameKey){ctx.frameKey=key;ctx.frames.push(structuredClone(s));}
+  }
  }
 }
 function resolveInstruction(s:GameState,owner:Player,instruction:TriggeredInstruction,ref:ModelSnapshot|undefined,roomId:string|undefined,actor:ModelSnapshot|undefined,effect?:EffectResolution,damageOrigin:DamageOrigin='SPELL') {
@@ -1969,7 +1975,7 @@ function roomActivationProblem(s:GameState,p:Player,targetRoomId?:string):string
  }
 }
 function activateRoom(s:GameState,p:Player,targetRoomId?:string) {
- atMomentEnd(s,()=>activateRoomBody(s,p,targetRoomId));
+ activateRoomBody(s,p,targetRoomId);
 }
 function chooseRoomTarget(s:GameState,p:Player,origin:Room,range:number,prompt:string):Room|undefined {
  const options=s.board.rooms.filter(candidate=>!candidate.startingFor&&Math.min(...candidate.tiles.flatMap(h=>origin.tiles.map(g=>hexDistance(h,g))))<=range);
@@ -2073,8 +2079,9 @@ function drawAndDiscardQuests(s:GameState,p:Player,drawCount:number,discardCount
   else p.additionalQuests=p.additionalQuests.filter(quest=>quest.id!==id);
  }
 }
-function summonRoomEvocation(s:GameState,p:Player,kind:EvocationKind,room:Room) {
+function summonRoomEvocation(s:GameState,p:Player,kind:EvocationKind,room:Room,effect?:EffectResolution) {
  const evocation=summonEvocation(s,p,kind,room.tiles[0]);
+ if(effect&&evocation)effect.summoned=snapshot(s,evocation.id);
  if(evocation)s.log.push(`${p.name} summons ${evocation.name} in ${room.name}.`);
  return evocation;
 }
@@ -2162,6 +2169,10 @@ function activateRoomBody(s:GameState,p:Player,targetRoomId?:string,via?:{room:R
  const instabilityBefore=s.board.rooms.reduce((total,candidate)=>total+candidate.instability,0);
  s.log.push(`${p.name} activates ${room!.name} for free${room!.reconstructed?' (rebuilt effect)':''}: ${ROOM_EFFECT_LABELS[effect!]}.`);
  if(!via)progressQuest(s,p,'ROOM_ACTIVATE');
+ const effectResolution:EffectResolution={activationIsExplicit:false};
+ // Each moment is atomic: reactions (defeats included) interrupt only between moments,
+ // then the remaining effect resumes. Multi-step rooms open one moment per step.
+ const resolveEffect=()=>{
  switch(effect) {
   case 'ROOM_DAMAGE': {
   for(const ref of targets)resolveInstruction(s,p,{effect:'DAMAGE',amount:reward,target:'EVENT_MODEL'},ref,undefined,actor,undefined,'ROOM');
@@ -2182,7 +2193,9 @@ function activateRoomBody(s:GameState,p:Player,targetRoomId?:string,via?:{room:R
   case 'DRAW_GRIMOIRE':for(let i=0;i<reward && p.personalDeck.length+p.discard.length;i++)p.hand.push(drawOne(s,p.personalDeck,p.discard));break;
   case 'SUMMON_CADAVER': {
    for(let i=0;i<reward;i++) {
-    if(!summonEvocation(s,p,'CADAVER',position))break;
+    const evocation=summonEvocation(s,p,'CADAVER',position);
+    if(!evocation)break;
+    effectResolution.summoned=snapshot(s,evocation.id);
     s.log.push(`${p.name} summons a Cadaver from the Grey room (Undead · move 2 · attack 2 · health 2).`);
    }
    break;
@@ -2235,16 +2248,16 @@ function activateRoomBody(s:GameState,p:Player,targetRoomId?:string,via?:{room:R
   break;
   }
   case 'CEMETERY_STANDARD':case 'CRYPT_STANDARD':case 'ALTAR_STANDARD':
-  summonRoomEvocation(s,p,'CADAVER',room!);break;
+  summonRoomEvocation(s,p,'CADAVER',room!,effectResolution);break;
   case 'CEMETERY_REBUILT': {
   const destination=chooseRoomTarget(s,p,room!,Infinity,'Cemetery: choose any room for the Colossus.');
-  if(destination)summonRoomEvocation(s,p,'COLOSSUS',destination);
+  if(destination)summonRoomEvocation(s,p,'COLOSSUS',destination,effectResolution);
   break;
   }
   case 'CRYPT_REBUILT': {
   for(let index=0;index<2;index++) {
    const destination=chooseRoomTarget(s,p,room!,1,`Crypt: choose a room within range 1 for Cadaver ${index+1}.`);
-   if(destination)summonRoomEvocation(s,p,'CADAVER',destination);
+  if(destination)summonRoomEvocation(s,p,'CADAVER',destination,effectResolution);
   }
   break;
   }
@@ -2262,7 +2275,6 @@ function activateRoomBody(s:GameState,p:Player,targetRoomId?:string,via?:{room:R
   case 'ARENA_REBUILT':
   castNextRoomSpell(s,p);break;
   case 'SUMMONER_REBUILT': {
-  const effectResolution:EffectResolution={activationIsExplicit:false};
   summonForEffect(s,p,'NIGREDO',position,effectResolution);
   activateEffectSummon(s,p,'NIGREDO',effectResolution);
   break;
@@ -2288,12 +2300,12 @@ function activateRoomBody(s:GameState,p:Player,targetRoomId?:string,via?:{room:R
   placeInstability(s,destination,1,p);break;
   }
   case 'FORGE_REBUILT':
-  roomSequenceMove(s,p,'Forge move 1');
-  roomSequenceMove(s,p,'Forge move 2');
-  roomSequenceAttack(s,p,'Forge attack 1');
-  roomSequenceMove(s,p,'Forge move 3');
-  roomSequenceMove(s,p,'Forge move 4');
-  roomSequenceAttack(s,p,'Forge attack 2');
+  atMomentEnd(s,()=>roomSequenceMove(s,p,'Forge move 1'));
+  atMomentEnd(s,()=>roomSequenceMove(s,p,'Forge move 2'));
+  atMomentEnd(s,()=>roomSequenceAttack(s,p,'Forge attack 1'));
+  atMomentEnd(s,()=>roomSequenceMove(s,p,'Forge move 3'));
+  atMomentEnd(s,()=>roomSequenceMove(s,p,'Forge move 4'));
+  atMomentEnd(s,()=>roomSequenceAttack(s,p,'Forge attack 2'));
   break;
   case 'TREASURE_REBUILT':
   awardVictoryPoints(s,p.id,2);s.log.push(`${p.name} gains 2 VP from the Treasure Room.`);drawExtraEvent(s);break;
@@ -2344,11 +2356,15 @@ function activateRoomBody(s:GameState,p:Player,targetRoomId?:string,via?:{room:R
   s.firstPlayerId=p.id;awardVictoryPoints(s,p.id,1);
   s.log.push(`${p.name} takes the first-player token and gains 1 VP.`);break;
  }
+ if(effectResolution.summoned)progressTriggeredQuests(s,p,{event:'SPELL_EFFECT',summon:true});
  if(s.board.rooms.reduce((total,candidate)=>total+candidate.instability,0)>instabilityBefore)progressTriggeredQuests(s,p,{event:'INSTABILITY_EFFECT'});
  if(room!.color)progressTriggeredQuests(s,p,{event:'ROOM_EFFECT',roomColor:room!.color});
  if(room!.color==='amber'||room!.color==='emerald')progressJinx(s,p,'WEAKNESS');
  // Reactions to a room activation (Suffocation) resolve after the room's effect.
  modelEvent(s,'ROOM_ACTIVATED',actor,actor,room!.id);
+ };
+ if(effect==='FORGE_REBUILT'||effect==='MIRRORS_REBUILT')resolveEffect();
+ else atMomentEnd(s,resolveEffect);
 }
 
 function endExplore(s:GameState,p:Player,activate:boolean,targetRoomId?:string) {
@@ -2759,10 +2775,11 @@ function resolveEffectMoments(s:GameState,caster:Player,spell:Card,room:Room|und
   });}finally{ctx.resolving=previous;}
  }
  if((effect.instabilityPlaced??0)>0)progressTriggeredQuests(s,caster,{event:'INSTABILITY_EFFECT'});
- if(spell.moments.length&&damageOrigin==='SPELL') {
-  const elements=getRevealedElements(s,caster,spell);
-  if(spell.element)elements.push(spell.element);
-  progressTriggeredQuests(s,caster,{event:'SPELL_EFFECT',spellType:getSpellType(spell),summon:!!effect.summoned,elements});
+ if(spell.moments.length&&(damageOrigin==='SPELL'||effect.summoned)) {
+  const isSpellEffect=damageOrigin==='SPELL';
+  const elements=isSpellEffect?getRevealedElements(s,caster,spell):undefined;
+  if(elements&&spell.element)elements.push(spell.element);
+  progressTriggeredQuests(s,caster,{event:'SPELL_EFFECT',...(isSpellEffect?{spellType:getSpellType(spell),elements}:{}),summon:!!effect.summoned});
  }
 }
 function resolveMomentBody(s:GameState,caster:Player,spell:Card,step:Moment,room:Room|undefined,refs:ModelSnapshot[],actor:ModelSnapshot,effect:EffectResolution,damageOrigin:DamageOrigin) {
@@ -3220,14 +3237,20 @@ function castSpell(s: GameState, p: Player, command: Extract<GameAction,{type:'C
  afterAction(s);
 }
 
-export function applyAction(state: GameState, action: GameAction): GameState {
+/**
+ * Applies one root action. When `frames` is supplied and the action completes,
+ * a snapshot of the state at the end of each moment is appended to it (in
+ * order, excluding the final state). A paused decision appends nothing: the
+ * answer replays the whole action and reports all of its moments.
+ */
+export function applyAction(state: GameState, action: GameAction, frames?: GameState[]): GameState {
  const pending=state.pendingDecision;
  if(action.type==='RESPOND_SOUL_TITHE') {
   if(pending?.kind!=='SOUL_TITHE'||!pending.resume)throw new GameRuleError('No decision is waiting');
   assert(pending.playerId===action.playerId,'This decision belongs to another mage');
   assert(typeof action.accept==='boolean','Choose accept or decline');
   const base=structuredClone(state);delete base.pendingDecision;
-  return runWithDecisions(base,pending.resume.action,[...pending.resume.answers,{key:pending.key,accept:action.accept}],pending.resume.entropy);
+  return runWithDecisions(base,pending.resume.action,[...pending.resume.answers,{key:pending.key,accept:action.accept}],pending.resume.entropy,frames);
  }
  if(action.type==='RESPOND_REACTIVE_SPELL') {
   if(pending?.kind!=='REACTIVE_SPELL'||!pending.resume)throw new GameRuleError('No reactive decision is waiting');
@@ -3240,7 +3263,7 @@ export function applyAction(state: GameState, action: GameAction): GameState {
    assert(option && option.targets.some(t=>t.id===targetId),'Choose an eligible spell and target');
   } else assert(!action.targetId,'Declining does not select a target');
   const base=structuredClone(state);delete base.pendingDecision;
-  return runWithDecisions(base,pending.resume.action,[...pending.resume.answers,{key:pending.key,accept:!!action.activeSpellId,activeSpellId:action.activeSpellId,targetId}],pending.resume.entropy);
+  return runWithDecisions(base,pending.resume.action,[...pending.resume.answers,{key:pending.key,accept:!!action.activeSpellId,activeSpellId:action.activeSpellId,targetId}],pending.resume.entropy,frames);
  }
  if(action.type==='RESPOND_CHOICE') {
   if(pending?.kind!=='CHOICE'||!pending.resume)throw new GameRuleError('No choice is waiting');
@@ -3249,16 +3272,17 @@ export function applyAction(state: GameState, action: GameAction): GameState {
   if(action.choiceId===undefined)assert(pending.optional,'Choose one of the options');
   else assert(pending.options.some(o=>o.id===action.choiceId),'Choose one of the listed options');
   const base=structuredClone(state);delete base.pendingDecision;
-  return runWithDecisions(base,pending.resume.action,[...pending.resume.answers,{key:pending.key,accept:action.choiceId!==undefined,targetId:action.choiceId}],pending.resume.entropy);
+  return runWithDecisions(base,pending.resume.action,[...pending.resume.answers,{key:pending.key,accept:action.choiceId!==undefined,targetId:action.choiceId}],pending.resume.entropy,frames);
  }
  // The paused action's mage decides first; the owner may still adjust their own switches.
  if(pending)assert(action.type==='SET_EVOCATION_AUTO',`Waiting for ${state.players.find(p=>p.id===pending.playerId)?.name??'a mage'} to decide`);
- return runWithDecisions(state,action,[]);
+ return runWithDecisions(state,action,[],undefined,frames);
 }
 
-function runWithDecisions(state:GameState,action:GameAction,answers:DecisionAnswer[],entropy:ReplayEntropy={ids:[],random:[]}):GameState {
+function runWithDecisions(state:GameState,action:GameAction,answers:DecisionAnswer[],entropy:ReplayEntropy={ids:[],random:[]},frames?:GameState[]):GameState {
  const replay=structuredClone(entropy);
- try {return runAction(state,action,answers,replay);}
+ const collected:GameState[]|undefined=frames?[]:undefined;
+ try {const result=runAction(state,action,answers,replay,collected);frames?.push(...collected!);return result;}
  catch(error) {
   if(!(error instanceof DecisionNeeded))throw error;
   const paused=structuredClone(state);
@@ -3267,12 +3291,12 @@ function runWithDecisions(state:GameState,action:GameAction,answers:DecisionAnsw
  }
 }
 
-function runAction(state: GameState, action: GameAction, answers: DecisionAnswer[],entropy:ReplayEntropy): GameState {
+function runAction(state: GameState, action: GameAction, answers: DecisionAnswer[],entropy:ReplayEntropy,frames?:GameState[]): GameState {
  const s=structuredClone(state);
  s.feedbackEvents??=[];
  s.readiedSpells??=[];s.ongoingSpells??=[];
  s.activeSpellOrder??=[...s.readiedSpells,...s.ongoingSpells].map(a=>a.id);
- instructionContexts.set(s,{generations:new Map(),bindings:new Map(),defeats:new Map(),resolutions:0,answers,cursor:0,momentDepth:0,events:[],entropy,idCursor:0,randomCursor:0});
+ instructionContexts.set(s,{generations:new Map(),bindings:new Map(),defeats:new Map(),resolutions:0,answers,cursor:0,momentDepth:0,events:[],entropy,idCursor:0,randomCursor:0,frames,frameKey:frames?JSON.stringify(s):undefined});
  for(const active of [...s.readiedSpells,...s.ongoingSpells])bindActiveSpell(s,active);
  assert(s.phase!=='GAME_OVER','The game is over');
  // Wire payloads can include fields excluded by the TypeScript action union.

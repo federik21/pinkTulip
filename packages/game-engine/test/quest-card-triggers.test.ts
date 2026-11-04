@@ -72,6 +72,23 @@ describe('quest effect-group triggers',()=>{
   const after=applyAction(begun,{type:'ACTIVATE_ROOM',playerId:'p1'});
   expect(after.players[0].quest).toMatchObject({progress:1,completed:false});
  });
+ it('advances a summon objective once for a room effect even when the effect summons multiple models',()=>{
+  const s=fixture('Summoner Wizard'),room=s.board.rooms.find(candidate=>candidate.id==='room-0,0')!;
+  room.effect='SUMMON_CADAVER';room.rebuiltEffect='SUMMON_CADAVER';room.reconstructed=true;
+  const begun=applyAction(s,{type:'BEGIN_PHYSICAL_ACTION',playerId:'p1',kind:'EXPLORE'});
+  const after=applyAction(begun,{type:'ACTIVATE_ROOM',playerId:'p1'});
+  expect(after.players[0].quest).toMatchObject({progress:1,completed:false});
+  expect(after.evocations.filter(evocation=>evocation.playerId==='p1')).toHaveLength(2);
+ });
+ it('advances a summon objective for a summon in a quest reward effect',()=>{
+  const s=fixture('Summoner Wizard'),quest=s.questDeck.shift()!;
+  Object.assign(quest,{kind:'INSTABILITY',amount:1,progress:1,completed:true,claimed:false,
+   rewardAction:{id:'quest-summon',name:'Quest summon',kind:'SPELL',range:2,target:'ROOM',moments:[{effect:'SUMMON',kind:'CADAVER',position:'TARGET'}]}});
+  s.players[0].additionalQuests.push(quest);
+  const after=applyAction(s,{type:'USE_QUEST_REWARD',playerId:'p1',questId:quest.id,roomId:'room-1,0'});
+  expect(after.players[0].quest).toMatchObject({name:'Summoner Wizard',progress:1,completed:false});
+  expect(after.evocations).toHaveLength(1);
+ });
  it('creates the supplied quest set with rewards as ordered moments',()=>{
   const s=createGame(2),quests=[...s.questDeck,...s.questDiscard];
   const names=new Set(quests.map(quest=>quest.name));

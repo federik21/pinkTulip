@@ -39,6 +39,9 @@ export function configureBot(game: GameState, action: Extract<GameAction, { type
 export const SLOW_AI_BASE_MS = 600;
 export const SLOW_AI_STEP_MS = 1500; // matches client MOMENT_MS
 
+/** Pause between the per-moment states pushed to clients; keep in sync with client playback expectations. */
+export const MOMENT_FRAME_MS = Number(process.env.MOMENT_FRAME_MS ?? 1000);
+
 type BotRoom = { game: GameState; history: ActionHistory };
 
 /** One visible command per beat; always re-evaluate the latest authoritative state. */
@@ -47,7 +50,9 @@ export class BotRunner {
  private nextDelay: number | null = null;
  /** When true, wait long enough after each command for clients to toast every new log line. */
  slow = false;
- constructor(private room: BotRoom, private active: () => boolean, private changed: () => void, private delay = 450) {}
+ /** Extra wait so clients can finish replaying the previous command's moments. */
+ playbackMs = 0;
+ constructor(private room: BotRoom, private active: () => boolean, private changed: (frames: GameState[]) => void, private delay = 450) {}
 
  stop() {
   if (this.timer) clearTimeout(this.timer);
@@ -57,23 +62,26 @@ export class BotRunner {
  wake() {
   if (this.timer || !this.active() || !this.room.game.players.some(p => p.isBot) ||
       this.room.game.players.some(p => !p.connected) || this.room.game.phase === 'GAME_OVER') return;
+  const wait = (this.slow ? (this.nextDelay ?? SLOW_AI_BASE_MS) : this.delay) + this.playbackMs;
   this.timer = setTimeout(() => {
    this.timer = null;
+   this.playbackMs = 0;
    if (!this.active() || this.room.game.players.some(p => !p.connected)) return;
    try {
     const action = chooseBotAction(this.room.game);
     if (!action) return; // A human turn, decision or explicit phase continuation.
     const before = this.room.game.log.length;
-    this.room.game = this.room.history.apply(this.room.game, action, action.playerId);
+    const frames: GameState[] = [];
+    this.room.game = this.room.history.apply(this.room.game, action, action.playerId, frames);
     // AI moves are opponent commitments, never a human-accessible undo stack.
     this.room.history.clear();
     this.nextDelay = this.slow ? SLOW_AI_BASE_MS + SLOW_AI_STEP_MS * Math.max(1, this.room.game.log.length - before) : null;
-    this.changed();
+    this.changed(frames);
     this.wake();
    } catch (error) {
     // A faulty policy must not crash the room or enter an unbounded retry loop.
     console.error('AI opponent could not act:', error);
    }
-  }, this.slow ? (this.nextDelay ?? SLOW_AI_BASE_MS) : this.delay);
+  }, wait);
  }
 }

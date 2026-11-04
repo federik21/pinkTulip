@@ -123,7 +123,8 @@ export class ActionHistory {
   };
  }
 
- apply(game: GameState, action: GameAction, authenticatedPlayer: PlayerId): GameState {
+ /** `frames`, when given, receives the state at the end of each moment of the action (see applyAction). */
+ apply(game: GameState, action: GameAction, authenticatedPlayer: PlayerId, frames?: GameState[]): GameState {
   // Also guard this boundary so callers cannot bypass transport ownership/pause checks.
   if (action.playerId !== authenticatedPlayer) throw new GameRuleError('You cannot act for another player');
   if (!game.players.some(p => p.id === authenticatedPlayer && p.connected)) throw new GameRuleError('Join a room first');
@@ -146,9 +147,9 @@ export class ActionHistory {
     // Resolve everything before changing history: failed commands are inert,
   // including failed opponent commands and failed/stale phase commands.
   const before = snapshot(game);
-  let after = applyAction(before, action);
+  let after = applyAction(before, action, frames);
   if (action.type === 'SET_READY' && canStartGame(after)) {
-   after = applyAction(after, { type: 'START_GAME', playerId: after.hostId });
+   after = applyAction(after, { type: 'START_GAME', playerId: after.hostId }, frames);
   }
   const label = labels[action.type];
   // A paused action (Soul Tithe prompt) and its resolution depend on another mage's

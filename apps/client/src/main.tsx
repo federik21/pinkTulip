@@ -199,7 +199,11 @@ function App() {
  const feedback=useGameFeedback(game);
  const wsRef=useRef<WebSocket|null>(null);
  const requestRef=useRef<string|null>(null),requestCount=useRef(0);
- const [pending,setPending]=useState(false);
+ const [awaiting,setPending]=useState(false);
+ // The server replays an action moment by moment; commands wait for the final state.
+ const [playing,setPlaying]=useState(false);
+ const playingRef=useRef(false);
+ const pending=awaiting||playing;
  useEffect(()=>{
   if(!game||!playerId)return;
   const cursor=playedCardCursor.current;
@@ -235,13 +239,13 @@ function App() {
  useEffect(()=>{
   const ws=new WebSocket(WS_URL); wsRef.current=ws;
   ws.onopen=()=>setConnected(true);ws.onerror=()=>setError('Cannot reach the WebSocket server. Check that it is running on port 8080.');
-    ws.onclose=()=>{setConnected(false);requestRef.current=null;setPending(false);setError('Connection closed. Reload to reconnect to your room.');};
+    ws.onclose=()=>{setConnected(false);requestRef.current=null;setPending(false);setPlaying(false);playingRef.current=false;setError('Connection closed. Reload to reconnect to your room.');};
   ws.onmessage=e=>{
    const msg=JSON.parse(e.data);
    if(msg.type==='CONNECTED')setCanSave(!!msg.canSave);
    if(msg.type==='WELCOME'){setPlayerId(msg.playerId);setRoomId(msg.roomId);if(typeof msg.reconnectToken==='string')localStorage.setItem(`pinkTulip:reconnect:${msg.roomId}`,msg.reconnectToken);setRoomPassword('');}
    if(msg.type==='SESSION_SAVED'){setError('');setToast(`Session saved. Rejoin room "${msg.roomId}" from this browser to resume your mage seat.`);}
-  if(msg.type==='STATE'){upgradeLegacyCards(msg.state);setGame(msg.state);setError('');}
+  if(msg.type==='STATE'){upgradeLegacyCards(msg.state);setGame(msg.state);playingRef.current=msg.playback===true;setPlaying(playingRef.current);setError('');}
    if(msg.type==='ROOM_LIST')setRoomList(msg.rooms);
     if(msg.type==='ERROR'){setError(msg.message);requestRef.current=null;setPending(false);}
     if(msg.type==='ACTION_APPLIED'&&msg.requestId===requestRef.current){requestRef.current=null;setPending(false);}
@@ -317,7 +321,7 @@ function App() {
  },[logLen,gameKey]);
  const send:Send=action=>{
   if(wsRef.current?.readyState!==WebSocket.OPEN){setError('Server disconnected. Reload to reconnect.');return;}
-    if(requestRef.current)return;
+    if(requestRef.current||playingRef.current)return;
     const requestId=`${Date.now()}-${++requestCount.current}`;
     requestRef.current=requestId;setPending(true);setPickingEmerald(false);
     if(action.type==='PERFORM_MOVEMENT'||action.type==='ACTIVATE_EVOCATION'||action.type==='DISCARD_EXIT')setQuickControls(false);

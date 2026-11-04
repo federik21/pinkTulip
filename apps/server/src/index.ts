@@ -4,10 +4,10 @@ import { addPlayerToLobby, createGame, GameRuleError, GameState, PlayerId, MAX_M
 import { ActionHistory } from './action-history';
 import { publicState } from './public-state';
 import { isSavable, saveFileFromEnv, SessionStore } from './session-store';
-import { BotRunner, canFitBotRoster, configureBot } from './bot-room';
+import { BotRunner, canFitBotRoster, configureBot, MOMENT_FRAME_MS } from './bot-room';
 
 type Client = { ws: WebSocket; playerId: PlayerId | null; roomId: string | null };
-type Room = { id: string; game: GameState; clients: Set<Client>; history: ActionHistory; passwordHash?: string; reconnectTokens: Map<PlayerId,string>; bots?: BotRunner };
+type Room = { id: string; game: GameState; clients: Set<Client>; history: ActionHistory; passwordHash?: string; reconnectTokens: Map<PlayerId,string>; bots?: BotRunner; playback?: Promise<void> };
 const rooms = new Map<string,Room>();
 const clients = new Set<Client>();
 // Saving is opt-in: set SAVE_FILE (the server's npm scripts do) to keep running battles across restarts and empty rooms.
@@ -39,10 +39,35 @@ function roomList() {
   :{id:r.id,players:r.game.players.length,capacity:MAX_MAGES,status:r.game.phase==='LOBBY'?'waiting':'playing',passwordProtected:!!r.passwordHash});
 }
 function broadcastRoomList() { for(const c of clients)send(c,{type:'ROOM_LIST',rooms:roomList()}); }
-function broadcast(room: Room) {
- for(const c of room.clients)send(c,{type:'STATE',state:publicState(room.game,c.playerId,room.history)});
- room.bots ??= new BotRunner(room,()=>rooms.get(room.id)===room&&room.clients.size>0,()=>{broadcast(room);broadcastRoomList();store?.schedule();});
- room.bots.wake();
+function botsFor(room: Room) {
+ return room.bots ??= new BotRunner(room,()=>rooms.get(room.id)===room&&room.clients.size>0,frames=>{broadcast(room,frames);broadcastRoomList();store?.schedule();});
+}
+function pushState(room: Room, state: GameState, playback: boolean) {
+ for(const c of room.clients)send(c,{type:'STATE',state:publicState(state,c.playerId,room.history),...(playback?{playback:true}:{})});
+}
+/**
+ * Pushes the room's state. `frames` are the states at the end of each moment of
+ * the command just applied: every moment but the last is shown in turn, then the
+ * current state, so the UI and game state follow the action moment by moment.
+ * Playback is queued per room so later broadcasts never overtake it; `after`
+ * runs once the final state has been sent.
+ */
+function broadcast(room: Room, frames: GameState[] = [], after?: () => void) {
+ const steps=frames.length>1?frames.slice(0,-1):[];
+ const bots=botsFor(room);
+ bots.playbackMs=steps.length*MOMENT_FRAME_MS;
+ if(!steps.length&&!room.playback) {pushState(room,room.game,false);after?.();bots.wake();return;}
+ const run=async()=>{
+  for(const frame of steps) {
+   if(rooms.get(room.id)!==room)break;
+   pushState(room,frame,true);
+   await new Promise(resolve=>setTimeout(resolve,MOMENT_FRAME_MS));
+  }
+  pushState(room,room.game,false);after?.();
+ };
+ const next:Promise<void>=(room.playback??Promise.resolve()).then(run).catch(error=>console.error('State playback failed:',error)).finally(()=>{if(room.playback===next)room.playback=undefined;});
+ room.playback=next;
+ bots.wake();
 }
 
 function joinRoom(c: Client, roomId: string, name: string, password:string, reconnectToken:string, create: boolean) {
@@ -114,8 +139,7 @@ wss.on('connection',ws=>{
    const room=rooms.get(c.roomId);
    if(!room || !room.clients.has(c) || !room.game.players.some(p=>p.id===c.playerId&&p.connected))throw new GameRuleError('Join a room first');
    if(msg.type==='SET_AI_SPEED') {
-    room.bots ??= new BotRunner(room,()=>rooms.get(room.id)===room&&room.clients.size>0,()=>{broadcast(room);broadcastRoomList();store?.schedule();});
-    room.bots.slow=msg.slow===true;return;
+    botsFor(room).slow=msg.slow===true;return;
    }
    if(msg.type==='SAVE_SESSION') {
     if(!store)throw new GameRuleError('Saving is not enabled on this server (set SAVE_FILE).');
@@ -127,11 +151,12 @@ wss.on('connection',ws=>{
    if(!msg.action || typeof msg.action.type!=='string')throw new GameRuleError('Missing action');
    if(msg.action.playerId!==c.playerId)throw new GameRuleError('You cannot act for another player');
    if(room.game.phase!=='LOBBY' && !room.game.players.every(p=>p.connected))throw new GameRuleError('Game paused: waiting for the other mages to reconnect');
+  const frames:GameState[]=[];
   if(msg.action.type==='ADD_BOT'||msg.action.type==='REMOVE_BOT') {
    room.game=configureBot(room.game,msg.action);room.history.clear();
-  } else room.game=room.history.apply(room.game,msg.action,c.playerId);
-  broadcast(room);broadcastRoomList();store?.schedule();
-   if(requestId)send(c,{type:'ACTION_APPLIED',requestId});
+  } else room.game=room.history.apply(room.game,msg.action,c.playerId,frames);
+  // ACTION_APPLIED follows the final state, so the acting client stays locked while moments replay.
+  broadcast(room,frames,()=>{if(requestId)send(c,{type:'ACTION_APPLIED',requestId});});broadcastRoomList();store?.schedule();
   } catch(error) { send(c,{type:'ERROR',requestId,message:error instanceof Error?error.message:'Invalid action'}); }
  });
  ws.on('close',()=>{
