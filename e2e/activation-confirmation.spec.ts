@@ -1,3 +1,4 @@
+import { mainEffects } from '../packages/game-engine/src/cards';
 import { expect, test, type Page } from '@playwright/test';
 import { applyAction, createGame, summonEvocation } from '../packages/game-engine/src';
 import { createEnchantmentFixtures } from '../packages/game-engine/test/enchantment-fixtures';
@@ -19,7 +20,7 @@ function fixture(name='Torment') {
 }
 
 function seedContextTrigger(game:GameState,event:TriggerEvent) {
- const card:Card={id:'context-trap-card',name:'Context Snare',kind:'SPELL',moments:[],spellType:'TRAP',range:Number.POSITIVE_INFINITY,target:'MAGE',
+ const card:Card={id:'context-trap-card',name:'Context Snare',kind:'SPELL',effects:mainEffects([]),spellType:'TRAP',range:Number.POSITIVE_INFINITY,target:'MAGE',
   trigger:{event,relation:'ENEMY',scope:'ANY'},triggerTarget:'EVENT_ACTOR',triggerEffects:[],rulesText:'This hidden spell waits for its matching event.'};
  game.readiedSpells=[{id:'context-trap-active',playerId:'p1',card}];game.activeSpellOrder=['context-trap-active'];
  game.players[0].prepared.slot1=null;game.currentPlayerId='p2';
@@ -55,7 +56,7 @@ for(const viewport of [{width:1440,height:1000},{width:390,height:844}]) {
   test.use({viewport,reducedMotion:'reduce'});
   for(const target of ['MODEL','ROOM'] as const)test(`infinite-range ${target} spells reach rooms outside line of sight after WebSocket transport`,async({page})=>{
    const initial=fixture('Submission');initial.players[1].wizard.position={q:1,r:1};
-   if(target==='ROOM')Object.assign(initial.players[0].prepared.slot1!.card,{name:'Boundless room',target,moments:[{effect:'INSTABILITY',amount:1}]});
+   if(target==='ROOM')Object.assign(initial.players[0].prepared.slot1!.card,{name:'Boundless room',target,effects:mainEffects([{effect:'INSTABILITY',amount:1}])});
    const name=initial.players[0].prepared.slot1!.card.name;
    const wire=await mount(page,initial);
    const card=page.locator('.prepared .spell').filter({has:page.locator('strong',{hasText:name})});
@@ -139,7 +140,7 @@ for(const viewport of [{width:1440,height:1000},{width:390,height:844}]) {
 
   test('spell-cast prompt identifies the spell and shows its rules',async({page})=>{
    const initial=seedContextTrigger(fixture('Submission'),'SPELL_CAST');
-   const source:Card={id:'source-torment',name:'Torment',kind:'SPELL',spellType:'COMBAT',range:Number.POSITIVE_INFINITY,target:'MAGE',moments:[{effect:'DAMAGE',amount:1}],rulesText:'Deal 1 damage to the target mage.'};
+   const source:Card={id:'source-torment',name:'Torment',kind:'SPELL',spellType:'COMBAT',range:Number.POSITIVE_INFINITY,target:'MAGE',effects:mainEffects([{effect:'DAMAGE',amount:1}]),rulesText:'Deal 1 damage to the target mage.'};
    initial.players[1].prepared.slot1={card:source,used:false};
    const wire=await mount(page,initial);
    wire.dispatch({type:'CAST_SPELL',playerId:'p2',slot:'slot1',targetPlayerId:'p1'});
@@ -158,7 +159,7 @@ for(const viewport of [{width:1440,height:1000},{width:390,height:844}]) {
    const torment=initial.players[0].prepared.slot1!.card;
    initial.players[0].prepared.slot1=null;
   initial.activation!.actionsUsed=1;
-   const followup:Card={id:'moment-followup',name:'Moment Follow-up',kind:'SPELL',spellType:'PROTECTION',moments:[],range:Number.POSITIVE_INFINITY,target:'SELF',
+   const followup:Card={id:'moment-followup',name:'Moment Follow-up',kind:'SPELL',spellType:'PROTECTION',effects:mainEffects([]),range:Number.POSITIVE_INFINITY,target:'SELF',
     trigger:{event:'DAMAGE_DEALT',relation:'ANY',scope:'ANY',damageOrigins:['SPELL']},triggerTarget:'EVENT_ACTOR',triggerEffects:[{effect:'HEAL',amount:1,target:'EVENT_ACTOR'}],
     triggerText:'When a spell deals damage',rulesText:'Heal 1 on your mage after a spell deals damage.'};
    initial.readiedSpells=[{id:'torment-active',playerId:'p1',card:torment},{id:'followup-active',playerId:'p1',card:followup}];
@@ -253,7 +254,7 @@ for(const viewport of [{width:1440,height:1000},{width:390,height:844}]) {
 
   test('Liquefy the Pain fixes the own defeat room before any score or respawn to the cell',async({page})=>{
    const initial=fixture('Liquefy the Pain');initial.players[0].wizard.position={q:1,r:1};initial.players[0].wizard.health=1;
-   initial.players[1].prepared.rapid={used:false,card:{id:'lethal',name:'Lethal',kind:'SPELL',spellType:'COMBAT',target:'MAGE',range:Infinity,moments:[{effect:'DAMAGE',amount:1}]}};
+   initial.players[1].prepared.rapid={used:false,card:{id:'lethal',name:'Lethal',kind:'SPELL',spellType:'COMBAT',target:'MAGE',range:Infinity,effects:mainEffects([{effect:'DAMAGE',amount:1}])}};
    const wire=await mount(page,initial);
    await page.locator('.prepared .spell').filter({has:page.locator('strong',{hasText:'Liquefy the Pain'})}).click();
    await page.getByRole('button',{name:'Confirm activation'}).click();
@@ -402,7 +403,7 @@ for(const viewport of [{width:1440,height:1000},{width:390,height:844}]) {
   });
   test('Model healing target choices exclude your own mage but include friendly evocations',async({page})=>{
    const initial=fixture(),e=summonEvocation(initial,initial.players[0],'CADAVER',{q:0,r:0})!;
-   initial.players[0].prepared.slot1={used:false,card:{id:'support',name:'Model mending',kind:'SPELL',target:'MODEL',range:1,moments:[{effect:'HEAL',amount:1}]}};
+   initial.players[0].prepared.slot1={used:false,card:{id:'support',name:'Model mending',kind:'SPELL',target:'MODEL',range:1,effects:mainEffects([{effect:'HEAL',amount:1}])}};
    const wire=await mount(page,initial);
    await page.locator('.prepared .spell').filter({has:page.locator('strong',{hasText:'Model mending'})}).click();
    await page.locator('.hex[data-room-id="room-0,0"]').click();
@@ -417,9 +418,9 @@ for(const viewport of [{width:1440,height:1000},{width:390,height:844}]) {
    const initial=fixture();initial.currentPlayerId='p2';initial.activation!.playerId='p2';
    initial.players[0].wizard.damageCubes=9;initial.players[0].wizard.damageByPlayer={p2:9};initial.players[0].wizard.damageOrder=Array(9).fill('p2');
    initial.players[1].cubes.available=16;initial.players[1].cubes.onWizard=9;
-   initial.players[1].prepared.rapid={used:false,card:{id:'lethal',name:'Lethal',kind:'SPELL',target:'MAGE',range:0,moments:[{effect:'DAMAGE',amount:1}]}};
+   initial.players[1].prepared.rapid={used:false,card:{id:'lethal',name:'Lethal',kind:'SPELL',target:'MAGE',range:0,effects:mainEffects([{effect:'DAMAGE',amount:1}])}};
    initial.readiedSpells=[{id:'rescue',playerId:'p1',card:{id:'rescue-card',name:'Last chance',kind:'SPELL',spellType:'PROTECTION',target:'SELF',range:0,
-    moments:[{effect:'HEAL',amount:2}],trigger:{event:'MAGE_DEFEATED',relation:'ENEMY',scope:'BOUND_MODEL'}}}];initial.activeSpellOrder=['rescue'];
+    effects:mainEffects([{effect:'HEAL',amount:2}]),trigger:{event:'MAGE_DEFEATED',relation:'ENEMY',scope:'BOUND_MODEL'}}}];initial.activeSpellOrder=['rescue'];
    const wire=await mount(page,initial);await closeControls(page);
    wire.dispatch({type:'CAST_SPELL',playerId:'p2',slot:'rapid',targetPlayerId:'p1'});
    const dialog=page.getByRole('dialog',{name:'Reveal an active spell?',exact:true});

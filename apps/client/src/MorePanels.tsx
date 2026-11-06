@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ENDGAME_REWARDS, GameAction, GameState, Moment, Player, Quest, getMageMovement, getQuestRewardTargets, getRoomRewards, JINX_LABELS } from '@brw/game-engine';
+import { ENDGAME_REWARDS, GameAction, GameState, Moment, Player, Quest, getMageMovement, getMainMoments, getQuestRewardTargets, getRoomRewards, JINX_LABELS } from '@brw/game-engine';
 import { JinxList } from './JinxList';
 
 function rewardMoment(moment:Moment):string {
@@ -69,7 +69,7 @@ function QuestEntry({game,me,quest,disabled,send}:{game:GameState;me:Player;ques
    {Array.from({length:quest.amount},(_,index)=><span key={index} className={`quest-progress-cube${index<(quest.progress??0)?' is-filled':''}`} aria-hidden="true"/>)}
   </div>
   <p className="hint">{quest.claimed?'Solved':ready?'Objective complete. Your free reward is ready.':`Progress: ${quest.progress??0}/${quest.amount}`}</p>
-  {card&&<div className="quest-reward"><strong>{card.name}</strong><p>{card.moments.map(rewardMoment).join(' → ')}{card.rulesText?` · ${card.rulesText}`:''}</p><span className="hint">Free action · no turn action, physical token or spell slot · Range {card.range===Infinity?'∞ · ignores line of sight':card.range}</span></div>}
+  {card&&<div className="quest-reward"><strong>{card.name}</strong><p>{getMainMoments(card).map(rewardMoment).join(' → ')}{card.rulesText?` · ${card.rulesText}`:''}</p><span className="hint">Free action · no turn action, physical token or spell slot · Range {card.range===Infinity?'∞ · ignores line of sight':card.range}</span></div>}
   {ready&&<>
    {card&&!self&&<label htmlFor={`quest-target-${quest.id}`}>Reward target<select id={`quest-target-${quest.id}`} aria-label={`Reward target for ${quest.name}`} value={target?.id??''} disabled={disabled} onChange={event=>setTargetId(event.target.value)}><option value="">Choose a {card.target==='ROOM'?'room':'model'}</option>{targets.map(choice=><option key={choice.id} value={choice.id}>{choice.name}</option>)}</select></label>}
    {self&&<p className="hint">Target: your mage.</p>}

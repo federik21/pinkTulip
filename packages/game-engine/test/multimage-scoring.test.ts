@@ -1,3 +1,4 @@
+import { mainEffects } from '../src/cards';
 import { moment } from '../src/cards';
 import { describe, expect, it } from 'vitest';
 import { addPlayerToLobby, applyAction, canStartGame, createGame, hexKey } from '../src';
@@ -55,7 +56,7 @@ describe('exclusive color completion bonuses',()=>{
     const placed=r.instabilityLimit-1;
     r.instability=placed;r.cubesByPlayer={p1:placed-neutral,...(neutral?{'black-rose':neutral}:{})};
     g.players[0].cubes.onBoard=placed-neutral;g.players[0].cubes.available-=placed-neutral;
-  const card={...g.library[0].cards.shift()!,spellType:undefined,ongoing:undefined,trigger:undefined,instability:false,target:'ROOM' as const,range:0,moments:[moment.instability(1)]};
+  const card={...g.library[0].cards.shift()!,spellType:undefined,ongoing:undefined,trigger:undefined,instability:false,target:'ROOM' as const,range:0,effects:mainEffects([moment.instability(1)])};
   g.players[0].prepared.slot1={card,used:false};
   return {g:applyAction(g,{type:'CAST_SPELL',playerId:'p1',slot:'slot1',roomId:r.id}),roomId:r.id};
  }

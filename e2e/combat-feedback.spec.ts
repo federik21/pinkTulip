@@ -1,3 +1,4 @@
+import { mainEffects } from '../packages/game-engine/src/cards';
 import { test, expect, type Locator, type Page } from '@playwright/test';
 import { applyAction, BLACK_ROSE_ID, createDemoBoard, createGame, FEEDBACK_EVENT_LIMIT, getDefaultRoomsPerColor } from '../packages/game-engine/src/index';
 import type { ActiveSpell, Card, Evocation, GameAction, GameFeedbackEvent, GameState } from '../packages/game-engine/src/index';
@@ -474,7 +475,7 @@ for (const viewport of [{ width: 1440, height: 1100 }, { width: 390, height: 844
             expect(wire.visible.readiedSpells!.find(hidden => hidden.id === active.id)).toEqual({
               id: active.id, playerId: active.playerId, card: {
                 id: expect.stringMatching(/^hidden-\d+$/), name: 'Hidden spell', kind: 'SPELL',
-                moments:[], range: 0, target: 'MODEL', spellType: active.card.spellType,
+                effects:mainEffects([]), range: 0, target: 'MODEL', spellType: active.card.spellType,
               },
             });
           }

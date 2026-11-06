@@ -1,3 +1,4 @@
+import { mainEffects } from '../src/cards';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
  applyAction, BLACK_ROSE_ID, createGame, createShamanicDeck, EVOCATION_TYPES, getEvocationKind, getEvocationSupply, getQuestRewardTargets, spellCanTargetModel, spellFilterAllows, summonEvocation,
@@ -72,7 +73,7 @@ describe('Shamanic school',()=>{
   s.currentPlayerId='p2';s.activation=activation('p2');
   s=applyAction(s,{type:'ACTIVATE_SPELL',playerId:'p2',slot:'rapid'});
   s.currentPlayerId='p1';s.activation=activation('p1');
-  const spell={id:'combat',name:'Combat spell',kind:'SPELL' as const,spellType:'COMBAT' as const,target:'MAGE' as const,range:2,moments:[{effect:'DAMAGE' as const,amount:2}]};
+  const spell={id:'combat',name:'Combat spell',kind:'SPELL' as const,spellType:'COMBAT' as const,target:'MAGE' as const,range:2,effects:mainEffects([{effect:'DAMAGE' as const,amount:2}])};
   s.players[0].prepared.rapid={card:spell,used:false};
   s=applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',targetPlayerId:'p2'});
   expect(s.pendingDecision?.kind).toBe('REACTIVE_SPELL');
@@ -89,11 +90,11 @@ describe('Shamanic school',()=>{
   s.currentPlayerId='p2';s.activation=activation('p2');
   s=applyAction(s,{type:'ACTIVATE_SPELL',playerId:'p2',slot:'rapid'});
   const ongoing={id:'ongoing-combat',playerId:'p1',targetPlayerId:'p2',card:{
-   id:'ongoing-card',name:'Ongoing combat',kind:'SPELL' as const,spellType:'COMBAT' as const,target:'MAGE' as const,range:2,moments:[],
+   id:'ongoing-card',name:'Ongoing combat',kind:'SPELL' as const,spellType:'COMBAT' as const,target:'MAGE' as const,range:2,effects:mainEffects([]),
    ongoing:{trigger:{event:'SPELL_CAST' as const,relation:'ANY' as const,scope:'ANY' as const},effects:[{effect:'DAMAGE' as const,amount:1,target:'BOUND_MODEL' as const}]},
   }};
   s.ongoingSpells=[ongoing];s.activeSpellOrder=[ongoing.id];
-  const cast={id:'ordinary-combat',name:'Ordinary combat',kind:'SPELL' as const,spellType:'COMBAT' as const,target:'SELF' as const,range:0,moments:[]};
+  const cast={id:'ordinary-combat',name:'Ordinary combat',kind:'SPELL' as const,spellType:'COMBAT' as const,target:'SELF' as const,range:0,effects:mainEffects([])};
   s.players[0].prepared.rapid={card:cast,used:false};
   s.currentPlayerId='p1';s.activation=activation('p1');
   s=applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid'});
@@ -110,7 +111,7 @@ describe('Shamanic school',()=>{
   const channeling=createShamanicDeck('shamanic','shamanic').find(card=>card.name==='Channeling Energy')!;
   s.ongoingSpells=[{id:'channeling-active',playerId:'p1',card:channeling}];
   s.activeSpellOrder=['channeling-active'];
-  const spell={id:'combat',name:'Combat spell',kind:'SPELL' as const,spellType:'COMBAT' as const,target:'SELF' as const,range:0,moments:[]};
+  const spell={id:'combat',name:'Combat spell',kind:'SPELL' as const,spellType:'COMBAT' as const,target:'SELF' as const,range:0,effects:mainEffects([])};
   s.players[1].prepared.rapid={card:spell,used:false};
   s.currentPlayerId='p2';s.activation=activation('p2');
   s=applyAction(s,{type:'CAST_SPELL',playerId:'p2',slot:'rapid'});
@@ -185,7 +186,7 @@ describe('Shamanic school',()=>{
   expect(result.players[0].victoryPoints).toBe(1);
   expect(getEvocationSupply(result).UMBRA).toBe(9);
 
-  const ordinary={...pyre,id:'ordinary-spell',name:'Ordinary spell',targetFilter:undefined,moments:[{effect:'DAMAGE' as const,amount:1}]};
+  const ordinary={...pyre,id:'ordinary-spell',name:'Ordinary spell',targetFilter:undefined,effects:mainEffects([{effect:'DAMAGE' as const,amount:1}])};
   expect(spellCanTargetModel(ordinary,'p1',BLACK_ROSE_ID,'EVOCATION')).toBe(true);
   expect(spellFilterAllows(ordinary,'p1',{playerId:umbra.playerId,evocation:umbra})).toBe(true);
   expect(getQuestRewardTargets(s,s.players[0],ordinary).some(target=>target.id===umbra.id)).toBe(true);
@@ -201,7 +202,7 @@ describe('Shamanic school',()=>{
    position:{...s.players[1].wizard.position},damageCubes:0,damageByPlayer:{},activated:true,
   };
   s.evocations.push(umbra);
-  const card={id:'move-model',name:'Move Model',kind:'SPELL' as const,target:'ROOM' as const,range:2,moments:[{effect:'MOVE_MODEL' as const,distance:1}]};
+  const card={id:'move-model',name:'Move Model',kind:'SPELL' as const,target:'ROOM' as const,range:2,effects:mainEffects([{effect:'MOVE_MODEL' as const,distance:1}])};
   s.players[0].prepared.rapid={card,used:false};
   const result=applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:'room-0,0'});
   expect(result.pendingDecision?.kind).toBe('CHOICE');

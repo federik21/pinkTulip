@@ -1,3 +1,4 @@
+import { mainEffects } from '../packages/game-engine/src/cards';
 import { test, expect, type Locator, type Page, type TestInfo, type WebSocketRoute } from '@playwright/test';
 import { applyAction, BLACK_ROSE_ID, createGame, getSpellType, momentTotal } from '../packages/game-engine/src/index';
 import type { Card, Evocation, GameAction, GameState } from '../packages/game-engine/src/index';
@@ -113,7 +114,7 @@ function expectProjection(game: GameState, history: ActionHistory, viewer: strin
   expect(visible.eventDeck).toEqual([]); expect(visible.questDeck).toEqual([]);
   const hidden = (cards: Card[]) => cards.forEach(card => expect(card).toEqual({
     id: expect.stringMatching(/^hidden-\d+$/), name: 'Hidden spell', kind: 'SPELL',
-    moments:[], range: 0, target: 'MODEL',
+    effects:mainEffects([]), range: 0, target: 'MODEL',
   }));
   hidden(visible.powerfulDeck);
   expect(visible.powerfulDeck).toHaveLength(game.powerfulDeck.length);
@@ -140,7 +141,7 @@ function expectProjection(game: GameState, history: ActionHistory, viewer: strin
   }
   expect(visible.readiedSpells).toEqual(game.readiedSpells?.map((active, index) => active.playerId === viewer ? active : {
     id: active.id, playerId: active.playerId, card: { id: `hidden-${index}`, name: 'Hidden spell', kind: 'SPELL',
-      moments:[], range: 0, target: 'MODEL', ...(active.card.spellType ? { spellType: active.card.spellType } : {}) },
+      effects:mainEffects([]), range: 0, target: 'MODEL', ...(active.card.spellType ? { spellType: active.card.spellType } : {}) },
   }));
   expect(visible.ongoingSpells).toEqual(game.ongoingSpells); expect(visible.activeSpellOrder).toEqual(game.activeSpellOrder);
   expect(visible.log).toEqual(game.log); return visible;

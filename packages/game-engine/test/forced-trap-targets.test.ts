@@ -1,3 +1,4 @@
+import { mainEffects } from '../src/cards';
 import { describe, expect, it } from 'vitest';
 import { applyAction, createAgonyDeck, createGame, moment, summonEvocation, upgradeLegacyCards } from '../src';
 import type { ActiveSpell, Card, GameAction, GameState, Hex, Moment, PendingDecision } from '../src';
@@ -20,7 +21,7 @@ function arm(s:GameState,name:TrapName,owner='p3',id=name as string):ActiveSpell
  const active={id,playerId:owner,card};s.readiedSpells!.push(active);s.activeSpellOrder!.push(id);return active;
 }
 function prepare(s:GameState,moments:Moment[]=[moment.damage(1)],target:Card['target']='MODEL') {
- const card:Card={id:'fixture-strike',name:'Fixture strike',kind:'SPELL',spellType:'COMBAT',target,range:Infinity,moments};
+ const card:Card={id:'fixture-strike',name:'Fixture strike',kind:'SPELL',spellType:'COMBAT',target,range:Infinity,effects:mainEffects(moments)};
  s.players[0].prepared.rapid={card,used:false};
 }
 function cast(s:GameState,moments:Moment[]=[moment.damage(1)],targetId='p2') {
@@ -96,11 +97,11 @@ describe('Agony forced-target card contracts',()=>{
   const cards=createAgonyDeck('catalog');
   expect(cards.find(c=>c.name==='Torment')).toMatchObject({spellType:'TRAP',target:'MODEL',range:Infinity,
    trigger:{event:'DAMAGE_DEALT',relation:'ENEMY',scope:'ANY'},triggerTarget:'EVENT_ACTOR',
-   moments:[moment.damage(2),moment.summon('SUCCUBUS','TARGET')]});
-  expect(cards.find(c=>c.name==='Master of Pleasure')).toMatchObject({spellType:'TRAP',target:'MAGE',range:Infinity,moments:[],
+   effects:mainEffects([moment.damage(2),moment.summon('SUCCUBUS','TARGET')])});
+  expect(cards.find(c=>c.name==='Master of Pleasure')).toMatchObject({spellType:'TRAP',target:'MAGE',range:Infinity,effects:mainEffects([]),
    trigger:{event:'QUEST_SOLVED',relation:'ENEMY',scope:'ANY'},triggerTarget:'EVENT_MODEL',
    triggerEffects:[{effect:'DAMAGE',amount:2,target:'EVENT_MODEL'},{effect:'SUMMON',kind:'SUCCUBUS',position:'TARGET',target:'EVENT_MODEL'}]});
-  expect(cards.find(c=>c.name==='Liquefy the Pain')).toMatchObject({spellType:'TRAP',target:'ROOM',range:Infinity,moments:[],
+  expect(cards.find(c=>c.name==='Liquefy the Pain')).toMatchObject({spellType:'TRAP',target:'ROOM',range:Infinity,effects:mainEffects([]),
    trigger:{event:'MAGE_DEFEATED',relation:'SELF',relationTo:'EVENT_MODEL',scope:'ANY'},triggerTarget:'EVENT_ROOM',
     triggerEffects:[{effect:'SUMMON',kind:'SUCCUBUS',position:'TARGET',target:'EVENT_ROOM'},{effect:'ACTIVATE_EVOCATION',kind:'SUCCUBUS',target:'EVENT_ROOM'}]});
  });
@@ -294,7 +295,7 @@ describe('Liquefy the Pain follows its own defeated mage and original room',()=>
 describe('forced-target restrictions coexist with generic reaction choices and replay',()=>{
  it('retains multiple legal reveal-time choices for a generic trap without triggerTarget',()=>{
   const s=fixture();s.players[3].wizard.position={q:1,r:0};cadaver(s,'p2','enemy-servant',{q:0,r:1});cadaver(s,'p3','own-servant');
-  const card:Card={id:'generic-card',name:'Generic choice',kind:'SPELL',spellType:'TRAP',target:'MODEL',range:1,moments:[moment.damage(1)],
+  const card:Card={id:'generic-card',name:'Generic choice',kind:'SPELL',spellType:'TRAP',target:'MODEL',range:1,effects:mainEffects([moment.damage(1)]),
    trigger:{event:'DAMAGE_DEALT',relation:'ENEMY',scope:'ANY'}};
   s.readiedSpells!.push({id:'generic',playerId:'p3',card});s.activeSpellOrder!.push('generic');
   const paused=cast(s);expect(targets(paused).sort()).toEqual(['p1','p2','p4','enemy-servant'].sort());

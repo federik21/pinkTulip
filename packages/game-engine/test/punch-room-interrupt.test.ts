@@ -1,9 +1,10 @@
+import { mainEffects } from '../src/cards';
 import { describe, expect, it } from 'vitest';
 import { applyAction, createGame, moment } from '../src';
 import type { Card, GameState, PendingDecision } from '../src';
 
 const ward: Card = {
- id: 'ward', name: 'Ward', kind: 'SPELL', spellType: 'PROTECTION', target: 'SELF', range: 0, moments: [moment.heal(1)],
+ id: 'ward', name: 'Ward', kind: 'SPELL', spellType: 'PROTECTION', target: 'SELF', range: 0, effects: mainEffects([moment.heal(1)]),
  trigger: { event: 'DAMAGE_TAKEN', relation: 'ENEMY', scope: 'BOUND_MODEL' },
 };
 

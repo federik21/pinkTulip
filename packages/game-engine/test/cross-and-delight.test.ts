@@ -1,3 +1,4 @@
+import { mainEffects, getMainMoments } from '../src/cards';
 import { describe, expect, it } from 'vitest';
 import { applyAction, createGame, moment, summonEvocation } from '../src';
 import type { GameState } from '../src';
@@ -18,7 +19,7 @@ function cast(s:GameState,redirect=false):GameState {
 
 describe('Cross and Delight final activation moment',()=>{
  it('prints Summon, Pain 1, then Activate Succubus without restoring older damage/instability',()=>{
-  expect(fixture().players[0].prepared.rapid!.card.moments).toEqual([
+  expect(getMainMoments(fixture().players[0].prepared.rapid!.card)).toEqual([
    {effect:'SUMMON',kind:'SUCCUBUS',position:'CASTER'},
    {effect:'PAIN',amount:1},
    {effect:'ACTIVATE_EVOCATION',kind:'SUCCUBUS'},
@@ -64,7 +65,7 @@ describe('Cross and Delight final activation moment',()=>{
  it('keeps the original summon when a nested interrupt summons another Succubus',()=>{
   const s=fixture();
   s.readiedSpells!.push({id:'nested-summon',playerId:'p1',card:{id:'nested-card',name:'Nested summon',kind:'SPELL',spellType:'PROTECTION',target:'SELF',range:0,
-   trigger:{event:'DAMAGE_TAKEN',relation:'ANY',scope:'BOUND_MODEL'},moments:[moment.summon('SUCCUBUS')]}});
+   trigger:{event:'DAMAGE_TAKEN',relation:'ANY',scope:'BOUND_MODEL'},effects:mainEffects([moment.summon('SUCCUBUS')])}});
   s.activeSpellOrder!.push('nested-summon');
   const paused=cast(s),decision=paused.pendingDecision;
   expect(decision?.kind).toBe('REACTIVE_SPELL');

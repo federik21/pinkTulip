@@ -1,3 +1,4 @@
+import { mainEffects } from '@brw/game-engine';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
  applyAction, areAdjacent, areInSameRoom, createGame, GameRuleError,
@@ -65,7 +66,7 @@ function finishModel(s: GameState, owner: string): GameState {
 function publicOnlyMutation(s: GameState): GameState {
  const copy = structuredClone(s);
  // Preserve stocks/ownership/public facts while replacing EVERY hidden identity.
- const hidden = (c: Card, i: number): Card => ({ ...c, id: `unknown-${i}`, name: 'Unknown', moments: [], target: 'SELF', range: 0, trigger: undefined, ongoing: undefined });
+ const hidden = (c: Card, i: number): Card => ({ ...c, id: `unknown-${i}`, name: 'Unknown', effects: mainEffects([]), target: 'SELF', range: 0, trigger: undefined, ongoing: undefined });
  for (const d of copy.library) d.cards = [...d.cards].reverse().map(hidden);
  copy.eventDeck.reverse(); copy.questDeck.reverse(); copy.powerfulDeck = [...copy.powerfulDeck].reverse().map(hidden);
  for (const p of copy.players) {

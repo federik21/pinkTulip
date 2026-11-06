@@ -1,3 +1,4 @@
+import { mainEffects } from '../packages/game-engine/src/cards';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { applyAction, createGame } from '../packages/game-engine/src';
 import { createEnchantmentFixtures } from '../packages/game-engine/test/enchantment-fixtures';
@@ -312,7 +313,7 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
       const liquefy = take(initial, 'Liquefy the Pain'); delete liquefy.triggerText;
       const custom = take(initial, 'Mending Ward');
       Object.assign(custom, { name: 'Explicit effect-only ward', triggerText: 'When the explicit ward condition occurs',
-        rulesText: 'Heal the chosen mage 2 wounds.', moments: [{ effect: 'DAMAGE', amount: 99 }] });
+        rulesText: 'Heal the chosen mage 2 wounds.', effects: mainEffects([{ effect: 'DAMAGE', amount: 99 }] )});
       const fallback = take(initial, 'Threshold Snare');
       delete fallback.triggerText;
       Object.assign(fallback, { name: 'Condition-only snare', rulesText: 'Reveal and deal 2 damage to the entering model.' });

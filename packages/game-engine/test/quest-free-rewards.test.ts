@@ -1,6 +1,7 @@
+import { mainEffects } from '../src/cards';
 import { describe, expect, it } from 'vitest';
 import { applyAction, createGame, getQuestRewardTargets, summonEvocation } from '../src';
-import type { Card, GameAction, GameState, Quest } from '../src';
+import type { Moment, Card, GameAction, GameState, Quest } from '../src';
 
 function fixture():GameState {
  const s=createGame(2);s.phase='ACTION';s.round=1;s.firstPlayerId='p1';s.currentPlayerId='p1';
@@ -13,18 +14,18 @@ function takeQuest(s:GameState,kind:Quest['kind']='ROOM_ACTIVATE',completed=true
  quest.kind=kind;delete quest.trigger;
  quest.amount=kind==='INSTABILITY'?2:kind==='ROOM_ACTIVATE'?3:1;
  quest.rewardAction=kind==='REBUILD'
-  ?{id:'test-room-reward',name:'Test room reward',kind:'SPELL',moments:[{effect:'INSTABILITY',amount:1}],range:2,target:'ROOM'}
+  ?{id:'test-room-reward',name:'Test room reward',kind:'SPELL',effects:mainEffects([{effect:'INSTABILITY',amount:1}]),range:2,target:'ROOM'}
   :kind==='INSTABILITY'
-    ?{id:'test-model-reward',name:'Test model reward',kind:'SPELL',moments:[{effect:'DAMAGE',amount:1}],range:2,target:'MODEL'}
-    :{id:'test-self-reward',name:'Test self reward',kind:'SPELL',moments:[{effect:'HEAL',amount:2}],range:0,target:'SELF'};
+    ?{id:'test-model-reward',name:'Test model reward',kind:'SPELL',effects:mainEffects([{effect:'DAMAGE',amount:1}]),range:2,target:'MODEL'}
+    :{id:'test-self-reward',name:'Test self reward',kind:'SPELL',effects:mainEffects([{effect:'HEAL',amount:2}]),range:0,target:'SELF'};
  expect(quest).toBeDefined();Object.assign(quest,{progress:completed?quest.amount:0,completed,claimed:false});
  s.players[0].quest=quest;return quest;
 }
 const solve=(s:GameState,extra:Partial<Extract<GameAction,{type:'USE_QUEST_REWARD'}>>={})=>applyAction(s,{type:'USE_QUEST_REWARD',playerId:'p1',questId:s.players[0].quest?.id??'missing',...extra});
 const allQuestIds=(s:GameState)=>[...s.questDeck,...s.questDiscard,...s.players.flatMap(p=>[...(p.quest?[p.quest]:[]),...p.additionalQuests])].map(q=>q.id).sort();
-function prepared(s:GameState,moments:Card['moments'],target:Card['target']='ROOM') {
+function prepared(s:GameState,moments:Moment[],target:Card['target']='ROOM') {
  const id=s.library[0].cards.shift()!.id;
- s.players[0].prepared.rapid={used:false,card:{id,name:'Objective fixture',kind:'SPELL',spellType:'COMBAT',moments,target,range:2}};
+ s.players[0].prepared.rapid={used:false,card:{id,name:'Objective fixture',kind:'SPELL',spellType:'COMBAT',effects:mainEffects(moments),target,range:2}};
 }
 const cast=(s:GameState)=>applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:'room-0,0'});
 
@@ -91,7 +92,7 @@ describe('completed quest rewards are free and recycle their physical quest',()=
  it('keeps the free window open when one reward completes another quest, then hands off exactly once',()=>{
   const s=fixture();s.activation!.actionsUsed=2;const first=takeQuest(s,'INSTABILITY');
   const second=s.questDeck.shift()!;second.kind='ROOM_ACTIVATE';second.amount=3;delete second.trigger;
-  second.rewardAction={id:'test-second-self',name:'Test second reward',kind:'SPELL',moments:[{effect:'HEAL',amount:1}],range:0,target:'SELF'};
+  second.rewardAction={id:'test-second-self',name:'Test second reward',kind:'SPELL',effects:mainEffects([{effect:'HEAL',amount:1}]),range:0,target:'SELF'};
   Object.assign(second,{kind:'KILL',amount:1,completed:false,progress:0});s.players[0].additionalQuests.push(second);s.players[1].wizard.health=1;
   const ids=allQuestIds(s),ready=solve(s,{targetPlayerId:'p2'});
   expect(ready.currentPlayerId).toBe('p1');expect(ready.activation!.actionsUsed).toBe(2);
@@ -106,7 +107,7 @@ describe('completed quest rewards are free and recycle their physical quest',()=
  });
  it('solves an additional quest by its own ID, leaving the primary quest in place',()=>{
   const s=fixture(),primary=takeQuest(s);const additional=s.questDeck.shift()!;additional.kind='ROOM_ACTIVATE';additional.amount=3;delete additional.trigger;
-  additional.rewardAction={id:'test-additional-self',name:'Test additional reward',kind:'SPELL',moments:[{effect:'HEAL',amount:1}],range:0,target:'SELF'};
+  additional.rewardAction={id:'test-additional-self',name:'Test additional reward',kind:'SPELL',effects:mainEffects([{effect:'HEAL',amount:1}]),range:0,target:'SELF'};
   additional.completed=true;s.players[0].additionalQuests.push(additional);
   const after=solve(s,{questId:additional.id});expect(after.players[0].quest).toEqual(primary);expect(after.questDiscard[0].id).toBe(additional.id);
  });
@@ -159,6 +160,6 @@ describe('quest reward choices match authoritative target categories, ownership 
   const enemy=summonEvocation(s,s.players[1],'CADAVER',{q:0,r:0})!;
   expect(getQuestRewardTargets(s,p,quest.rewardAction!).map(t=>t.id)).toEqual(['p2',enemy.id]);
   expect(()=>solve(s,{targetPlayerId:'p1'})).toThrow(/category or ownership/);
-  const heal={...quest.rewardAction!,moments:[{effect:'HEAL' as const,amount:1}]};expect(getQuestRewardTargets(s,p,heal).map(t=>t.id)).toContain(own.id);
+  const heal={...quest.rewardAction!,effects:mainEffects([{effect:'HEAL' as const,amount:1}])};expect(getQuestRewardTargets(s,p,heal).map(t=>t.id)).toContain(own.id);
  });
 });

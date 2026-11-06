@@ -1,3 +1,4 @@
+import { mainEffects } from '../packages/game-engine/src/cards';
 import { test, expect, type Page, type WebSocketRoute } from '@playwright/test';
 import { createGame, moment, type Card, type GameState, type GameFeedbackEvent, type TurnRecap } from '../packages/game-engine/src/index';
 
@@ -41,8 +42,8 @@ async function mount(page: Page, game: GameState) {
   return { update(state: GameState) { socket.send(JSON.stringify({ type: 'STATE', state })); } };
 }
 
-const bolt: Card = { id: 'bolt', name: 'Grim Bolt', kind: 'SPELL', target: 'MAGE', range: 2, moments: [moment.damage(2)] };
-const ward: Card = { id: 'ward', name: 'Mending Ward', kind: 'SPELL', spellType: 'PROTECTION', target: 'SELF', range: 0, moments: [moment.heal(1)],
+const bolt: Card = { id: 'bolt', name: 'Grim Bolt', kind: 'SPELL', target: 'MAGE', range: 2, effects: mainEffects([moment.damage(2)] )};
+const ward: Card = { id: 'ward', name: 'Mending Ward', kind: 'SPELL', spellType: 'PROTECTION', target: 'SELF', range: 0, effects: mainEffects([moment.heal(1)]),
   trigger: { event: 'DAMAGE_TAKEN', relation: 'ENEMY', scope: 'BOUND_MODEL' } };
 const recap = (): TurnRecap => ({ id: '1:p2:0', round: 1, playerId: 'p2', playerName: 'Blue Seer', isBot: true,
   lines: ['Blue Seer starts their turn: 2 actions.', 'Blue Seer casts Grim Bolt for 1 action (no physical token).',

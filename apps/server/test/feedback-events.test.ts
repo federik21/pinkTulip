@@ -1,3 +1,4 @@
+import { mainEffects } from '@brw/game-engine';
 import { describe, expect, it, vi } from 'vitest';
 import { applyAction, BLACK_ROSE_ID, createGame, FEEDBACK_EVENT_LIMIT } from '@brw/game-engine';
 import type { Card, Evocation, GameAction, GameFeedbackEvent, GameState, Player } from '@brw/game-engine';
@@ -69,7 +70,7 @@ function publicFeedback(s:GameState, h:ActionHistory) {
    else {
     expect(Object.keys(visible).sort()).toEqual(['card', 'id', 'playerId']);
     expect(visible.card).toEqual({ id:`hidden-${s.readiedSpells!.indexOf(active)}`, name:'Hidden spell', kind:'SPELL',
-     moments:[], range:0, target:'MODEL', spellType:active.card.spellType });
+     effects:mainEffects([]), range:0, target:'MODEL', spellType:active.card.spellType });
     expect(JSON.stringify(visible)).not.toMatch(/targetPlayerId|targetEvocationId|roomId|trigger|rulesText|private-/);
    }
    // Even owners get only public feedback, never their full private active payload.
@@ -155,7 +156,7 @@ describe('feedback respects existing exact history snapshots', () => {
   for (const p of s.players) p.wizard.health = 1000;
   for (const id of ['p1', 'p2']) {
    const physical = s.library[0].cards.shift()!;
-   const c:Card = { id:physical.id, schoolId:physical.schoolId, name:'Public feedback loop', kind:'SPELL', target:'SELF', range:0, moments:[], spellType:'CONTINGENCY',
+   const c:Card = { id:physical.id, schoolId:physical.schoolId, name:'Public feedback loop', kind:'SPELL', target:'SELF', range:0, effects:mainEffects([]), spellType:'CONTINGENCY',
     ongoing:{ trigger:{ event:'DAMAGE_TAKEN', scope:'BOUND_MODEL', relation:'ANY' }, effects:[{ effect:'DAMAGE', amount:1, target:'EVENT_ACTOR' }] } };
    turn(s, id); prepare(s, c, id); s = applyAction(s, { type:'CAST_SPELL', playerId:id, slot:'rapid' });
   }

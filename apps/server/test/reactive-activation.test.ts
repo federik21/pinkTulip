@@ -1,3 +1,4 @@
+import { mainEffects } from '@brw/game-engine';
 import { describe, expect, it } from 'vitest';
 import { applyAction, createAgonyDeck, createGame, moment, summonEvocation } from '@brw/game-engine';
 import type { Card, GameState } from '@brw/game-engine';
@@ -10,10 +11,10 @@ function fixture():GameState {
  for(const p of s.players){p.connected=true;p.wizard.position={q:0,r:0};}
  return s;
 }
-const ward:Card={id:'private-physical-id',name:'Private Protection',kind:'SPELL',schoolId:'agony',spellType:'PROTECTION',target:'SELF',range:0,moments:[moment.heal(1)],rulesText:'Private damage trigger',trigger:{event:'DAMAGE_TAKEN',relation:'ENEMY',scope:'BOUND_MODEL'}};
+const ward:Card={id:'private-physical-id',name:'Private Protection',kind:'SPELL',schoolId:'agony',spellType:'PROTECTION',target:'SELF',range:0,effects:mainEffects([moment.heal(1)]),rulesText:'Private damage trigger',trigger:{event:'DAMAGE_TAKEN',relation:'ENEMY',scope:'BOUND_MODEL'}};
 function paused():GameState {
  const s=fixture();s.readiedSpells=[{id:'private-active-id',playerId:'p2',card:ward}];s.activeSpellOrder=['private-active-id'];
- s.players[0].prepared.rapid={used:false,card:{id:'attack',name:'Strike',kind:'SPELL',target:'MAGE',range:2,moments:[moment.damage(1)]}};
+ s.players[0].prepared.rapid={used:false,card:{id:'attack',name:'Strike',kind:'SPELL',target:'MAGE',range:2,effects:mainEffects([moment.damage(1)])}};
  return applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',targetPlayerId:'p2'});
 }
 
@@ -21,7 +22,7 @@ describe('reactive decision privacy and history',()=>{
  it('keeps forced trigger targets private, rejects redirection, and reveals without requiring a target choice',()=>{
   const s=fixture(),history=new ActionHistory(),card=createAgonyDeck('forced').find(c=>c.name==='Torment')!;
   s.readiedSpells=[{id:'forced-trap',playerId:'p2',card}];s.activeSpellOrder=['forced-trap'];
-  s.players[0].prepared.rapid={used:false,card:{id:'hit',name:'Hit',kind:'SPELL',spellType:'COMBAT',target:'MAGE',range:0,moments:[moment.damage(1)]}};
+  s.players[0].prepared.rapid={used:false,card:{id:'hit',name:'Hit',kind:'SPELL',spellType:'COMBAT',target:'MAGE',range:0,effects:mainEffects([moment.damage(1)])}};
   const paused=history.apply(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',targetPlayerId:'p2'},'p1');
   const own=publicState(paused,'p2',history),foreign=publicState(paused,'p1',history);
   expect(own.pendingDecision).toMatchObject({kind:'REACTIVE_SPELL',options:[{card:{triggerTarget:'EVENT_ACTOR'},targets:[{kind:'MAGE',id:'p1'}]}]});

@@ -1,3 +1,4 @@
+import { mainEffects } from '../../../packages/game-engine/src/cards';
 import { describe, expect, it } from 'vitest';
 import { createGame } from '../../../packages/game-engine/src';
 import type { GameAction } from '../../../packages/game-engine/src';
@@ -9,7 +10,7 @@ function fixture() {
  s.activation={playerId:'p1',actionsUsed:0,spellsCast:0,sequencedSpellUsed:false,exploring:0,discardedExit:false,roomEffectUsed:false};
  for(const p of s.players){p.connected=true;p.wizard.position={q:0,r:0};}
  const quest=s.questDeck.shift()!;quest.kind='ROOM_ACTIVATE';quest.amount=3;delete quest.trigger;
- quest.rewardAction={id:'server-test-reward',name:'Server test reward',kind:'SPELL',moments:[{effect:'HEAL',amount:2}],range:0,target:'SELF'};
+ quest.rewardAction={id:'server-test-reward',name:'Server test reward',kind:'SPELL',effects:mainEffects([{effect:'HEAL',amount:2}]),range:0,target:'SELF'};
  Object.assign(quest,{progress:quest.amount,completed:true,claimed:false});s.players[0].quest=quest;
  return s;
 }

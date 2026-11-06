@@ -1,3 +1,4 @@
+import { mainEffects } from '../src/cards';
 import { describe, expect, it } from 'vitest';
 import { applyAction, createAgonyDeck, createGame, EVOCATION_MODEL_LIMITS, evocationAttack, getEvocationSupply, moment, summonEvocation } from '../src';
 import type { GameState } from '../src';
@@ -37,7 +38,7 @@ describe('shared evocation model supplies',()=>{
   const s=fixture(),limit=EVOCATION_MODEL_LIMITS[kind];
   for(let i=0;i<limit;i++)summonEvocation(s,s.players[1+Math.floor(i/3)],kind,origin);
   const victim=s.evocations[0];
-  s.players[0].prepared.rapid={used:false,card:{id:'destroy',name:'Destroy servant',kind:'SPELL',target:'EVOCATION',range:0,moments:[moment.damage(victim.health)]}};
+  s.players[0].prepared.rapid={used:false,card:{id:'destroy',name:'Destroy servant',kind:'SPELL',target:'EVOCATION',range:0,effects:mainEffects([moment.damage(victim.health)])}};
   const before=structuredClone(s);
   const result=applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',targetEvocationId:victim.id});
   expect(s).toEqual(before);

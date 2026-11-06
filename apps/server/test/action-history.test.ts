@@ -1,3 +1,4 @@
+import { mainEffects } from '@brw/game-engine';
 import { describe, expect, it, vi } from 'vitest';
 import { areAdjacent, createGame } from '@brw/game-engine';
 import type { Card, GameAction, GameState, Player, RoomEffect } from '@brw/game-engine';
@@ -19,7 +20,7 @@ function fixture(count = 2): GameState {
  return game;
 }
 function prepare(game: GameState, changes: Partial<Card> = {}, slot: keyof Player['prepared'] = 'rapid') {
- const card = { ...game.library[0].cards.shift()!, target:'ROOM' as const, spellType:undefined, ongoing:undefined, trigger:undefined, moments:[], range:4, ...changes };
+ const card = { ...game.library[0].cards.shift()!, target:'ROOM' as const, spellType:undefined, ongoing:undefined, trigger:undefined, effects:mainEffects([]), range:4, ...changes };
  game.players[0].prepared[slot] = { card, used:false };
  return card;
 }

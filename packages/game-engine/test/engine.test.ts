@@ -1,3 +1,4 @@
+import { mainEffects } from '../src/cards';
 import { moment, momentTotal } from '../src/cards';
 import { describe, expect, it, vi } from 'vitest';
 import { applyAction, createGame, GameState, Card, Quest, RoomEffect, ROOM_COLORS, hexDistance, MAGE_DRAFT_POOL } from '../src';
@@ -32,7 +33,7 @@ function actionGame(g=studyGame(),p1Cards?:string[]) {
  }
  return g;
 }
-const spell=(changes:Partial<Card>={}):Card=>({id:'test-spell',name:'Test spell',kind:'SPELL',moments:[moment.instability(2)],range:4,target:'ROOM',...changes});
+const spell=(changes:Partial<Card>={}):Card=>({id:'test-spell',name:'Test spell',kind:'SPELL',effects:mainEffects([moment.instability(2)]),range:4,target:'ROOM',...changes});
 function giveSpell(g:GameState,card:Card) {g.players[0].prepared.slot1={card,used:false};return g;}
 const quest=(id:string,kind:Quest['kind'],reward=3,amount=1):Quest=>({id,name:id,description:id,kind,amount,reward});
 function roomGame(effect:RoomEffect) {

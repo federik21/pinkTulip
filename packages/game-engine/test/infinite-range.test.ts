@@ -1,3 +1,4 @@
+import { mainEffects } from '../src/cards';
 import { describe, expect, it } from 'vitest';
 import { applyAction, createAgonyDeck, createGame, hexLineDistance, isWithinSpellRange, moment, summonEvocation, upgradeLegacyCards } from '../src';
 import type { Card, GameAction, GameState, Hex } from '../src';
@@ -11,7 +12,7 @@ function fixture(mode:Mode='ROOM',position:Hex={q:1,r:1},range=Number.POSITIVE_I
  game.activation={playerId:'p1',actionsUsed:0,exploring:0,sequencedSpellUsed:false,spellsCast:0,discardedExit:false,roomEffectUsed:false};
  for(const p of game.players){p.connected=true;p.wizard.position={q:0,r:0};}
  game.players[1].wizard.position={...position};
- const card:Card={id:'infinite',name:'Infinite spell',kind:'SPELL',spellType:'COMBAT',target:mode==='ROOM'?'ROOM':'MODEL',range,moments:[moment.instability(1),moment.damage(1)]};
+ const card:Card={id:'infinite',name:'Infinite spell',kind:'SPELL',spellType:'COMBAT',target:mode==='ROOM'?'ROOM':'MODEL',range,effects:mainEffects([moment.instability(1),moment.damage(1)])};
  game.players[0].prepared.slot1={card,used:false};
  const evocation=mode==='EVOCATION'?summonEvocation(game,game.players[1],'CADAVER',position):undefined;
  const targeting=mode==='ROOM'?{roomId:`room-${position.q},${position.r}`}:
@@ -79,7 +80,7 @@ describe('infinite range ignores distance and line of sight',()=>{
 
  it('offers every non-starting room for infinite-range reactive spells after reload and replay',()=>{
   const {game}=fixture('MAGE',{q:0,r:0});game.players[1].wizard.health=1;
-    const card:Card={id:'global-trap-card',name:'Choose any room',kind:'SPELL',spellType:'TRAP',target:'ROOM',range:Infinity,moments:[],
+    const card:Card={id:'global-trap-card',name:'Choose any room',kind:'SPELL',spellType:'TRAP',target:'ROOM',range:Infinity,effects:mainEffects([]),
       trigger:{event:'MAGE_DEFEATED',relation:'ANY',scope:'ANY'},triggerEffects:[{effect:'SUMMON',kind:'SUCCUBUS',position:'TARGET',target:'BOUND_ROOM'}]};
   game.readiedSpells=[{id:'global-trap',playerId:'p1',card}];game.activeSpellOrder=['global-trap'];
   const prompt=applyAction(roundTrip(game),{type:'CAST_SPELL',playerId:'p1',slot:'slot1',targetPlayerId:'p2'});
@@ -95,7 +96,7 @@ describe('infinite range ignores distance and line of sight',()=>{
 
  it('normalizes only null spell ranges and is idempotent',()=>{
   const cards=createAgonyDeck('test');
-  const payload=JSON.parse(JSON.stringify({cards,other:{range:null},missing:{kind:'SPELL',moments:[]}}));
+  const payload=JSON.parse(JSON.stringify({cards,other:{range:null},missing:{kind:'SPELL',effects:mainEffects([])}}));
   upgradeLegacyCards(payload);
   expect(payload.cards).toEqual(cards);
   expect(payload.other.range).toBeNull();

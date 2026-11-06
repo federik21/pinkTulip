@@ -1,3 +1,4 @@
+import { mainEffects } from '../src/cards';
 import { describe, expect, it } from 'vitest';
 import { applyAction, createAgonyDeck, createGame, moment } from '../src';
 import { createEnchantmentFixtures } from './enchantment-fixtures';
@@ -15,7 +16,7 @@ function active(s:GameState,spell:Card,owner='p1',id=spell.name):ActiveSpell {
  const a={id,playerId:owner,card:spell};s.readiedSpells!.push(a);s.activeSpellOrder!.push(a.id);return a;
 }
 function strike(s:GameState,moments=[moment.damage(1),moment.damage(1)]):GameState {
- prepare(s,{id:'attack',name:'Two moments',kind:'SPELL',target:'MAGE',range:2,moments});
+ prepare(s,{id:'attack',name:'Two moments',kind:'SPELL',target:'MAGE',range:2,effects:mainEffects(moments)});
  return applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',targetPlayerId:'p2'});
 }
 function decision(s:GameState):Extract<PendingDecision,{kind:'REACTIVE_SPELL'}> {
@@ -27,7 +28,7 @@ function respond(s:GameState,spellId?:string,targetId?:string):GameState {
  return applyAction(s,{type:'RESPOND_REACTIVE_SPELL',playerId:d.playerId,key:d.key,...(spellId?{activeSpellId:spellId,targetId}:{} )});
 }
 function ward(name:string,amount=1):Card {
- return {id:name,name,kind:'SPELL',spellType:'PROTECTION',target:'SELF',range:0,moments:[moment.heal(amount)],trigger:{event:'DAMAGE_TAKEN',relation:'ENEMY',scope:'BOUND_MODEL'}};
+ return {id:name,name,kind:'SPELL',spellType:'PROTECTION',target:'SELF',range:0,effects:mainEffects([moment.heal(amount)]),trigger:{event:'DAMAGE_TAKEN',relation:'ENEMY',scope:'BOUND_MODEL'}};
 }
 function conserved(s:GameState) {
  for(const p of s.players){
@@ -108,7 +109,7 @@ describe('optional reveal, interrupt ordering and resumption',()=>{
  });
  it('finishes every target of a room moment before interrupting, then resumes the next moment',()=>{
   const s=fixture();active(s,ward('ward'),'p2');
-  prepare(s,{id:'room-hit',name:'Room hit',kind:'SPELL',target:'ROOM',range:2,moments:[moment.damage(1),moment.damage(1)]});
+  prepare(s,{id:'room-hit',name:'Room hit',kind:'SPELL',target:'ROOM',range:2,effects:mainEffects([moment.damage(1),moment.damage(1)])});
   const prompt=applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:'room-0,0'});
   const result=respond(prompt,'ward','p2');
   const facts=result.feedbackEvents!;
@@ -117,7 +118,7 @@ describe('optional reveal, interrupt ordering and resumption',()=>{
  });
  it('supports nested optional interrupts and consumes each card only once',()=>{
   const s=fixture();
-  active(s,{...ward('retort'),moments:[],triggerEffects:[{effect:'DAMAGE',amount:1,target:'EVENT_ACTOR'}]},'p2');
+  active(s,{...ward('retort'),effects:mainEffects([]),triggerEffects:[{effect:'DAMAGE',amount:1,target:'EVENT_ACTOR'}]},'p2');
   active(s,ward('nested'),'p1');
   const prompt=strike(s,[moment.damage(1)]);
   const nested=respond(prompt,'retort','p2');expect(decision(nested).playerId).toBe('p1');
@@ -130,7 +131,7 @@ describe('optional reveal, interrupt ordering and resumption',()=>{
  });
  it('keeps a newly summoned Succubus identity stable across its nested Soul Tithe decisions',()=>{
   const s=fixture();
-  active(s,{...ward('summoning'),moments:[moment.summon('SUCCUBUS'),moment.pain(1)],trigger:{event:'SPELL_CAST',relation:'ENEMY',scope:'ANY'}},'p2');
+  active(s,{...ward('summoning'),effects:mainEffects([moment.summon('SUCCUBUS'),moment.pain(1)]),trigger:{event:'SPELL_CAST',relation:'ENEMY',scope:'ANY'}},'p2');
   let result=respond(strike(s,[moment.damage(1)]),'summoning','p2');
   expect(result.pendingDecision?.kind).toBe('SOUL_TITHE');
   const first=result.pendingDecision;
@@ -145,7 +146,7 @@ describe('optional reveal, interrupt ordering and resumption',()=>{
  });
  it('snapshots the original action and never mutates a paused replay during response',()=>{
   const s=fixture();active(s,ward('ward'),'p2');
-  prepare(s,{id:'hit',name:'Hit',kind:'SPELL',range:2,target:'MAGE',moments:[moment.damage(1)]});
+  prepare(s,{id:'hit',name:'Hit',kind:'SPELL',range:2,target:'MAGE',effects:mainEffects([moment.damage(1)])});
   const action:GameAction={type:'CAST_SPELL',playerId:'p1',slot:'rapid',targetPlayerId:'p2'};
   const prompt=applyAction(s,action),before=structuredClone(prompt);
   action.targetPlayerId='p3';
@@ -158,7 +159,7 @@ describe('optional reveal, interrupt ordering and resumption',()=>{
   const s=fixture();s.currentPlayerId='p2';s.activation!.playerId='p2';
   s.players[2].wizard.position={q:1,r:1};
   active(s,card('Torment'));
-  prepare(s,{id:'dealer',name:'Dealer',kind:'SPELL',spellType:'COMBAT',target:'MAGE',range:Infinity,moments:[moment.damage(1)]},'p2');
+  prepare(s,{id:'dealer',name:'Dealer',kind:'SPELL',spellType:'COMBAT',target:'MAGE',range:Infinity,effects:mainEffects([moment.damage(1)])},'p2');
   const prompt=applyAction(s,{type:'CAST_SPELL',playerId:'p2',slot:'rapid',targetPlayerId:'p3'});
   expect(decision(prompt).event).toBe('DAMAGE_DEALT');
   expect(decision(prompt).options[0].targets.map(t=>t.id)).toEqual(['p2']);
@@ -169,7 +170,7 @@ describe('optional reveal, interrupt ordering and resumption',()=>{
  });
  it('cancels remaining physical effects if the acting mage is defeated by a trap',()=>{
   const s=fixture();s.players[0].wizard.health=1;
-  const trap={...ward('fatal'),target:'MAGE',range:2,moments:[moment.damage(1)],trigger:{event:'ROOM_ACTIVATED',relation:'ENEMY',scope:'ANY'}} as Card;
+  const trap={...ward('fatal'),target:'MAGE',range:2,effects:mainEffects([moment.damage(1)]),trigger:{event:'ROOM_ACTIVATED',relation:'ENEMY',scope:'ANY'}} as Card;
   active(s,trap,'p2');s.board.rooms.find(r=>r.id==='room-0,0')!.effect='INSTABILITY';
   const begun=applyAction(s,{type:'BEGIN_PHYSICAL_ACTION',playerId:'p1',kind:'EXPLORE'});
   const result=respond(applyAction(begun,{type:'ACTIVATE_ROOM',playerId:'p1'}),'fatal','p1');

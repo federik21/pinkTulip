@@ -1,3 +1,4 @@
+import { mainEffects } from '@brw/game-engine';
 import { describe, expect, it, vi } from 'vitest';
 import { applyAction, BLACK_ROSE_ID, createGame } from '@brw/game-engine';
 import type { Card, Evocation, GameAction, GameState, Player } from '@brw/game-engine';
@@ -11,7 +12,7 @@ const disabled = { canUndo:false, canRedo:false };
 const player = (game: GameState, id = 'p1') => game.players.find(p => p.id === id)!;
 const room = (game: GameState, id = center) => game.board.rooms.find(r => r.id === id)!;
 const hidden = (index: number): Card => ({ id:`hidden-${index}`, name:'Hidden spell', kind:'SPELL',
- moments:[], range:0, target:'MODEL' });
+ effects:mainEffects([]), range:0, target:'MODEL' });
 
 // Turn setup is used only before a history sequence begins, never between its snapshots.
 function turn(game: GameState, id = 'p1') {

@@ -1,3 +1,4 @@
+import { mainEffects, getAllMoments } from '../src/cards';
 import { describe, expect, it } from 'vitest';
 import {
  applyAction, canPlayerAct, canUseSpellDummy, createEnchantmentDeck, createGame,
@@ -42,7 +43,7 @@ function arm(s:GameState,name:Card|string,id='p1',selection:Selection={roomId:ce
 const instruction=(effect:TriggeredInstruction['effect'],amount:number,target:TriggeredInstruction['target']):TriggeredInstruction=>({effect,amount,target});
 let syntheticId=0;
 function custom(name:string,trigger:TriggerCondition,effects:TriggeredInstruction[],changes:Partial<Card>={}):Card {
- return {id:`synthetic-${++syntheticId}`,name,kind:'SPELL',target:'ROOM',range:3,moments:[],spellType:'TRAP',trigger,triggerEffects:effects,...changes};
+ return {id:`synthetic-${++syntheticId}`,name,kind:'SPELL',target:'ROOM',range:3,effects:mainEffects([]),spellType:'TRAP',trigger,triggerEffects:effects,...changes};
 }
 const on=(event:TriggerCondition['event'],scope:TriggerCondition['scope']='BOUND_ROOM',relation:TriggerCondition['relation']='ENEMY'):TriggerCondition=>({event,scope,relation});
 function evoc(s:GameState,id='e1',owner='p2',health=4,position:Hex={q:0,r:0}):Evocation {
@@ -101,8 +102,8 @@ describe('Enchantment public catalog and active-zone contract',()=>{
     ['Thorned Path','COMBAT','MAGE'],['Runic Remedy','CONTINGENCY','MAGE'],['Arcane Feedback','COMBAT','MAGE'],
  ];
  it.each([{damage:1},{instability:1},{convert:1},{heal:2},{}])('infers legacy type without changing the card: %j',stats=>{
-  const card:Card={id:'legacy',name:'Legacy',kind:'SPELL',target:'MODEL',moments:[],range:2,...withMoments(stats)};
-    const before=structuredClone(card);expect(getSpellType(card)).toBe(card.moments.some(m=>m.effect!=='HEAL')?'COMBAT':'CONTINGENCY');expect(card).toEqual(before);
+  const card:Card={id:'legacy',name:'Legacy',kind:'SPELL',target:'MODEL',range:2,...withMoments(stats)};
+    const before=structuredClone(card);expect(getSpellType(card)).toBe(getAllMoments(card).some(m=>m.effect!=='HEAL')?'COMBAT':'CONTINGENCY');expect(card).toEqual(before);
   expect(getSpellType({...card,spellType:'PROTECTION'})).toBe('PROTECTION');
  });
  it('initializes absent legacy active zones on the first command',()=>{
@@ -114,7 +115,7 @@ describe('Enchantment public catalog and active-zone contract',()=>{
 
 describe('reactive targeting, quotas and dummy compatibility',()=>{
  it('ongoing MODEL spells and legacy MODEL offense both allow dummy targeting without binding',()=>{
-  const c:Card={id:'model',name:'Model',kind:'SPELL',target:'MODEL',range:2,moments:[moment.damage(1)]};
+  const c:Card={id:'model',name:'Model',kind:'SPELL',target:'MODEL',range:2,effects:mainEffects([moment.damage(1)])};
   expect(canUseSpellDummy(c)).toBe(true);
   const bound={...c,ongoing:{trigger:on('ENTER_ROOM','BOUND_MODEL','ANY'),effects:[]}};
   expect(canUseSpellDummy(bound)).toBe(true);

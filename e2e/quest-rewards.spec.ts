@@ -1,3 +1,4 @@
+import { mainEffects } from '../packages/game-engine/src/cards';
 import { expect, test, type Page } from '@playwright/test';
 import { createGame, summonEvocation } from '../packages/game-engine/src';
 import type { GameAction, GameState, Quest } from '../packages/game-engine/src';
@@ -9,10 +10,10 @@ function take(s:GameState,kind:Quest['kind']='ROOM_ACTIVATE',ready=true) {
  const quest=s.questDeck.shift()!;quest.kind=kind;delete quest.trigger;
  quest.amount=kind==='INSTABILITY'?2:kind==='ROOM_ACTIVATE'?3:1;
  quest.rewardAction=kind==='REBUILD'
-  ?{id:'e2e-room-reward',name:'Test room reward',kind:'SPELL',moments:[{effect:'INSTABILITY',amount:1}],range:2,target:'ROOM'}
+  ?{id:'e2e-room-reward',name:'Test room reward',kind:'SPELL',effects:mainEffects([{effect:'INSTABILITY',amount:1}]),range:2,target:'ROOM'}
   :kind==='INSTABILITY'
-  ?{id:'e2e-model-reward',name:'Test model reward',kind:'SPELL',moments:[{effect:'DAMAGE',amount:1}],range:2,target:'MODEL'}
-  :{id:'e2e-self-reward',name:'Test self reward',kind:'SPELL',moments:[{effect:'HEAL',amount:2}],range:0,target:'SELF'};
+  ?{id:'e2e-model-reward',name:'Test model reward',kind:'SPELL',effects:mainEffects([{effect:'DAMAGE',amount:1}]),range:2,target:'MODEL'}
+  :{id:'e2e-self-reward',name:'Test self reward',kind:'SPELL',effects:mainEffects([{effect:'HEAL',amount:2}]),range:0,target:'SELF'};
  Object.assign(quest,{completed:ready,claimed:false,progress:ready?quest.amount:0});return quest;
 }
 function fixture(kind:Quest['kind']='ROOM_ACTIVATE') {
@@ -128,7 +129,7 @@ for(const viewport of [{width:1440,height:1000},{width:390,height:844},{width:32
  });
  test('can solve the reward earned by the second paid action before the turn hands off',async({page})=>{
   const initial=fixture('INSTABILITY'),quest=initial.players[0].quest!;Object.assign(quest,{completed:false,progress:0});
-  initial.players[0].prepared.rapid={used:false,card:{id:initial.library[0].cards.shift()!.id,name:'Final action',kind:'SPELL',spellType:'COMBAT',target:'ROOM',range:2,moments:[{effect:'INSTABILITY',amount:2}]}};
+  initial.players[0].prepared.rapid={used:false,card:{id:initial.library[0].cards.shift()!.id,name:'Final action',kind:'SPELL',spellType:'COMBAT',target:'ROOM',range:2,effects:mainEffects([{effect:'INSTABILITY',amount:2}])}};
   const wire=await mount(page,initial);wire.dispatch({type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:'room-0,0'});
   await expect(dock(page).locator('.quest-notification')).toHaveText('1');expect(wire.state.activation!.actionsUsed).toBe(2);
   expect(wire.state.currentPlayerId).toBe('p1');await dock(page).click();const panel=quests(page);

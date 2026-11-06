@@ -1,3 +1,4 @@
+import { mainEffects } from '../src/cards';
 import { describe, expect, it } from 'vitest';
 import { applyAction, createAgonyDeck, createGame, createLibrary, EVOCATION_TYPES, evocationAttack, summonEvocation } from '../src';
 import type { Evocation, GameAction, GameState, Hex } from '../src';
@@ -119,7 +120,7 @@ describe('Soul Tithe auto switch',()=>{
 describe('Progressable quests',()=>{
  it('awards a completed quest only after its free reward action resolves and then grants the points',()=>{
   const game=createGame(2);game.phase='ACTION';game.round=1;game.currentPlayerId='p1';game.activation={playerId:'p1',actionsUsed:0,exploring:0,sequencedSpellUsed:false,spellsCast:0,discardedExit:false,roomEffectUsed:false};
-  const quest={id:'room-quest',name:'Open the Lodge',description:'Activate 2 rooms.',kind:'ROOM_ACTIVATE',amount:2,reward:3,progress:2,completed:true,rewardAction:{id:'quest-reward',name:'Lodge Blessing',kind:'SPELL',moments:[{effect:'HEAL',amount:1}],range:0,target:'SELF'}} as any;
+  const quest={id:'room-quest',name:'Open the Lodge',description:'Activate 2 rooms.',kind:'ROOM_ACTIVATE',amount:2,reward:3,progress:2,completed:true,rewardAction:{id:'quest-reward',name:'Lodge Blessing',kind:'SPELL',effects:mainEffects([{effect:'HEAL',amount:1}]),range:0,target:'SELF'}} as any;
   game.players[0].quest=quest; game.players[0].additionalQuests=[];
   game.players[0].wizard.damageCubes=1; game.players[0].wizard.health=2;
   const used=applyAction(game,{type:'USE_QUEST_REWARD',playerId:'p1',questId:'room-quest'});

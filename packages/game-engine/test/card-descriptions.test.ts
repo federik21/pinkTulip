@@ -1,3 +1,4 @@
+import { mainEffects } from '../src/cards';
 import { describe, expect, it } from 'vitest';
 import { createAgonyDeck, getSpellDescription, getSpellType } from '../src';
 import { createEnchantmentFixtures } from './enchantment-fixtures';
@@ -6,7 +7,7 @@ import type { Card, TriggerCondition, TriggerEvent } from '../src';
 const catalog=()=>[...createEnchantmentFixtures(),...createAgonyDeck('agony','agony')];
 const isReactive=(card:Card)=>['TRAP','PROTECTION'].includes(getSpellType(card));
 const fixture=(overrides:Partial<Card>={}):Card=>({
- id:'description-fixture',name:'Description fixture',kind:'SPELL',spellType:'TRAP',moments:[],range:2,target:'MODEL',...overrides,
+ id:'description-fixture',name:'Description fixture',kind:'SPELL',spellType:'TRAP',effects:mainEffects([]),range:2,target:'MODEL',...overrides,
 });
 
 // These are the full pre-metadata rules: display changes must not rewrite them.
@@ -48,7 +49,7 @@ describe('reactive constructor display metadata',()=>{
   const copies=catalog().filter(card=>card.name===definition.name);
   expect(copies).toHaveLength(3);
   for(const card of copies) {
-   const before=structuredClone(card),condition=card.trigger,effects=card.triggerEffects,moments=card.moments;
+   const before=structuredClone(card),condition=card.trigger,effects=card.triggerEffects,effects2=card.effects;
    Object.freeze(card);
    expect(card).toMatchObject(definition);
    const description=getSpellDescription(card);
@@ -56,7 +57,7 @@ describe('reactive constructor display metadata',()=>{
    expect(Object.keys(description)).toEqual(['triggerText','rulesText']);
    expect(description.rulesText ?? '').not.toMatch(/^When(?:ever)?\b/i);
    expect(card).toStrictEqual(before);
-   expect(card.trigger).toBe(condition);expect(card.triggerEffects).toBe(effects);expect(card.moments).toBe(moments);
+   expect(card.trigger).toBe(condition);expect(card.triggerEffects).toBe(effects);expect(card.effects).toBe(effects2);
   }
  });
 
@@ -78,7 +79,7 @@ describe('reactive constructor display metadata',()=>{
    expect(restored[i].rulesText).toBe(cards[i].rulesText);
    expect(restored[i].trigger).toStrictEqual(cards[i].trigger);
    expect(restored[i].triggerEffects).toStrictEqual(cards[i].triggerEffects);
-   expect(restored[i].moments).toStrictEqual(cards[i].moments);
+   expect(restored[i].effects).toStrictEqual(cards[i].effects);
    expect(getSpellDescription(restored[i])).toStrictEqual(getSpellDescription(cards[i]));
   }
   expect(JSON.stringify(cards)).toBe(serialized);
@@ -90,15 +91,15 @@ describe('reactive constructor display metadata',()=>{
   expect(cards.every(card=>card.schoolId===undefined)).toBe(true);
   expect(cards.find(card=>card.name==='Torment')).toMatchObject({
    trigger:{event:'DAMAGE_DEALT',relation:'ENEMY',scope:'ANY'},triggerTarget:'EVENT_ACTOR',
-   moments:[{effect:'DAMAGE',amount:2},{effect:'SUMMON',kind:'SUCCUBUS',position:'TARGET'}],
+   effects:mainEffects([{effect:'DAMAGE',amount:2},{effect:'SUMMON',kind:'SUCCUBUS',position:'TARGET'}]),
    triggerEffects:[{effect:'DAMAGE',amount:2,target:'EVENT_ACTOR'},{effect:'SUMMON',kind:'SUCCUBUS',position:'TARGET',target:'EVENT_ACTOR'}],
   });
   expect(cards.find(card=>card.name==='Master of Pleasure')).toMatchObject({
-   trigger:{event:'QUEST_SOLVED',relation:'ENEMY',scope:'ANY'},triggerTarget:'EVENT_MODEL',moments:[],
+   trigger:{event:'QUEST_SOLVED',relation:'ENEMY',scope:'ANY'},triggerTarget:'EVENT_MODEL',effects:mainEffects([]),
    triggerEffects:[{effect:'DAMAGE',amount:2,target:'EVENT_MODEL'},{effect:'SUMMON',kind:'SUCCUBUS',position:'TARGET',target:'EVENT_MODEL'}],
   });
   expect(cards.find(card=>card.name==='Liquefy the Pain')).toMatchObject({
-   trigger:{event:'MAGE_DEFEATED',relation:'SELF',relationTo:'EVENT_MODEL',scope:'ANY'},triggerTarget:'EVENT_ROOM',moments:[],
+   trigger:{event:'MAGE_DEFEATED',relation:'SELF',relationTo:'EVENT_MODEL',scope:'ANY'},triggerTarget:'EVENT_ROOM',effects:mainEffects([]),
    triggerEffects:[{effect:'SUMMON',kind:'SUCCUBUS',position:'TARGET',target:'EVENT_ROOM'},{effect:'ACTIVATE_EVOCATION',kind:'SUCCUBUS',target:'EVENT_ROOM'}],
   });
  });

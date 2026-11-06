@@ -1,3 +1,4 @@
+import { mainEffects } from '../src/cards';
 import { moment } from '../src/cards';
 import { describe, expect, it } from 'vitest';
 import { applyAction, canPlayerAct, createGame, hexDistance, hexLineDistance } from '../src';
@@ -16,7 +17,7 @@ function fixture(mode: Mode, target: Hex, range: number, origin: Hex = {q:0,r:0}
  g.players[0].wizard.position={...origin};g.players[1].wizard.position={...target};
  if(mode==='EVOCATION')g.evocations.push({id:'enemy-cadaver',playerId:'p2',name:'Cadaver',archetype:'UNDEAD',movement:2,attack:2,health:2,passive:'WOUNDED_FURY',position:{...target},damageCubes:0,damageByPlayer:{},activated:false});
  const physicalCard=g.library[0].cards.shift()!;
- const card:Card={id:physicalCard.id,name:'Range test',kind:'SPELL',spellType:'COMBAT',range,target:mode==='ROOM'?'ROOM':'MODEL',moments:[moment.instability(1),moment.damage(1)]};
+ const card:Card={id:physicalCard.id,name:'Range test',kind:'SPELL',spellType:'COMBAT',range,target:mode==='ROOM'?'ROOM':'MODEL',effects:mainEffects([moment.instability(1),moment.damage(1)])};
  g.players[0].prepared.slot1={card,used:false};
  const targeting=mode==='ROOM'?{roomId:`room-${target.q},${target.r}`}:
   mode==='DUMMY'?{roomId:`room-${target.q},${target.r}`,dummy:true}:

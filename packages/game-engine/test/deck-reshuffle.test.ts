@@ -1,3 +1,4 @@
+import { mainEffects } from '../src/cards';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { applyAction, createGame, upgradeLegacyCards } from '../src';
 import type { GameState, RoomEffect } from '../src';
@@ -72,7 +73,7 @@ describe('every discard-backed deck refills when exhausted, even partway through
  });
  it('replays the identical shuffle after a reaction pauses a drawing room action, even through JSON',()=>{
   const s=actionRoom('DRAW_GRIMOIRE');s.players[0].discard=s.library[0].cards.splice(0,4);
-    const card={id:s.library[0].cards.shift()!.id,name:'Draw observer',kind:'SPELL' as const,target:'SELF' as const,range:0,moments:[],spellType:'PROTECTION' as const,
+    const card={id:s.library[0].cards.shift()!.id,name:'Draw observer',kind:'SPELL' as const,target:'SELF' as const,range:0,effects:mainEffects([]),spellType:'PROTECTION' as const,
    trigger:{event:'ROOM_ACTIVATED' as const,relation:'ENEMY' as const,scope:'ANY' as const},triggerEffects:[]};
   s.readiedSpells!.push({id:'draw-observer',playerId:'p2',card});s.activeSpellOrder!.push('draw-observer');
   const paused=activate(s);expect(paused.pendingDecision?.kind).toBe('REACTIVE_SPELL');

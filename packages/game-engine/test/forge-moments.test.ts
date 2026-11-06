@@ -1,3 +1,4 @@
+import { mainEffects } from '../src/cards';
 import { describe, expect, it } from 'vitest';
 import { applyAction, createGame } from '../src';
 import type { Card, GameState } from '../src';
@@ -21,7 +22,7 @@ describe('Forge rebuilt room resolves each step as its own interruptible moment'
   p2.cubes.onWizard = 0; p2.cubes.onBoard = 0; p2.cubes.onEvocations = 0; p2.cubes.onWizard = 0;
   p2.cubes.available -= 9; p2.cubes.onWizard = 9;
   const prick: Card = {
-   id: 'prick', name: 'Prick', kind: 'SPELL', moments: [], range: 1, target: 'MAGE',
+   id: 'prick', name: 'Prick', kind: 'SPELL', effects: mainEffects([]), range: 1, target: 'MAGE',
    ongoing: { trigger: { event: 'ENTER_ROOM', relation: 'ENEMY', scope: 'ANY' }, effects: [{ effect: 'DAMAGE', amount: 1, target: 'EVENT_ACTOR' }] },
   };
   s.ongoingSpells = [{ id: 'prick-active', playerId: 'p2', targetPlayerId: 'p2', card: prick }];

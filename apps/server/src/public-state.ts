@@ -1,7 +1,7 @@
 import type { Card, GameState, PlayerId } from '@brw/game-engine';
 import type { ActionHistory } from './action-history';
 
-const hiddenCard = (index: number): Card => ({ id:`hidden-${index}`, name:'Hidden spell', kind:'SPELL', moments:[], range:0, target:'MODEL' });
+const hiddenCard = (index: number): Card => ({ id:`hidden-${index}`, name:'Hidden spell', kind:'SPELL', effects:[], range:0, target:'MODEL' });
 
 export function publicState(game: GameState, viewer: PlayerId | null, history: ActionHistory): GameState {
  const copy=structuredClone(game);

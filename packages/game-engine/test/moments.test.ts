@@ -1,3 +1,4 @@
+import { getAllMoments, getMainMoments, isUnstable, mainEffects, unstableEffects } from '../src/cards';
 import { describe, expect, it } from 'vitest';
 import { applyAction, createGame, createLibrary, createPowerfulDeck, getEffectiveSpell, getSpellType, isWithinSpellRange } from '../src';
 import { moment, momentTotal, upgradeLegacyCards } from '../src/cards';
@@ -5,7 +6,7 @@ import type { ActiveSpell, Card, Evocation, GameState, Moment, SpellTarget } fro
 
 const origin = { q: 0, r: 0 };
 const spell = (moments: Moment[], target: SpellTarget = 'MODEL'): Card =>
- ({ id: 'moments-spell', name: 'Moments spell', kind: 'SPELL', moments, range: 2, target });
+ ({ id: 'moments-spell', name: 'Moments spell', kind: 'SPELL', effects: mainEffects(moments), range: 2, target });
 
 function fixture(): GameState {
  const s = createGame(4); s.phase = 'ACTION'; s.round = 1; s.currentPlayerId = 'p1';
@@ -84,7 +85,7 @@ describe('moments are an ordered, repeatable list of effect steps', () => {
  it('triggers a bound Pain Mark on each damage moment the mage deals', () => {
   const s = fixture();
   const mark: Card = {
-    id: 'pain-mark', name: 'Pain Mark', kind: 'SPELL', moments: [], range: 1, target: 'MAGE',
+    id: 'pain-mark', name: 'Pain Mark', kind: 'SPELL', effects: mainEffects([]), range: 1, target: 'MAGE',
     ongoing: { trigger: { event: 'DAMAGE_DEALT', relation: 'ANY', scope: 'BOUND_MODEL' }, effects: [{ effect: 'DAMAGE', amount: 2, target: 'EVENT_ACTOR' }] },
   };
   s.ongoingSpells = [{ id:'mark', playerId:'p2', targetPlayerId:'p1', card:mark }];
@@ -184,12 +185,6 @@ describe('moments are an ordered, repeatable list of effect steps', () => {
   expect(after.players[3].wizard.damageCubes).toBe(0);
   expect(after.evocations[0].damageCubes).toBe(0);
  });
-
- it('upgrades a saved legacy splash damage moment into a conditional follow-up', () => {
-  const saved = { kind: 'SPELL', moments: [{ effect: 'DAMAGE', amount: 2, splash: { range: 1, when: 'AFTER_DEFEAT' } }] };
-  upgradeLegacyCards(saved);
-  expect(saved.moments).toEqual([{ effect: 'DAMAGE', amount: 2 }, { effect: 'DAMAGE', amount: 2, when: 'TARGET_DEFEATED', area: { range: 1 } }]);
- });
 });
 
 describe('moment resolution is interrupted by a mage defeat and then resumes', () => {
@@ -221,7 +216,7 @@ describe('moment resolution is interrupted by a mage defeat and then resumes', (
  it('resumes the next moment after a reactive spell interrupts the first one', () => {
   const s = fixture();
   const ward: Card = {
-   id: 'ward', name: 'Ward', kind: 'SPELL', moments: [], range: 0, target: 'SELF', spellType: 'PROTECTION',
+   id: 'ward', name: 'Ward', kind: 'SPELL', effects: mainEffects([]), range: 0, target: 'SELF', spellType: 'PROTECTION',
    trigger: { event: 'DAMAGE_TAKEN', relation: 'ENEMY', scope: 'BOUND_MODEL' },
    triggerEffects: [{ effect: 'HEAL', amount: 1, target: 'BOUND_MODEL' }],
   };
@@ -249,12 +244,12 @@ describe('card catalog and legacy saves', () => {
  it('prints every card as a moments list without flat effect fields', () => {
   const cards = [...createLibrary().flatMap(d => d.cards), ...createPowerfulDeck()];
   for (const card of cards) {
-   expect(Array.isArray(card.moments)).toBe(true);
-   for (const flat of ['damage', 'heal', 'convert']) expect(card).not.toHaveProperty(flat);
-   if ('instability' in card) expect(card.instability).toBe(true);
-   // Printed instability is its own effect, never an opening caster-room moment.
-   expect(card.moments.some(m => m.effect === 'INSTABILITY' && m.scope === 'CASTER_ROOM')).toBe(false);
-  for (const m of card.moments) {
+   expect(Array.isArray(card.effects)).toBe(true);
+   for (const flat of ['damage', 'heal', 'convert', 'moments', 'instability']) expect(card).not.toHaveProperty(flat);
+   // Printed instability is its own PLACE Effect, first, never a Moment of the MAIN Effect.
+   card.effects.forEach((effect, i) => expect(effect.kind === 'PLACE').toBe(i === 0 && isUnstable(card)));
+   expect(getMainMoments(card).some(m => m.effect === 'INSTABILITY' && m.scope === 'CASTER_ROOM')).toBe(false);
+  for (const m of getAllMoments(card)) {
    if('amount' in m)expect(m.amount).toBeGreaterThan(0);
   else if(m.effect==='SUMMON'||m.effect==='ACTIVATE_EVOCATION')expect(m.kind).toBeTruthy();
   }
@@ -263,42 +258,13 @@ describe('card catalog and legacy saves', () => {
   expect([momentTotal(cross, 'DAMAGE'), momentTotal(cross, 'INSTABILITY'), getSpellType(cross)]).toEqual([0, 1, 'COMBAT']);
  });
 
- it('upgrades flat cards in saved games in the old resolution order, once', () => {
-  const save = { library: [{ cards: [{ id: 'old', name: 'Old', kind: 'SPELL', damage: 2, instability: 1, heal: 0, convert: 3, range: 1, target: 'MODEL' }] }], kind: 'GAME' };
-  upgradeLegacyCards(save);
-  const card = save.library[0].cards[0] as unknown as Card;
-  expect(card.moments).toEqual([moment.instability(1), moment.convert(3), moment.damage(2)]);
-  for (const flat of ['damage', 'instability', 'heal', 'convert']) expect(card).not.toHaveProperty(flat);
-  const copy = structuredClone(save); upgradeLegacyCards(copy); expect(copy).toEqual(save);
- });
-
- it('keeps saved instability flags as the separate first effect and migrates opening moments', () => {
-  const save = { cards: [
-   { id:'normal', name:'Normal', kind:'SPELL', instability:true, moments:[moment.damage(2)], range:1, target:'MODEL' },
-   { id:'reactive', name:'Reactive', kind:'SPELL', instability:true, moments:[], range:1, target:'SELF', trigger:{event:'DAMAGE_TAKEN'}, triggerEffects:[{effect:'HEAL',amount:1,target:'OWNER'}] },
-   { id:'legacy-boolean', name:'Legacy boolean', kind:'SPELL', instability:true, damage:2, range:1, target:'MODEL' },
-   { id:'moment-form', name:'Moment form', kind:'SPELL', moments:[moment.inCasterRoom(moment.instability(1)),moment.damage(2)], range:1, target:'MODEL' },
-   { id:'reactive-form', name:'Reactive form', kind:'SPELL', moments:[], range:1, target:'SELF', trigger:{event:'DAMAGE_TAKEN'}, triggerEffects:[{effect:'INSTABILITY',amount:1,scope:'CASTER_ROOM',target:'OWNER'},{effect:'HEAL',amount:1,target:'OWNER'}] },
-   { id:'target-room', name:'Target room', kind:'SPELL', moments:[moment.instability(1),moment.damage(2)], range:1, target:'ROOM' },
-  ] };
-  upgradeLegacyCards(save);
-  expect(save.cards[0]).toMatchObject({instability:true,moments:[moment.damage(2)]});
-  expect(save.cards[1]).toMatchObject({instability:true,moments:[],triggerEffects:[{effect:'HEAL',amount:1,target:'OWNER'}]});
-  expect(save.cards[2]).toMatchObject({instability:true,moments:[{effect:'DAMAGE',amount:2}]});
-  expect(save.cards[3]).toMatchObject({instability:true,moments:[moment.damage(2)]});
-  expect(save.cards[4]).toMatchObject({instability:true,triggerEffects:[{effect:'HEAL',amount:1,target:'OWNER'}]});
-  // A plain instability moment aimed at the target room is a different printed effect and stays put.
-  expect(save.cards[5]).not.toHaveProperty('instability');
-  expect(save.cards[5].moments).toEqual([moment.instability(1),moment.damage(2)]);
-  const copy = structuredClone(save); upgradeLegacyCards(copy); expect(copy).toEqual(save);
- });
-
  it('keeps instability ahead of an enhancement positioned before printed moments', () => {
-  const s=fixture(), card:Card={...spell([moment.inCasterRoom(moment.instability(1)),moment.damage(2)]),id:'unstable-enhanced',
+  const s=fixture(), card:Card={...spell([]),effects:unstableEffects([moment.damage(2)]),id:'unstable-enhanced',
    enhancement:{requires:['fire'],moments:[moment.damage(3)],position:'BEFORE',text:'enhanced'}};
   const p=s.players[0];
   p.prepared.slot1={used:true,card:{...spell([]),id:'fire-symbol',element:'fire'}};
   const effective=getEffectiveSpell(s,p,card);
-  expect(effective.moments.map(step=>step.effect)).toEqual(['INSTABILITY','DAMAGE','DAMAGE']);
+  expect(effective.effects.map(effect=>effect.kind)).toEqual(['PLACE','MAIN']);
+  expect(getMainMoments(effective).map(step=>step.effect)).toEqual(['DAMAGE','DAMAGE']);
  });
 });

@@ -1,3 +1,4 @@
+import { mainEffects } from '../src/cards';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { applyAction, createGame, createHexDeck, createLibrary, getJinxSupply, getMageMovement, hasJinx, JINX_COPIES, JINX_TARGET } from '../src';
 import type { Card, GameState, JinxName, Moment } from '../src';
@@ -11,7 +12,7 @@ function fixture():GameState {
  return s;
 }
 const jinx=(name:JinxName,cubes=0)=>({id:`j-${name}-${cubes}-${Math.random()}`,name,cubes});
-const mageSpell=(moments:Moment[],extra:Partial<Card>={}):Card=>({id:'t',name:'Test hex',kind:'SPELL',spellType:'COMBAT',target:'MAGE',range:2,moments,...extra} as Card);
+const mageSpell=(moments:Moment[],extra:Partial<Card>={}):Card=>({id:'t',name:'Test hex',kind:'SPELL',spellType:'COMBAT',target:'MAGE',range:2,effects:mainEffects(moments),...extra} as Card);
 const cast=(s:GameState,card:Card,targetPlayerId='p2')=>{
  s.players[0].prepared.rapid={card,used:false};
  return applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',targetPlayerId});
@@ -112,7 +113,7 @@ describe('Hex school',()=>{
   s.players[0].jinxes=[jinx('OBLIVION')];
   const room=s.board.rooms.find(r=>r.id==='room-0,0')!;
   const before=room.instability;
-  const card={id:'r',name:'Room spell',kind:'SPELL',spellType:'COMBAT',target:'ROOM',range:Infinity,moments:[{effect:'INSTABILITY',amount:2}]} as Card;
+  const card={id:'r',name:'Room spell',kind:'SPELL',spellType:'COMBAT',target:'ROOM',range:Infinity,effects:mainEffects([{effect:'INSTABILITY',amount:2}])} as Card;
   s.players[0].prepared.rapid={card,used:false};
   s=applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:room.id});
   expect(s.board.rooms.find(r=>r.id===room.id)!.instability-before).toBe(1);
@@ -123,7 +124,7 @@ describe('Hex school',()=>{
   let s=fixture();
   s.players[0].jinxes=[jinx('WEAKNESS')];
   const room=s.board.rooms.find(r=>(r.color==='amber'||r.color==='emerald')&&r.effect&&!r.startingFor)!;
-  const card={id:'r',name:'Room spell',kind:'SPELL',spellType:'COMBAT',target:'ROOM',range:Infinity,moments:[{effect:'ACTIVATE_TARGET_ROOM'}]} as Card;
+  const card={id:'r',name:'Room spell',kind:'SPELL',spellType:'COMBAT',target:'ROOM',range:Infinity,effects:mainEffects([{effect:'ACTIVATE_TARGET_ROOM'}])} as Card;
   s.players[0].prepared.rapid={card,used:false};
   s=applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:room.id});
   while(s.pendingDecision?.kind==='CHOICE')s=applyAction(s,{type:'RESPOND_CHOICE',playerId:s.pendingDecision.playerId,key:s.pendingDecision.key,choiceId:s.pendingDecision.options[0].id});

@@ -1,3 +1,4 @@
+import { mainEffects } from '../src/cards';
 import { describe, expect, it } from 'vitest';
 import { applyAction, createGame, moment } from '../src';
 import type { ActiveSpell, Card, GameState, PendingDecision } from '../src';
@@ -10,8 +11,8 @@ function fixture():GameState {
  s.players[0].isBot=true;
  return s;
 }
-const strike:Card={id:'attack',name:'Two Bolts',kind:'SPELL',target:'MAGE',range:2,moments:[moment.damage(1),moment.damage(1)]};
-const ward:Card={id:'ward',name:'Mending Ward',kind:'SPELL',spellType:'PROTECTION',target:'SELF',range:0,moments:[moment.heal(1)],trigger:{event:'DAMAGE_TAKEN',relation:'ENEMY',scope:'BOUND_MODEL'}};
+const strike:Card={id:'attack',name:'Two Bolts',kind:'SPELL',target:'MAGE',range:2,effects:mainEffects([moment.damage(1),moment.damage(1)])};
+const ward:Card={id:'ward',name:'Mending Ward',kind:'SPELL',spellType:'PROTECTION',target:'SELF',range:0,effects:mainEffects([moment.heal(1)]),trigger:{event:'DAMAGE_TAKEN',relation:'ENEMY',scope:'BOUND_MODEL'}};
 
 describe('turn recap',()=>{
  it('records the ordered public log with the cast and triggered cards, then closes at end of turn',()=>{

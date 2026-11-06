@@ -1,5 +1,5 @@
 import { Activation, ActiveSpell, Board, Card, DamageOrigin, DecisionAnswer, DecisionDetails, Element, EventCard, Evocation, EvocationKind, FeedbackTarget, GameAction, GameFeedbackEvent, GameState, Hex, Jinx, JinxName, MageDraftId, Moment, Player, PlayerId, Quest, QuestTrigger, Room, RoomId, RoomColor, RoomEffect, SpellType, TriggerCondition, TriggerEvent, TriggeredInstruction, TurnRecapCard, UpgradeName } from './types';
-import { createEvents, createLibrary, createPowerfulDeck, createQuests, getEffectiveSpell, getRevealedElements, getSpellType, hasMoment, shuffle } from './cards';
+import { createEvents, createLibrary, createPowerfulDeck, createQuests, getEffectiveSpell, getPhysicalEffect, getRevealedElements, getAllMoments, getMainMoments, getSpellEffects, getSpellType, hasMoment, isUnstable, mainEffects, shuffle } from './cards';
 
 export class GameRuleError extends Error {}
 export const PHYSICAL_TOKENS_PER_ROUND = 2;
@@ -158,7 +158,7 @@ export function spellCanTargetModel(card:Card,casterId:string,ownerId:string,kin
  if(kind==='MAGE' && casterId===ownerId)return false;
  if(card.target==='ROOM' || (card.target!=='MODEL' && card.target!==kind))return false;
  return casterId!==ownerId || hasMoment(card,'HEAL') || hasMoment(card,'CONVERT') || getSpellType(card)==='PROTECTION' || (card.ongoing && getSpellType(card)==='CONTINGENCY')===true
-  || card.moments.some(m=>m.effect==='ASSIGN_UPGRADE'||m.effect==='ACTIVATE_TARGET'||m.effect==='REMOVE_EVOCATION'||m.effect==='ACTIVATE_ROOM'||m.effect==='ATTACK_BONUS');
+  || getAllMoments(card).some(m=>m.effect==='ASSIGN_UPGRADE'||m.effect==='ACTIVATE_TARGET'||m.effect==='REMOVE_EVOCATION'||m.effect==='ACTIVATE_ROOM'||m.effect==='ATTACK_BONUS');
 }
 export function canUseSpellDummy(card:Card):boolean {
  return card.target==='MODEL' || card.target==='MAGE' || card.target==='EVOCATION';
@@ -426,7 +426,7 @@ function mageSpellCopies(mageId:MageDraftId):Card[] {
   tiriki:{name:'Tiriki’s Spark',range:1,target:'ROOM',moments:[{effect:'DAMAGE',amount:1},{effect:'INSTABILITY',amount:1}]},
  };
  const spell=data[mageId];
- return Array.from({length:MAGE_SPELL_COPIES},(_,index)=>({id:`mage-${mageId}-${index+1}`,schoolId:`mage-${mageId}`,name:spell.name,kind:'SPELL' as const,spellType:'COMBAT' as const,range:spell.range,target:spell.target,moments:spell.moments}));
+ return Array.from({length:MAGE_SPELL_COPIES},(_,index)=>({id:`mage-${mageId}-${index+1}`,schoolId:`mage-${mageId}`,name:spell.name,kind:'SPELL' as const,spellType:'COMBAT' as const,range:spell.range,target:spell.target,effects:mainEffects(spell.moments)}));
 }
 
 export function addPlayerToLobby(state:GameState):GameState {
@@ -700,10 +700,15 @@ function retireActiveSpell(s:GameState,active:ActiveSpell) {
 }
 function invalidateModel(s:GameState,ref:ModelSnapshot) {
  context(s).generations.set(ref.id,ref.generation+1);
- // Defeat cancels remaining physical effects, never the remaining spell moments.
- if(ref.kind==='MAGE' && s.activation?.playerId===ref.playerId) {
+ // Defeat interrupts the Explore/Attack Effect and it never resumes; every other Effect (spells, rooms,
+ // quest rewards) resumes with its remaining Moments.
+ if(ref.kind==='MAGE' && s.activation?.playerId===ref.playerId && s.activation.physicalAction && !getPhysicalEffect(s.activation.physicalAction.kind,0).resumeAfterDefeat) {
   s.activation.exploring=0;
   s.activation.physicalAction=null;
+  s.activation.roomEffectUsed=true;
+ } else if(ref.kind==='MAGE' && s.activation?.playerId===ref.playerId) {
+  // Legacy flows (e.g. Explore/Punch without a pending physical action) still stop moving.
+  s.activation.exploring=0;
   s.activation.roomEffectUsed=true;
  }
  // One-shot legacy bindings expire, but ongoing cards survive defeat. Their
@@ -967,17 +972,17 @@ function resolveEvent(s:GameState,event:SpellEvent) {
   const instructions=ongoing?active.card.ongoing!.effects:active.card.triggerEffects??[];
   const trigger=appendFeedback(s,{kind:'SPELL_TRIGGERED',activeSpellId:active.id,ownerId:owner.id,
    cardName:active.card.name,spellType:getSpellType(active.card),trigger:event.event,ongoing,
-  effects:[...(!ongoing&&active.card.instability?[describeInstruction(PRINTED_INSTABILITY)]:[]),...(!ongoing&&active.card.moments.length?active.card.moments.map(step=>describeInstruction({...step,target:active.card.target==='ROOM'?'BOUND_ROOM':'BOUND_MODEL'})):instructions.map(describeInstruction))],...(target?{target}:{}),...(roomId?{roomId}:{})});
+  effects:[...(!ongoing&&isUnstable(active.card)?[describeInstruction(PRINTED_INSTABILITY)]:[]),...(!ongoing&&getMainMoments(active.card).length?getMainMoments(active.card).map(step=>describeInstruction({...step,target:active.card.target==='ROOM'?'BOUND_ROOM':'BOUND_MODEL'})):instructions.map(describeInstruction))],...(target?{target}:{}),...(roomId?{roomId}:{})});
   const ownerRef=snapshot(s,owner.id);
   const previousInterruptId=context(s).interruptId;
   context(s).interruptId=trigger.id;
   try {
-    if(!ongoing && active.card.moments.length) {
+    if(!ongoing && getMainMoments(active.card).length) {
      const refs=selectedRef?[selectedRef]:selectedRoom?[...s.players.filter(p=>inRoom(p,selectedRoom)).map(p=>snapshot(s,p.id)!),...s.evocations.filter(e=>selectedRoom.tiles.some(h=>hexKey(h)===hexKey(e.position))).map(e=>snapshot(s,e.id)!)]:[];
      resolveEffectMoments(s,owner,active.card,selectedRoom??room,refs,ownerRef!,'SPELL',new Set<string>(),false,event);
     } else {
    const effect:EffectResolution={activationIsExplicit:instructions.some(step=>step.effect==='ACTIVATE_EVOCATION'),eventPosition:event.position,eventKind:event.kind,eventActor:event.actor,spellEvent:event};
-  if(!ongoing&&active.card.instability) {
+  if(!ongoing&&isUnstable(active.card)) {
    const effects=1+(instructions.length?1:0);
    resolveInstabilityEffect(s,owner,active.card,ownerRef,effects,{position:{...owner.wizard.position}});
    if(instructions.length)s.log.push(`Effect 2/${effects} · ${active.card.name}: main effect.`);
@@ -2170,9 +2175,9 @@ function activateRoomBody(s:GameState,p:Player,targetRoomId?:string,via?:{room:R
  s.log.push(`${p.name} activates ${room!.name} for free${room!.reconstructed?' (rebuilt effect)':''}: ${ROOM_EFFECT_LABELS[effect!]}.`);
  if(!via)progressQuest(s,p,'ROOM_ACTIVATE');
  const effectResolution:EffectResolution={activationIsExplicit:false};
- // Each moment is atomic: reactions (defeats included) interrupt only between moments,
- // then the remaining effect resumes. Multi-step rooms open one moment per step.
- const resolveEffect=()=>{
+ // The room's Effect: each Moment is atomic (reactions, defeats included, interrupt only between Moments, then
+ // the rest of the Effect resumes). Forge opens one Moment per step; other rooms resolve their Moments together.
+ const applyRoomMoments=()=>{
  switch(effect) {
   case 'ROOM_DAMAGE': {
   for(const ref of targets)resolveInstruction(s,p,{effect:'DAMAGE',amount:reward,target:'EVENT_MODEL'},ref,undefined,actor,undefined,'ROOM');
@@ -2299,14 +2304,7 @@ function activateRoomBody(s:GameState,p:Player,targetRoomId?:string,via?:{room:R
   const destination=targetRoomId?getRoom(s,targetRoomId):room!;
   placeInstability(s,destination,1,p);break;
   }
-  case 'FORGE_REBUILT':
-  atMomentEnd(s,()=>roomSequenceMove(s,p,'Forge move 1'));
-  atMomentEnd(s,()=>roomSequenceMove(s,p,'Forge move 2'));
-  atMomentEnd(s,()=>roomSequenceAttack(s,p,'Forge attack 1'));
-  atMomentEnd(s,()=>roomSequenceMove(s,p,'Forge move 3'));
-  atMomentEnd(s,()=>roomSequenceMove(s,p,'Forge move 4'));
-  atMomentEnd(s,()=>roomSequenceAttack(s,p,'Forge attack 2'));
-  break;
+  case 'FORGE_REBUILT':break;
   case 'TREASURE_REBUILT':
   awardVictoryPoints(s,p.id,2);s.log.push(`${p.name} gains 2 VP from the Treasure Room.`);drawExtraEvent(s);break;
   case 'ORACLE_STANDARD':case 'ABYSS_STANDARD': {
@@ -2326,7 +2324,7 @@ function activateRoomBody(s:GameState,p:Player,targetRoomId?:string,via?:{room:R
   break;
   }
   case 'ABYSS_REBUILT':moveAllMagesToStarts(s);break;
-  case 'MIRRORS_REBUILT':copyRoomEffect(s,p,room!,position);break;
+  case 'MIRRORS_REBUILT':break;
   case 'ARMORY_STANDARD':case 'PLEASURE_STANDARD':drawPersonalCards(s,p,1);break;
   case 'ARMORY_REBUILT': {
   const numbered=(['slot1','slot2','slot3'] as const).filter(slot=>p.prepared[slot]);
@@ -2356,6 +2354,8 @@ function activateRoomBody(s:GameState,p:Player,targetRoomId?:string,via?:{room:R
   s.firstPlayerId=p.id;awardVictoryPoints(s,p.id,1);
   s.log.push(`${p.name} takes the first-player token and gains 1 VP.`);break;
  }
+ };
+ const afterRoomEffect=()=>{
  if(effectResolution.summoned)progressTriggeredQuests(s,p,{event:'SPELL_EFFECT',summon:true});
  if(s.board.rooms.reduce((total,candidate)=>total+candidate.instability,0)>instabilityBefore)progressTriggeredQuests(s,p,{event:'INSTABILITY_EFFECT'});
  if(room!.color)progressTriggeredQuests(s,p,{event:'ROOM_EFFECT',roomColor:room!.color});
@@ -2363,8 +2363,13 @@ function activateRoomBody(s:GameState,p:Player,targetRoomId?:string,via?:{room:R
  // Reactions to a room activation (Suffocation) resolve after the room's effect.
  modelEvent(s,'ROOM_ACTIVATED',actor,actor,room!.id);
  };
- if(effect==='FORGE_REBUILT'||effect==='MIRRORS_REBUILT')resolveEffect();
- else atMomentEnd(s,resolveEffect);
+ const roomStep=(label:string,run:()=>void):EffectStep=>({label:`${room!.name} · ${label}: `,text:'',run});
+ if(effect==='FORGE_REBUILT') {
+  const forge:Array<['move'|'attack',string]>=[['move','Forge move 1'],['move','Forge move 2'],['attack','Forge attack 1'],['move','Forge move 3'],['move','Forge move 4'],['attack','Forge attack 2']];
+  resolveEffect(s,undefined,forge.map(([kind,label])=>roomStep(label,()=>kind==='move'?roomSequenceMove(s,p,label):roomSequenceAttack(s,p,label))),()=>atMomentEnd(s,afterRoomEffect));
+ } else if(effect==='MIRRORS_REBUILT') {
+  resolveEffect(s,undefined,[{...roomStep('copy a room effect',()=>copyRoomEffect(s,p,room!,position)),unwrapped:true}],()=>atMomentEnd(s,afterRoomEffect));
+ } else resolveEffect(s,undefined,[roomStep('room effect',()=>{applyRoomMoments();afterRoomEffect();})]);
 }
 
 function endExplore(s:GameState,p:Player,activate:boolean,targetRoomId?:string) {
@@ -2724,62 +2729,82 @@ function casterPosition(s:GameState,caster:Player,actor:ModelSnapshot|undefined,
  }
  return seen?.position??caster.wizard.position;
 }
+// One Moment of an Effect, ready to resolve. `skip` returns why the Moment cannot be applied at all.
+type EffectStep={label:string;text:string;resolving?:string;skip?:()=>string|undefined;run:()=>void;unwrapped?:boolean};
+/**
+ * The single place where an Effect resolves: Moments run in order, each as a complete step with its own
+ * moment boundary (interrupts finish before the next Moment). A Moment that cannot be applied is skipped
+ * and the next one is attempted. The Effect is resolved once every Moment was attempted, so `onResolved`
+ * (quest/trigger counting per Effect) runs even if nothing could be applied.
+ */
+function resolveEffect(s:GameState,source:Card|undefined,steps:EffectStep[],onResolved?:()=>void) {
+ for(const step of steps) {
+  const ctx=context(s),previous=ctx.resolving;
+  if(step.resolving!==undefined||source)ctx.resolving={...(source?{sourceCard:source}:{}),...(step.resolving!==undefined?{moment:step.resolving}:{})};
+  try{
+  if(step.unwrapped){step.run();continue;}
+  atMomentEnd(s,()=>{
+   const reason=step.skip?.();
+   if(reason){s.log.push(`${step.label}skipped; ${reason}.`);return;}
+   if(step.text)s.log.push(`${step.label}${step.text}`);
+   step.run();
+  });}finally{ctx.resolving=previous;}
+ }
+ onResolved?.();
+}
 function resolveInstabilityEffect(s:GameState,owner:Player,spell:Card,actor:ModelSnapshot|undefined,total:number,seen:{position:Hex},damageOrigin:DamageOrigin='SPELL') {
  const effect:EffectResolution={activationIsExplicit:false,casterSeen:seen};
- const room=roomAt(s,casterPosition(s,owner,actor,effect));
- s.log.push(`Effect 1/${total} · ${spell.name}: ${describeInstruction(PRINTED_INSTABILITY)}`);
- if(room) {
-  const ctx=context(s),previous=ctx.resolving;
-  ctx.resolving={sourceCard:spell,moment:describeInstruction({...PRINTED_INSTABILITY,target:'BOUND_ROOM'})};
-  try{resolveInstruction(s,owner,{...PRINTED_INSTABILITY,target:'BOUND_ROOM'},undefined,room.id,actor,effect,damageOrigin);}finally{ctx.resolving=previous;}
- }
- if((effect.instabilityPlaced??0)>0)progressTriggeredQuests(s,owner,{event:'INSTABILITY_EFFECT'});
+ const instruction:TriggeredInstruction={...PRINTED_INSTABILITY,target:'BOUND_ROOM'};
+ resolveEffect(s,spell,[{label:`Effect 1/${total} · ${spell.name}: `,text:describeInstruction(PRINTED_INSTABILITY),resolving:describeInstruction(instruction),run:()=>{
+  const room=roomAt(s,casterPosition(s,owner,actor,effect));
+  if(room)resolveInstruction(s,owner,instruction,undefined,room.id,actor,effect,damageOrigin);
+ }}],()=>{if((effect.instabilityPlaced??0)>0)progressTriggeredQuests(s,owner,{event:'INSTABILITY_EFFECT'});});
 }
 function resolveEffectMoments(s:GameState,caster:Player,spell:Card,room:Room|undefined,refs:ModelSnapshot[],actor:ModelSnapshot,damageOrigin:DamageOrigin='SPELL',protectedTargets=new Set<string>(),preventMainEffect=false,spellEvent?:SpellEvent) {
  const seen={position:{...caster.wizard.position}};
- const effect:EffectResolution={activationIsExplicit:spell.moments.some(step=>step.effect==='ACTIVATE_EVOCATION'),casterSeen:seen,protectedTargets,...(spellEvent?{spellEvent}:{})};
+ const effect:EffectResolution={activationIsExplicit:getAllMoments(spell).some(step=>step.effect==='ACTIVATE_EVOCATION'),casterSeen:seen,protectedTargets,...(spellEvent?{spellEvent}:{})};
  // The chosen model and where it stands, remembered while it is still on the board.
  const chosen=spell.target==='ROOM'?undefined:refs[0];
  let origin=chosen?liveModel(s,chosen)?.model.position:room?.tiles[0];
- const effects=(spell.instability?1:0)+(spell.moments.length?1:0);
- if(spell.instability)resolveInstabilityEffect(s,caster,spell,actor,effects,seen,damageOrigin);
- if(spell.instability&&spell.moments.length)s.log.push(`Effect 2/${effects} · ${spell.name}: main effect.`);
- if(preventMainEffect){s.log.push(`${spell.name}: its main effect is ignored.`);return;}
- for(const [index,step] of spell.moments.entries()) {
-  const ctx=context(s),previous=ctx.resolving;
-  ctx.resolving={sourceCard:spell,moment:describeInstruction({...step,target:spell.target==='SELF'?'OWNER':spell.target==='ROOM'?'BOUND_ROOM':'BOUND_MODEL'})};
-  try{atMomentEnd(s,()=>{
-  const live=liveModel(s,chosen);
-  if(live)origin={...live.model.position};
-  const label=`Moment ${index+1}/${spell.moments.length} · ${spell.name}: `;
-  if(step.when==='TARGET_DEFEATED'&&(!chosen||live)) {
-   s.log.push(`${label}skipped; ${chosen?'the target was not defeated':'there is no target'}.`);
-   return;
-  }
-  if(step.when==='TARGET_JINXED'&&!(live?.mage&&getMageJinxes(live.mage).length)) {
-   s.log.push(`${label}skipped; the target carries no jinx.`);
-   return;
-  }
-  if((step.when==='UPGRADE_ASSIGNED'&&!effect.upgraded)||(step.when==='EVOCATION_REMOVED'&&!effect.removed)) {
-   s.log.push(`${label}skipped; ${step.when==='UPGRADE_ASSIGNED'?'no upgrade was assigned':'no evocation was removed'}.`);
-   return;
-  }
-  s.log.push(`${label}${describeInstruction({...step,target:spell.target==='SELF'?'OWNER':spell.target==='ROOM'?'BOUND_ROOM':'BOUND_MODEL'})}`);
-  let stepRefs=refs;
-  const area=step.area;
-  if(area) {
-   // Every other mage near the chosen model's last position; evocations are not mages.
-   stepRefs=origin?s.players.filter(p=>p.wizard.alive&&p.wizard.id!==chosen?.id&&hexDistance(origin!,p.wizard.position)<=area.range).map(p=>snapshot(s,p.id)!):[];
-  }
-  resolveMomentBody(s,caster,spell,step,room,stepRefs,actor,effect,damageOrigin);
-  });}finally{ctx.resolving=previous;}
- }
- if((effect.instabilityPlaced??0)>0)progressTriggeredQuests(s,caster,{event:'INSTABILITY_EFFECT'});
- if(spell.moments.length&&(damageOrigin==='SPELL'||effect.summoned)) {
-  const isSpellEffect=damageOrigin==='SPELL';
-  const elements=isSpellEffect?getRevealedElements(s,caster,spell):undefined;
-  if(elements&&spell.element)elements.push(spell.element);
-  progressTriggeredQuests(s,caster,{event:'SPELL_EFFECT',...(isSpellEffect?{spellType:getSpellType(spell),elements}:{}),summon:!!effect.summoned});
+ // The card's Effects in order: PLACE 1 (if unstable) then MAIN. Spell, quest-reward and reaction casts all share this path.
+ const effects=getSpellEffects(spell);
+ for(const [effectIndex,def] of effects.entries()) {
+  if(def.kind==='PLACE'){resolveInstabilityEffect(s,caster,spell,actor,effects.length,seen,damageOrigin);continue;}
+  if(effects.length>1)s.log.push(`Effect ${effectIndex+1}/${effects.length} · ${spell.name}: main effect.`);
+  if(preventMainEffect){s.log.push(`${spell.name}: its main effect is ignored.`);return;}
+  const targetKind=spell.target==='SELF'?'OWNER':spell.target==='ROOM'?'BOUND_ROOM':'BOUND_MODEL';
+  const steps:EffectStep[]=def.moments.map((step,index)=>{
+   const label=`Moment ${index+1}/${def.moments.length} · ${spell.name}: `;
+   let live:ReturnType<typeof liveModel>;
+   return {label,text:describeInstruction({...step,target:targetKind}),resolving:describeInstruction({...step,target:targetKind}),
+    skip:()=>{
+     live=liveModel(s,chosen);
+     if(live)origin={...live.model.position};
+     if(step.when==='TARGET_DEFEATED'&&(!chosen||live))return chosen?'the target was not defeated':'there is no target';
+     if(step.when==='TARGET_JINXED'&&!(live?.mage&&getMageJinxes(live.mage).length))return 'the target carries no jinx';
+     if(step.when==='UPGRADE_ASSIGNED'&&!effect.upgraded)return 'no upgrade was assigned';
+     if(step.when==='EVOCATION_REMOVED'&&!effect.removed)return 'no evocation was removed';
+     return undefined;
+    },
+    run:()=>{
+     let stepRefs=refs;
+     const area=step.area;
+     if(area) {
+      // Every other mage near the chosen model's last position; evocations are not mages.
+      stepRefs=origin?s.players.filter(p=>p.wizard.alive&&p.wizard.id!==chosen?.id&&hexDistance(origin!,p.wizard.position)<=area.range).map(p=>snapshot(s,p.id)!):[];
+     }
+     resolveMomentBody(s,caster,spell,step,room,stepRefs,actor,effect,damageOrigin);
+    }};
+  });
+  resolveEffect(s,spell,steps,()=>{
+   if((effect.instabilityPlaced??0)>0)progressTriggeredQuests(s,caster,{event:'INSTABILITY_EFFECT'});
+   if(def.moments.length&&(damageOrigin==='SPELL'||effect.summoned)) {
+    const isSpellEffect=damageOrigin==='SPELL';
+    const elements=isSpellEffect?getRevealedElements(s,caster,spell):undefined;
+    if(elements&&spell.element)elements.push(spell.element);
+    progressTriggeredQuests(s,caster,{event:'SPELL_EFFECT',...(isSpellEffect?{spellType:getSpellType(spell),elements}:{}),summon:!!effect.summoned});
+   }
+  });
  }
 }
 function resolveMomentBody(s:GameState,caster:Player,spell:Card,step:Moment,room:Room|undefined,refs:ModelSnapshot[],actor:ModelSnapshot,effect:EffectResolution,damageOrigin:DamageOrigin) {

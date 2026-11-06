@@ -1,3 +1,4 @@
+import { mainEffects } from '../src/cards';
 import { describe, expect, it } from 'vitest';
 import { applyAction, createGame, moment, spellCanTargetModel, summonEvocation } from '../src';
 import type { Card, GameAction, GameState } from '../src';
@@ -87,7 +88,7 @@ describe('defeated evocations cannot activate or act',()=>{
 describe('only printed SELF spells select the caster mage',()=>{
  it.each(['MAGE','MODEL'] as const)('rejects self-mage %s selections even with healing, conversion, Protection or ongoing effects',target=>{
   for(const effects of [[moment.heal(1)],[moment.convert(1)],[]]) {
-   const card:Card={id:'support',name:'Support',kind:'SPELL',target,range:1,moments:effects,spellType:'CONTINGENCY',
+   const card:Card={id:'support',name:'Support',kind:'SPELL',target,range:1,effects:mainEffects(effects),spellType:'CONTINGENCY',
     ongoing:{trigger:{event:'DAMAGE_TAKEN',relation:'ANY',scope:'BOUND_MODEL'},effects:[{effect:'HEAL',amount:1,target:'BOUND_MODEL'}]}};
    expect(spellCanTargetModel(card,'p1','p1','MAGE')).toBe(false);
    expect(spellCanTargetModel({...card,spellType:'PROTECTION'},'p1','p1','MAGE')).toBe(false);
@@ -97,7 +98,7 @@ describe('only printed SELF spells select the caster mage',()=>{
   }
  });
  it('keeps SELF healing and friendly-evocation support legal',()=>{
-  const s=fixture(),card:Card={id:'self-heal',name:'Self heal',kind:'SPELL',target:'SELF',range:0,moments:[moment.heal(1)]};
+  const s=fixture(),card:Card={id:'self-heal',name:'Self heal',kind:'SPELL',target:'SELF',range:0,effects:mainEffects([moment.heal(1)])};
   s.players[0].wizard.damageCubes=1;s.players[0].wizard.blackDamage=1;s.players[0].prepared.rapid={card,used:false};
   expect(applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid'}).players[0].wizard.damageCubes).toBe(0);
   expect(spellCanTargetModel({...card,target:'MODEL'},'p1','p1','EVOCATION')).toBe(true);
@@ -107,9 +108,9 @@ describe('only printed SELF spells select the caster mage',()=>{
 function lethalFixture(moments=[moment.damage(1)],trigger:'DAMAGE_TAKEN'|'MAGE_DEFEATED'='MAGE_DEFEATED') {
  const s=fixture();s.players[1].wizard.damageCubes=9;s.players[1].wizard.damageByPlayer={p1:9};
  s.players[1].wizard.damageOrder=Array(9).fill('p1');s.players[0].cubes.available=16;s.players[0].cubes.onWizard=9;
- s.players[0].prepared.rapid={used:false,card:{id:'lethal',name:'Lethal',kind:'SPELL',target:'MAGE',range:0,moments}};
+ s.players[0].prepared.rapid={used:false,card:{id:'lethal',name:'Lethal',kind:'SPELL',target:'MAGE',range:0,effects:mainEffects(moments)}};
  s.readiedSpells!.push({id:'rescue',playerId:'p2',card:{id:'rescue-card',name:'Last chance',kind:'SPELL',spellType:'PROTECTION',target:'SELF',range:0,
-  moments:[moment.heal(2)],trigger:{event:trigger,relation:'ENEMY',scope:'BOUND_MODEL'}}});
+  effects:mainEffects([moment.heal(2)]),trigger:{event:trigger,relation:'ENEMY',scope:'BOUND_MODEL'}}});
  s.activeSpellOrder!.push('rescue');return s;
 }
 function strike(s:GameState) {return applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',targetPlayerId:'p2'});}
@@ -148,7 +149,7 @@ describe('defeat reactions happen before scoring and respawn',()=>{
  it('ranks the post-reaction contribution ledger, not the ledger at the lethal hit',()=>{
   const s=lethalFixture();s.readiedSpells=[];s.activeSpellOrder=[];
   s.readiedSpells.push({id:'convert',playerId:'p3',card:{id:'convert-card',name:'Last conversion',kind:'SPELL',spellType:'TRAP',target:'MODEL',range:0,
-   moments:[moment.convert(3)],trigger:{event:'MAGE_DEFEATED',relation:'ENEMY',scope:'ANY'}}});s.activeSpellOrder.push('convert');
+   effects:mainEffects([moment.convert(3)]),trigger:{event:'MAGE_DEFEATED',relation:'ENEMY',scope:'ANY'}}});s.activeSpellOrder.push('convert');
   const result=respond(strike(s));
   expect(result.players[0].victoryPoints).toBe(4);expect(result.players[2].victoryPoints).toBe(2);
   const recap=result.feedbackEvents!.find(e=>e.kind==='MAGE_DEFEATED');
@@ -161,9 +162,9 @@ describe('defeat reactions happen before scoring and respawn',()=>{
  });
  it('also cancels Pink Tulip defeat credit and the defeated-mage reward when Pain is healed',()=>{
   const s=fixture();s.players[0].wizard.damageCubes=9;s.players[0].wizard.blackDamage=9;
-  s.players[0].prepared.rapid={used:false,card:{id:'pain',name:'Pain',kind:'SPELL',target:'SELF',range:0,moments:[moment.pain(1)]}};
+  s.players[0].prepared.rapid={used:false,card:{id:'pain',name:'Pain',kind:'SPELL',target:'SELF',range:0,effects:mainEffects([moment.pain(1)])}};
   s.readiedSpells=[{id:'neutral-rescue',playerId:'p1',card:{id:'neutral-card',name:'Neutral rescue',kind:'SPELL',spellType:'PROTECTION',target:'SELF',range:0,
-   moments:[moment.heal(2)],trigger:{event:'MAGE_DEFEATED',relation:'ANY',scope:'BOUND_MODEL'}}}];s.activeSpellOrder=['neutral-rescue'];
+   effects:mainEffects([moment.heal(2)]),trigger:{event:'MAGE_DEFEATED',relation:'ANY',scope:'BOUND_MODEL'}}}];s.activeSpellOrder=['neutral-rescue'];
   const paused=applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid'}),d=paused.pendingDecision!;
   const result=applyAction(paused,{type:'RESPOND_REACTIVE_SPELL',playerId:'p1',key:d.key,activeSpellId:'neutral-rescue',targetId:'p1'});
   expect(result.players[0].wizard).toMatchObject({damageCubes:8,blackDamage:8,position:origin});

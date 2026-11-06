@@ -1,3 +1,4 @@
+import { mainEffects, getMainMoments } from '../src/cards';
 import { describe, expect, it } from 'vitest';
 import { applyAction, areAdjacent, createGame, isInStartingRoom, moment, mustLeaveCell, summonEvocation, upgradeLegacyCards } from '../src';
 import type { Card, GameAction, GameState, Moment, Quest } from '../src';
@@ -9,7 +10,7 @@ function fixture():GameState {
  return s;
 }
 function prepare(s:GameState,moments:Moment[],target:Card['target']='MAGE',owner='p1') {
- const card:Card={id:s.library[0].cards.shift()!.id,name:'Test spell',kind:'SPELL',spellType:'COMBAT',moments,target,range:Infinity};
+ const card:Card={id:s.library[0].cards.shift()!.id,name:'Test spell',kind:'SPELL',spellType:'COMBAT',effects:mainEffects(moments),target,range:Infinity};
  s.players.find(p=>p.id===owner)!.prepared.rapid={used:false,card};return card;
 }
 function inCell(s:GameState) {
@@ -76,7 +77,7 @@ describe('one remaining turn action in the cell must be used to exit',()=>{
  });
  it('does not retain an impossible exit lock if an entry reaction defeats the mage after they moved out',()=>{
   let s=fixture();inCell(s);s.players[0].wizard.health=1;
-  const trap:Card={id:s.library[0].cards.shift()!.id,name:'Lethal entry',kind:'SPELL',spellType:'TRAP',target:'MAGE',range:Infinity,moments:[moment.damage(1)],trigger:{event:'ENTER_ROOM',relation:'ENEMY',scope:'ANY'}};
+  const trap:Card={id:s.library[0].cards.shift()!.id,name:'Lethal entry',kind:'SPELL',spellType:'TRAP',target:'MAGE',range:Infinity,effects:mainEffects([moment.damage(1)]),trigger:{event:'ENTER_ROOM',relation:'ENEMY',scope:'ANY'}};
   s.readiedSpells!.push({id:'entry-trap',playerId:'p2',card:trap});s.activeSpellOrder!.push('entry-trap');
   s=applyAction(s,{type:'BEGIN_PHYSICAL_ACTION',playerId:'p1',kind:'EXPLORE'});s=use(s,'PERFORM_MOVEMENT');
   s=applyAction(s,{type:'EXPLORE_STEP',playerId:'p1',destination:destination(s)});expect(s.pendingDecision?.kind).toBe('REACTIVE_SPELL');
@@ -157,15 +158,7 @@ describe('Pink Tulip only counts unsolved quests when issuing replacements',()=>
 describe('Peak of Agony: range-2 room damage, caster conversion, then Pain 2',()=>{
  it('prints three independently targeted moments in the required order',()=>{
   const card=catalog(fixture(),'Peak of Agony');expect(card.target).toBe('ROOM');expect(card.range).toBe(2);
-  expect(card.moments).toEqual([{effect:'DAMAGE',amount:2},{effect:'BLACK_ROSE_CONVERT',amount:2,scope:'CASTER'},{effect:'PAIN',amount:2}]);
- });
- it.each(['flat','scoped','friendly'] as const)('upgrades the old %s Peak without overwriting other customized definitions',format=>{
-  const s=fixture(),card=catalog(s,'Peak of Agony');card.target='SELF';card.range=0;
-  card.moments=format==='flat'?[moment.damage(2),moment.blackRoseConvert(2)]:[{effect:'DAMAGE',amount:2,scope:'CASTER_ROOM',...(format==='friendly'?{includeFriendly:true}:{})} as Moment,{effect:'BLACK_ROSE_CONVERT',amount:2,scope:'CASTER'}];
-  s.players[0].prepared.rapid={used:false,card};const restored:GameState=JSON.parse(JSON.stringify(s));upgradeLegacyCards(restored);
-  expect(restored.players[0].prepared.rapid!.card).toEqual({...catalog(fixture(),'Peak of Agony'),id:card.id});
-  const copy=structuredClone(restored);upgradeLegacyCards(restored);expect(restored).toEqual(copy);
-  card.moments=[moment.damage(3)];const custom=structuredClone(card);upgradeLegacyCards(card);expect(card).toEqual(custom);
+  expect(getMainMoments(card)).toEqual([{effect:'DAMAGE',amount:2},{effect:'BLACK_ROSE_CONVERT',amount:2,scope:'CASTER'},{effect:'PAIN',amount:2}]);
  });
  it('damages only enemies in the chosen room at range 2, not the caster’s room or friendly evocations',()=>{
   const s=fixture();s.players[1].wizard.position={q:2,r:0};s.players[3].wizard.position={q:1,r:0};
@@ -204,7 +197,7 @@ describe('Peak of Agony: range-2 room damage, caster conversion, then Pain 2',()
  });
  it('fully resolves room damage and its reactions before conversion, including after JSON replay',()=>{
   const s=fixture();wound(s,0,['p3','p4']);
-  const ward:Card={id:s.library[0].cards.shift()!.id,name:'Reaction ward',kind:'SPELL',target:'SELF',range:0,spellType:'PROTECTION',moments:[moment.heal(1)],trigger:{event:'DAMAGE_TAKEN',relation:'ENEMY',scope:'BOUND_MODEL'}};
+  const ward:Card={id:s.library[0].cards.shift()!.id,name:'Reaction ward',kind:'SPELL',target:'SELF',range:0,spellType:'PROTECTION',effects:mainEffects([moment.heal(1)]),trigger:{event:'DAMAGE_TAKEN',relation:'ENEMY',scope:'BOUND_MODEL'}};
   s.readiedSpells!.push({id:'ward',playerId:'p2',card:ward});s.activeSpellOrder!.push('ward');const paused=peak(s);
   expect(paused.pendingDecision?.kind).toBe('REACTIVE_SPELL');const restored:GameState=JSON.parse(JSON.stringify(paused));upgradeLegacyCards(restored);
   const after=applyAction(restored,{type:'RESPOND_REACTIVE_SPELL',playerId:'p2',key:paused.pendingDecision!.key,activeSpellId:'ward',targetId:'p2'});

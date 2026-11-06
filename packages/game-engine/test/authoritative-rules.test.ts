@@ -1,3 +1,4 @@
+import { mainEffects } from '../src/cards';
 import { moment } from '../src/cards';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
@@ -16,7 +17,7 @@ function actionFixture(count=4) {
 const player=(g:GameState,id='p1')=>g.players.find(p=>p.id===id)!;
 const room=(g:GameState,id:string)=>g.board.rooms.find(r=>r.id===id)!;
 function prepare(g:GameState,changes:Partial<Card>={},id='p1',slot:keyof Player['prepared']='rapid') {
- const card={...g.library[0].cards.shift()!,spellType:undefined,ongoing:undefined,trigger:undefined,moments:[],range:4,target:'ROOM' as const,...changes};
+ const card={...g.library[0].cards.shift()!,spellType:undefined,ongoing:undefined,trigger:undefined,effects:mainEffects([]),range:4,target:'ROOM' as const,...changes};
  player(g,id).prepared[slot]={card,used:false};return card;
 }
 const settle=(g:GameState)=>applyAction(g,{type:'PASS_ROUND',playerId:g.currentPlayerId!});

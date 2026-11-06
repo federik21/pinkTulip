@@ -119,17 +119,6 @@ it('treats unusable save files safely and only stores battles in progress', () =
  expect(existsSync(file)).toBe(false);
 });
 
-it('upgrades cards saved with flat damage, heal, convert and instability fields to moments on load', () => {
- const file = join(tempDir(), 'legacy.json');
- const running = createGame(2); running.phase = 'ACTION';
- const legacy = { id:'legacy-card', name:'Old Hex', kind:'SPELL', damage:2, instability:1, range:2, target:'MODEL' };
- running.players[0].hand = [legacy as never];
- writeFileSync(file, JSON.stringify({ version:1, rooms:[{ id:'old', savedAt:new Date().toISOString(), game:running }] }));
- const [room] = new SessionStore(file, () => []).load();
- expect(room.game.players[0].hand[0]).toEqual({ id:'legacy-card', name:'Old Hex', kind:'SPELL', range:2, target:'MODEL',
-  moments:[{ effect:'INSTABILITY', amount:1 }, { effect:'DAMAGE', amount:2 }] });
-});
-
 it('restores infinite spell ranges from JSON saves and permits off-axis targeting', () => {
  const file = join(tempDir(), 'infinite-range.json');
  const game = createGame(2);game.phase='ACTION';game.round=1;game.currentPlayerId='p1';

@@ -1,3 +1,4 @@
+import { mainEffects } from '../packages/game-engine/src/cards';
 import { expect, test, type Page } from '@playwright/test';
 import { areAdjacent, createGame, isInStartingRoom, summonEvocation } from '../packages/game-engine/src';
 import type { Card, GameAction, GameState } from '../packages/game-engine/src';
@@ -104,7 +105,7 @@ for(const viewport of [{width:1440,height:1000},{width:390,height:844}])test.des
  });
  test('an ongoing spell remains visible and bound after the mage is defeated',async({page})=>{
   const s=fixture(),card=take(s,'Pain Mark');s.ongoingSpells!.push({id:'persistent-mark',playerId:'p1',targetPlayerId:'p2',card});s.activeSpellOrder!.push('persistent-mark');
-  s.players[1].wizard.health=1;const strike:Card={id:s.library[0].cards.shift()!.id,name:'Strike',kind:'SPELL',target:'MAGE',range:Infinity,moments:[{effect:'DAMAGE',amount:1}]};s.players[0].prepared.rapid={used:false,card:strike};
+  s.players[1].wizard.health=1;const strike:Card={id:s.library[0].cards.shift()!.id,name:'Strike',kind:'SPELL',target:'MAGE',range:Infinity,effects:mainEffects([{effect:'DAMAGE',amount:1}])};s.players[0].prepared.rapid={used:false,card:strike};
   const wire=await mount(page,s);wire.dispatch({type:'CAST_SPELL',playerId:'p1',slot:'rapid',targetPlayerId:'p2'});await selectSpells(page);
   const ongoing=page.locator('.ongoing-spell[data-active-spell-id="persistent-mark"]');await expect(ongoing).toBeVisible();await expect(ongoing).toContainText('Pain Mark');await expect(ongoing).toContainText('Bound to Blue Seer');await expect(ongoing).toContainText('Persists through mage defeat and respawn');
   expect(wire.state.ongoingSpells).toHaveLength(1);expect(wire.state.library[0].discard.some(c=>c.id===card.id)).toBe(false);expect(wire.errors).toEqual([]);
@@ -113,10 +114,10 @@ for(const viewport of [{width:1440,height:1000},{width:390,height:844}])test.des
   const s=fixture(),mark=take(s,'Pain Mark');s.ongoingSpells!.push({id:'source-mark',playerId:'p2',targetPlayerId:'p1',card:mark});s.activeSpellOrder!.push('source-mark');
   if(source==='EVOCATION')summonEvocation(s,s.players[0],'CADAVER',{q:0,r:0});
   if(source==='ROOM')s.board.rooms.find(r=>r.id==='room-0,0')!.effect='ROOM_DAMAGE';
-  if(source==='SPELL')s.players[0].prepared.rapid={used:false,card:{id:s.library[0].cards.shift()!.id,name:'UI damage',kind:'SPELL',spellType:'COMBAT',range:1,target:'MAGE',moments:[{effect:'DAMAGE',amount:1}]}};
+  if(source==='SPELL')s.players[0].prepared.rapid={used:false,card:{id:s.library[0].cards.shift()!.id,name:'UI damage',kind:'SPELL',spellType:'COMBAT',range:1,target:'MAGE',effects:mainEffects([{effect:'DAMAGE',amount:1}])}};
   if(source==='QUEST'){
     const quest=s.questDeck.shift()!;quest.kind='INSTABILITY';quest.amount=1;delete quest.trigger;
-    quest.rewardAction={id:'quest-pain-mark-test',name:'Quest damage',kind:'SPELL',moments:[{effect:'DAMAGE',amount:1}],range:2,target:'MODEL'};
+    quest.rewardAction={id:'quest-pain-mark-test',name:'Quest damage',kind:'SPELL',effects:mainEffects([{effect:'DAMAGE',amount:1}]),range:2,target:'MODEL'};
     s.players[0].quest=quest;s.players[0].quest.completed=true;
   }
   const wire=await mount(page,s);

@@ -1,3 +1,4 @@
+import { mainEffects } from '../packages/game-engine/src/cards';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -17,7 +18,7 @@ type Message = {
 };
 const slots = ['slot1', 'slot2', 'slot3', 'rapid'] as const;
 const hiddenCard = (index: number): Card => ({
- id: `hidden-${index}`, name: 'Hidden spell', kind: 'SPELL', moments:[], range: 0, target: 'MODEL',
+ id: `hidden-${index}`, name: 'Hidden spell', kind: 'SPELL', effects:mainEffects([]), range: 0, target: 'MODEL',
 });
 const player = (state: GameState, id: string): Player => {
  const found = state.players.find(p => p.id === id); assert.ok(found, `Missing ${id}`); return found;

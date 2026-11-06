@@ -1,3 +1,4 @@
+import { mainEffects } from '../packages/game-engine/src/cards';
 import { test, expect, Page, WebSocketRoute } from '@playwright/test';
 import { BLACK_ROSE_ID, Card, Evocation, GameAction, GameState, MAGE_COLORS, applyAction, createGame, moment } from '../packages/game-engine/src/index';
 import { expectSpellIcon, expectSpellType } from './spell-ui';
@@ -12,7 +13,7 @@ test.beforeEach(async ({page})=>{
 });
 test.afterEach(async ({page})=>expect(errors.get(page)??[],'No uncaught React/browser errors').toEqual([]));
 
-const preparedSpell:Card={id:'fixture-spell',name:'Fixture Ember',kind:'SPELL',moments:[moment.instability(1),moment.damage(2)],range:3,target:'MODEL'};
+const preparedSpell:Card={id:'fixture-spell',name:'Fixture Ember',kind:'SPELL',effects:mainEffects([moment.instability(1),moment.damage(2)]),range:3,target:'MODEL'};
 function fixtureState(count=2):GameState {
  const game=createGame(count);
  game.gameId='rule-polish';game.round=1;game.phase='ACTION';game.firstPlayerId='p1';

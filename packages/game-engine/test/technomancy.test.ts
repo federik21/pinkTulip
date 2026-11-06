@@ -1,3 +1,4 @@
+import { mainEffects } from '../src/cards';
 import { describe, expect, it } from 'vitest';
 import { applyAction, createGame, createTechnomancyDeck, EVOCATION_TYPES, evocationAttack, getEvocationSupply, getUpgradeSupply, summonEvocation } from '../src';
 import type { Card, GameState } from '../src';
@@ -105,7 +106,7 @@ describe('Technomancy school',()=>{
  it('Draco’s Skin brings a destroyed evocation back with Reinforced dermis',()=>{
   const s=fixture(),victim=summonEvocation(s,s.players[1],'CADAVER',{q:0,r:0})!;
   s.readiedSpells!.push({id:'draco',playerId:'p2',card:card('Draco’s Skin')});s.activeSpellOrder!.push('draco');
-  s.players[0].prepared.rapid={used:false,card:{id:'smash',kind:'SPELL',name:'Smash',spellType:'COMBAT',target:'EVOCATION',range:Infinity,moments:[{effect:'DAMAGE',amount:5}]}};
+  s.players[0].prepared.rapid={used:false,card:{id:'smash',kind:'SPELL',name:'Smash',spellType:'COMBAT',target:'EVOCATION',range:Infinity,effects:mainEffects([{effect:'DAMAGE',amount:5}])}};
   const paused=castOn(s,victim.id);
   expect(paused.pendingDecision).toMatchObject({kind:'REACTIVE_SPELL',playerId:'p2'});
   const d=paused.pendingDecision as Extract<typeof paused.pendingDecision,{kind:'REACTIVE_SPELL'}>;

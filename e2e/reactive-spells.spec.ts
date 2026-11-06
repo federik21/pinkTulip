@@ -1,3 +1,4 @@
+import { mainEffects } from '../packages/game-engine/src/cards';
 import { test, expect, type Locator, type Page, type TestInfo } from '@playwright/test';
 import { applyAction, BLACK_ROSE_ID, createGame, getSpellType } from '../packages/game-engine/src/index';
 import type { ActiveSpell, Card, Evocation, GameAction, GameState, Room, SpellType } from '../packages/game-engine/src/index';
@@ -92,7 +93,7 @@ function expectPrivacy(game: GameState, history: ActionHistory) {
     expect(visible.log).toEqual(game.log);
     expect(visible.readiedSpells).toEqual(game.readiedSpells?.map((active, i) => active.playerId === viewer
       ? active : { id: active.id, playerId: active.playerId, card: { id: `hidden-${i}`, name: 'Hidden spell',
-        kind: 'SPELL', moments:[], range: 0, target: 'MODEL',
+        kind: 'SPELL', effects:mainEffects([]), range: 0, target: 'MODEL',
         ...(active.card.spellType ? { spellType: active.card.spellType } : {}) } }));
     for (const active of visible.readiedSpells ?? []) if (active.playerId !== viewer) {
       expect(Object.keys(active).sort()).toEqual(['card', 'id', 'playerId']);

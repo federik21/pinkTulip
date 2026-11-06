@@ -1,4 +1,4 @@
-import { Card, Element, EvocationKind, EventCard, GameState, JinxName, LibraryDeck, Moment, MomentEffect, Player, Quest, SpellType, TriggerCondition, UpgradeName } from './types';
+import { Card, Effect, PhysicalEffect, PhysicalMoment, Element, EvocationKind, EventCard, GameState, JinxName, LibraryDeck, Moment, MomentEffect, Player, Quest, SpellType, TriggerCondition, UpgradeName } from './types';
 
 export const ELEMENTS: readonly Element[] = ['air', 'fire', 'water', 'earth', 'evil', 'good', 'stars', 'wild'];
 export const ELEMENT_GLYPHS: Readonly<Record<Element, string>> = { air: '🜁', fire: '🜂', water: '🜄', earth: '🜃', evil: '☠', good: '✚', stars: '★', wild: '✦' };
@@ -30,12 +30,12 @@ export function getEffectiveSpell(s: Pick<GameState, 'readiedSpells'>, p: Pick<P
  if (!card.enhancement || !isEnhanced(s, p, card)) return card;
  const { enhancement, ...rest } = card;
  const extra = enhancement.moments ?? [];
- const instabilityPrelude=card.moments[0]?.effect==='INSTABILITY'?[card.moments[0]]:[];
- const printed=instabilityPrelude.length?card.moments.slice(1):card.moments;
- const moments=enhancement.position==='AFTER'?[...instabilityPrelude,...printed,...extra]:[...instabilityPrelude,...extra,...printed];
+ // The enhancement adds Moments to the MAIN Effect; the PLACE Effect is untouched.
+ const main = getMainMoments(card);
+ const moments = enhancement.position === 'AFTER' ? [...main, ...extra] : [...extra, ...main];
  return {
   ...rest,
-  moments,
+  effects: [...card.effects.filter(effect => effect.kind === 'PLACE'), ...(moments.length ? [{ kind: 'MAIN' as const, moments }] : [])],
   target: enhancement.target ?? card.target,
   range: enhancement.range ?? card.range,
   ...(enhancement.suppressReactions ? { suppressReactions: true } : {}),
@@ -54,7 +54,7 @@ const liquefyThePainEffects=():NonNullable<Card['triggerEffects']>=>[
  {effect:'ACTIVATE_EVOCATION',kind:'SUCCUBUS',target:'EVENT_ROOM'},
 ];
 
-// Constructors for each Moment variant, e.g. `moments: [moment.damage(1), moment.damage(1)]`.
+// Constructors for each Moment variant, e.g. `effects: mainEffects([moment.damage(1), moment.damage(1)]`.
 export const moment = {
  damage: (amount: number): Moment => ({ effect: 'DAMAGE', amount }),
  heal: (amount: number): Moment => ({ effect: 'HEAL', amount }),
@@ -75,13 +75,31 @@ export const moment = {
  nearTarget: (step: Moment, range: number): Moment => ({ ...step, area: { range } }),
 };
 
-// Printed totals include the card's separate instability effect (`Card.instability`) as 1 instability.
-export const momentTotal = (card: Pick<Card, 'moments' | 'instability'>, effect: MomentEffect): number =>
- card.moments.reduce((total, m) => (m.effect === effect && 'amount' in m) ? total + (m.amount ?? 0) : total, effect === 'INSTABILITY' && card.instability ? 1 : 0);
-export const hasMoment = (card: Pick<Card, 'moments' | 'instability'>, effect: MomentEffect): boolean => momentTotal(card, effect) > 0;
+// Builders for `Card.effects`. An unstable card has a PLACE 1 Effect that resolves before its MAIN Effect.
+export const PLACE_ONE_INSTABILITY: Moment = { effect: 'INSTABILITY', amount: 1, scope: 'CASTER_ROOM' };
+export const placeEffect = (): Effect => ({ kind: 'PLACE', moments: [PLACE_ONE_INSTABILITY] });
+export const mainEffects = (moments: Moment[]): Effect[] => moments.length ? [{ kind: 'MAIN', moments }] : [];
+export const unstableEffects = (moments: Moment[]): Effect[] => [placeEffect(), ...mainEffects(moments)];
+export const getSpellEffects = (card: Pick<Card, 'effects'>): Effect[] => card.effects;
+export const getMainMoments = (card: Pick<Card, 'effects'>): Moment[] => card.effects.filter(effect => effect.kind === 'MAIN').flatMap(effect => effect.moments);
+export const isUnstable = (card: Pick<Card, 'effects'>): boolean => card.effects.some(effect => effect.kind === 'PLACE');
+export const getAllMoments = (card: Pick<Card, 'effects'>): Moment[] => card.effects.flatMap(effect => effect.moments);
+// Physical actions are Effects too. A defeat interrupts and cancels Explore and Attack (they never resume).
+export const getPhysicalEffect = (kind: 'EXPLORE' | 'ATTACK', movement: number): PhysicalEffect => ({
+ kind,
+ moments: kind === 'EXPLORE'
+  ? [...Array.from({ length: Math.max(0, movement) }, (): PhysicalMoment => ({ moment: 'MOVE', distance: 1 })), { moment: 'ACTIVATE_ROOM' }]
+  : [{ moment: 'ATTACK' }, { moment: 'ACTIVATE_ROOM' }],
+ resumeAfterDefeat: false,
+});
+
+// Printed totals cover every Effect of the card, the PLACE Effect included.
+export const momentTotal = (card: Pick<Card, 'effects'>, effect: MomentEffect): number =>
+ getAllMoments(card).reduce((total, m) => (m.effect === effect && 'amount' in m) ? total + (m.amount ?? 0) : total, 0);
+export const hasMoment = (card: Pick<Card, 'effects'>, effect: MomentEffect): boolean => momentTotal(card, effect) > 0;
 
 export function getSpellType(card:Card):SpellType {
- return card.spellType ?? (card.instability || card.moments.some(m => m.effect !== 'HEAL' && 'amount' in m && (m.amount ?? 0) > 0) ? 'COMBAT' : 'CONTINGENCY');
+ return card.spellType ?? (getAllMoments(card).some(m => m.effect !== 'HEAL' && 'amount' in m && (m.amount ?? 0) > 0) ? 'COMBAT' : 'CONTINGENCY');
 }
 
 // Generic fallback copy deliberately avoids inventing a binding, range or effect.
@@ -126,61 +144,19 @@ export function getSpellDescription(card:Card):{triggerText?:string;rulesText?:s
  return {triggerText,rulesText};
 }
 
-// Saved games written before moments existed carry flat damage/instability/heal/convert
-// fields. Rewrite those cards in place, keeping the old fixed resolution order.
 // JSON also writes Infinity as null; restore spell ranges on both load and receipt.
 export function upgradeLegacyCards(value: unknown): void {
  if (!value || typeof value !== 'object') return;
  if (Array.isArray(value)) { value.forEach(upgradeLegacyCards); return; }
  const node = value as Record<string, unknown>;
  if (node.kind === 'SPELL' && node.range === null) node.range = Number.POSITIVE_INFINITY;
- if (node.kind === 'SPELL' && !Array.isArray(node.moments)) {
-  const moments: Moment[] = [];
-  for (const [field, effect] of [['instability', 'INSTABILITY'], ['convert', 'CONVERT'], ['heal', 'HEAL'], ['damage', 'DAMAGE']] as const) {
-    // A boolean flag is still the card's own separate instability effect; only numeric amounts become moments.
-    if(field==='instability'&&node[field]===true)continue;
-   const amount = Number(node[field]);
-   if (amount > 0) moments.push({ effect, amount });
-   delete node[field];
-  }
-  node.moments = moments;
- }
- if(node.kind==='SPELL'&&Array.isArray(node.moments)&&typeof node.instability==='number'&&node.instability>0) {
-  const amount=node.instability;
-  delete node.instability;
-  const instability:Moment={effect:'INSTABILITY',amount,scope:'CASTER_ROOM'};
-  if(node.trigger&&Array.isArray(node.triggerEffects)&&node.moments.length===0) {
-   node.triggerEffects.unshift({...instability,target:'OWNER'});
-  } else (node.moments as Moment[]).unshift(instability);
- }
- // A printed "1 instability in the caster's room" opening step is the card's separate instability effect.
- if(node.kind==='SPELL'&&Array.isArray(node.moments)&&node.instability!==true) {
-  const printed=(step:any)=>step?.effect==='INSTABILITY'&&step.amount===1&&step.scope==='CASTER_ROOM'&&!step.when&&!step.area;
-  const reactive=!!node.trigger&&Array.isArray(node.triggerEffects)&&node.moments.length===0;
-  const list=(reactive?node.triggerEffects:node.moments) as any[];
-  if(printed(list[0])&&(!reactive||list[0].target==='OWNER')) { list.shift(); node.instability=true; }
- }
- // The removed `splash` field on a damage moment becomes a conditional follow-up moment.
- if(node.kind==='SPELL'&&Array.isArray(node.moments)&&node.moments.some((m:any)=>m?.splash)) {
-  node.moments=(node.moments as any[]).flatMap(m=>{
-   if(!m?.splash)return [m];
-   const {splash,...base}=m;
-   return [base,{effect:'DAMAGE',amount:splash.amount??base.amount,when:'TARGET_DEFEATED',area:{range:splash.range}}];
-  });
- }
- if(node.kind==='SPELL'&&node.name==='Peak of Agony'&&(node.schoolId==='agony'||String(node.id).startsWith('agony-'))&&Array.isArray(node.moments)) {
-  const steps=node.moments as Moment[];
-  if(steps.length===2&&steps[0].effect==='DAMAGE'&&steps[0].amount===2&&(!steps[0].scope||steps[0].scope==='CASTER_ROOM')&&steps[1].effect==='BLACK_ROSE_CONVERT'&&steps[1].amount===2&&(!steps[1].scope||steps[1].scope==='CASTER')) {
-   node.moments=peakOfAgonyMoments();node.target='ROOM';node.range=2;
-  }
- }
  if(node.kind==='SPELL'&&node.name==='Pain Mark'&&(node.schoolId==='agony'||String(node.id).startsWith('agony-'))) {
   const ongoing=node.ongoing as Card['ongoing'];
   if(ongoing?.trigger.event==='DAMAGE_DEALT'&&!ongoing.trigger.damageOrigins) {
    ongoing.trigger.damageOrigins=['MAGE_PHYSICAL','SPELL'];node.rulesText=painMarkRules;
   }
  }
- if(node.kind==='SPELL'&&node.name==='Liquefy the Pain'&&(node.schoolId==='agony'||String(node.id).startsWith('agony-'))&&Array.isArray(node.moments)&&node.moments.length===0) {
+ if(node.kind==='SPELL'&&node.name==='Liquefy the Pain'&&(node.schoolId==='agony'||String(node.id).startsWith('agony-'))&&Array.isArray(node.effects)&&node.effects.length===0) {
   const effects=node.triggerEffects as Card['triggerEffects'];
   if(effects?.length===1&&effects[0].effect==='SUMMON'&&effects[0].kind==='SUCCUBUS'&&effects[0].position==='TARGET'&&effects[0].target==='EVENT_ROOM') {
    node.triggerEffects=liquefyThePainEffects();
@@ -207,33 +183,33 @@ const SHAMANIC_ELEMENTS: Element[] = ['good', 'good', 'earth', 'good', 'fire', '
 
 export function createAgonyDeck(prefix: string, schoolId?: string): Card[] {
  const patterns: Omit<Card, 'id' | 'kind'>[] = [
-  { name: 'Shared Torture', moments: [moment.damage(4), moment.convert(1), moment.pain(3)], range: 1, target: 'MODEL' },
-  { name: 'Grim Torment', instability: true, moments: [moment.damage(3), moment.pain(1)], range: 2, target: 'MODEL' },
-  { name: 'Cross and Delight', instability: true, moments: [moment.summon('SUCCUBUS'), moment.pain(1), moment.activateEvocation('SUCCUBUS')], range: 1, target: 'ROOM' },
-  { name: 'Torment', spellType: 'TRAP', moments: [moment.damage(2), moment.summon('SUCCUBUS', 'TARGET')], range: Number.POSITIVE_INFINITY, target: 'MODEL',
+  { name: 'Shared Torture', effects: mainEffects([moment.damage(4), moment.convert(1), moment.pain(3)]), range: 1, target: 'MODEL' },
+  { name: 'Grim Torment', effects: unstableEffects([moment.damage(3), moment.pain(1)]), range: 2, target: 'MODEL' },
+  { name: 'Cross and Delight', effects: unstableEffects([moment.summon('SUCCUBUS'), moment.pain(1), moment.activateEvocation('SUCCUBUS')]), range: 1, target: 'ROOM' },
+  { name: 'Torment', spellType: 'TRAP', effects: mainEffects([moment.damage(2), moment.summon('SUCCUBUS', 'TARGET')]), range: Number.POSITIVE_INFINITY, target: 'MODEL',
     triggerText: 'When an enemy model deals damage',
    trigger:{event:'DAMAGE_DEALT',relation:'ENEMY',scope:'ANY'}, triggerTarget:'EVENT_ACTOR',
    triggerEffects:[{effect:'DAMAGE',amount:2,target:'EVENT_ACTOR'},{effect:'SUMMON',kind:'SUCCUBUS',position:'TARGET',target:'EVENT_ACTOR'}] },
-  { name: 'Visceral Fire', instability: true, moments: [moment.damage(2), moment.ifTargetDefeated(moment.nearTarget(moment.damage(1), 1))], range: 2, target: 'MAGE',
+  { name: 'Visceral Fire', effects: unstableEffects([moment.damage(2), moment.ifTargetDefeated(moment.nearTarget(moment.damage(1), 1))]), range: 2, target: 'MAGE',
    rulesText: 'Target a mage within range 2 and deal 2 damage. If that mage is defeated, each other mage within range 1 of where it stood suffers 1 damage.' },
-  { name: 'Peak of Agony', moments: peakOfAgonyMoments(), range: 2, target: 'ROOM' },
-  { name: 'Pain Mark', spellType: 'CONTINGENCY', instability: true, moments: [], range: 1, target: 'MODEL',
+  { name: 'Peak of Agony', effects: mainEffects(peakOfAgonyMoments()), range: 2, target: 'ROOM' },
+  { name: 'Pain Mark', spellType: 'CONTINGENCY', effects: unstableEffects([]), range: 1, target: 'MODEL',
     rulesText: painMarkRules,
     ongoing: { trigger: { event: 'DAMAGE_DEALT', relation: 'ANY', scope: 'BOUND_MODEL', damageOrigins:['MAGE_PHYSICAL','SPELL'] }, effects: [{ effect: 'DAMAGE', amount: 2, target: 'EVENT_ACTOR' }] } },
-  { name: 'Master of Pleasure', spellType: 'TRAP', moments: [], range: Number.POSITIVE_INFINITY, target: 'MAGE',
+  { name: 'Master of Pleasure', spellType: 'TRAP', effects: mainEffects([]), range: Number.POSITIVE_INFINITY, target: 'MAGE',
     triggerText: 'When another mage solves a quest',
 
     trigger:{event:'QUEST_SOLVED',relation:'ENEMY',scope:'ANY'}, triggerTarget:'EVENT_MODEL',
     triggerEffects:[{effect:'DAMAGE',amount:2,target:'EVENT_MODEL'},{effect:'SUMMON',kind:'SUCCUBUS',position:'TARGET',target:'EVENT_MODEL'}] },
-  { name: 'Liquefy the Pain', spellType: 'TRAP', moments: [], range: Number.POSITIVE_INFINITY, target: 'ROOM',
+  { name: 'Liquefy the Pain', spellType: 'TRAP', effects: mainEffects([]), range: Number.POSITIVE_INFINITY, target: 'ROOM',
     triggerText: 'When you are defeated',
     trigger:{event:'MAGE_DEFEATED',relation:'SELF',relationTo:'EVENT_MODEL',scope:'ANY'}, triggerTarget:'EVENT_ROOM',
     triggerEffects:liquefyThePainEffects() },
-  { name: 'Submission', moments: [moment.damage(1), moment.convert(1), moment.pain(1)], range: Number.POSITIVE_INFINITY, target: 'MODEL' },
-  { name: 'Ineluctable Pain', spellType: 'CONTINGENCY', instability: true, moments: [], range: 2, target: 'MODEL',
+  { name: 'Submission', effects: mainEffects([moment.damage(1), moment.convert(1), moment.pain(1)]), range: Number.POSITIVE_INFINITY, target: 'MODEL' },
+  { name: 'Ineluctable Pain', spellType: 'CONTINGENCY', effects: unstableEffects([]), range: 2, target: 'MODEL',
    rulesText: 'Whenever a model gains or loses victory points, it suffers 2 damage.',
    ongoing:{trigger:{event:'VP_CHANGED',relation:'ANY',scope:'BOUND_MODEL'},effects:[{effect:'DAMAGE',amount:2,target:'EVENT_MODEL'}]} },
-  { name: 'Hearth of Ice', moments: [moment.damage(3), moment.convert(2), moment.pain(2)], range: 2, target: 'MODEL' },
+  { name: 'Hearth of Ice', effects: mainEffects([moment.damage(3), moment.convert(2), moment.pain(2)]), range: 2, target: 'MODEL' },
  ];
  return Array.from({ length: 36 }, (_, i) => ({ ...patterns[i % patterns.length], element: AGONY_ELEMENTS[i % patterns.length], id: `${prefix}-${i + 1}`, kind: 'SPELL', ...(schoolId ? {schoolId} : {}) }));
 }
@@ -242,31 +218,31 @@ export function createAgonyDeck(prefix: string, schoolId?: string): Card[] {
 export function createTechnomancyDeck(prefix: string, schoolId?: string): Card[] {
  const m = moment;
  const patterns: Omit<Card, 'id' | 'kind'>[] = [
-  { name: 'Protean Genesis', spellType: 'CONTINGENCY', range: 2, target: 'ROOM', moments: [m.instability(1), m.summon('CADAVER', 'TARGET'), m.activateEvocation('CADAVER')],
+  { name: 'Protean Genesis', spellType: 'CONTINGENCY', range: 2, target: 'ROOM', effects: mainEffects([m.instability(1), m.summon('CADAVER', 'TARGET'), m.activateEvocation('CADAVER')]),
    rulesText: 'Place 1 instability in the target room, summon a Cadaver there and activate it.' },
-  { name: 'Living Liquid', spellType: 'COMBAT', range: 2, target: 'EVOCATION', moments: [m.assignUpgrade('REGENERATING_ICHOR'), { ...m.ifUpgraded(m.heal(2)), scope: 'CASTER' }],
+  { name: 'Living Liquid', spellType: 'COMBAT', range: 2, target: 'EVOCATION', effects: mainEffects([m.assignUpgrade('REGENERATING_ICHOR'), { ...m.ifUpgraded(m.heal(2)), scope: 'CASTER' }]),
    rulesText: 'Assign Regenerating ichor to the target evocation (even an enemy). If you do, heal 2 on your mage.' },
-  { name: 'Acid Blood', spellType: 'COMBAT', range: 2, target: 'EVOCATION', moments: [m.assignUpgrade('CORROSIVE_PLASMA'), m.ifUpgraded(m.inTargetRoom(m.damage(1)))],
+  { name: 'Acid Blood', spellType: 'COMBAT', range: 2, target: 'EVOCATION', effects: mainEffects([m.assignUpgrade('CORROSIVE_PLASMA'), m.ifUpgraded(m.inTargetRoom(m.damage(1)))]),
    rulesText: 'Assign Corrosive plasma to the target evocation. If you do, inflict 1 damage on every model in the target\u2019s room.' },
-  { name: 'Kinetic Infusion', spellType: 'CONTINGENCY', range: 2, target: 'EVOCATION', moments: [m.assignUpgrade('TENDON_IMPLANT'), m.ifUpgraded(m.instability(1))],
+  { name: 'Kinetic Infusion', spellType: 'CONTINGENCY', range: 2, target: 'EVOCATION', effects: mainEffects([m.assignUpgrade('TENDON_IMPLANT'), m.ifUpgraded(m.instability(1))]),
    rulesText: 'Assign Tendon implant to the target evocation. If you do, place 1 instability cube in the target\u2019s room.' },
-  { name: 'Vigorous Infusion', spellType: 'CONTINGENCY', range: 2, target: 'EVOCATION', instability: true, moments: [m.assignUpgrade('MUSCULAR_IMPLANT'), m.activateTarget()],
+  { name: 'Vigorous Infusion', spellType: 'CONTINGENCY', range: 2, target: 'EVOCATION', effects: unstableEffects([m.assignUpgrade('MUSCULAR_IMPLANT'), m.activateTarget()]),
    rulesText: 'Assign Muscular implant to the target evocation. It activates under your control.' },
-  { name: 'Indoctrination', spellType: 'CONTINGENCY', range: 2, target: 'EVOCATION', instability: true, moments: [m.assignUpgrade('CEREBRAL_IMPLANT'), m.activateTarget()],
+  { name: 'Indoctrination', spellType: 'CONTINGENCY', range: 2, target: 'EVOCATION', effects: unstableEffects([m.assignUpgrade('CEREBRAL_IMPLANT'), m.activateTarget()]),
    rulesText: 'Assign Cerebral implant to the target evocation. It activates under your control.' },
-  { name: 'Nefarious Evolution', spellType: 'CONTINGENCY', range: 2, target: 'EVOCATION', moments: [{ effect: 'REMOVE_EVOCATION', archetype: 'UNDEAD' }, { effect: 'SUMMON', kind: 'COLOSSUS', position: 'REMOVED', when: 'EVOCATION_REMOVED' }],
+  { name: 'Nefarious Evolution', spellType: 'CONTINGENCY', range: 2, target: 'EVOCATION', effects: mainEffects([{ effect: 'REMOVE_EVOCATION', archetype: 'UNDEAD' }, { effect: 'SUMMON', kind: 'COLOSSUS', position: 'REMOVED', when: 'EVOCATION_REMOVED' }]),
    rulesText: 'You may remove one of your undead evocations in the target\u2019s room. If you do, summon a Colossus in that room.' },
-  { name: 'Mutant Energies', spellType: 'CONTINGENCY', range: 2, target: 'EVOCATION', instability: true, moments: [{ effect: 'REMOVE_EVOCATION' }, m.ifRemoved({ effect: 'REMOVED_BLAST' })],
+  { name: 'Mutant Energies', spellType: 'CONTINGENCY', range: 2, target: 'EVOCATION', effects: unstableEffects([{ effect: 'REMOVE_EVOCATION' }, m.ifRemoved({ effect: 'REMOVED_BLAST' })]),
    rulesText: 'You may remove one of your evocations in the target\u2019s room. If you do, inflict damage equal to its attack on every mage in that room and up to 1 room away.' },
-  { name: 'Craft', spellType: 'CONTINGENCY', range: 1, target: 'ROOM', moments: [m.summon('CADAVER', 'TARGET'), m.assignUpgrade('RANDOM', 'SUMMONED')],
+  { name: 'Craft', spellType: 'CONTINGENCY', range: 1, target: 'ROOM', effects: mainEffects([m.summon('CADAVER', 'TARGET'), m.assignUpgrade('RANDOM', 'SUMMONED')]),
    rulesText: 'Summon a Cadaver in the target room, then assign it a random upgrade.' },
-  { name: 'Mechanical Archive', spellType: 'CONTINGENCY', range: 0, target: 'SELF', instability: true, moments: [{ effect: 'LOOK_LIBRARY', cards: 4 }],
+  { name: 'Mechanical Archive', spellType: 'CONTINGENCY', range: 0, target: 'SELF', effects: unstableEffects([{ effect: 'LOOK_LIBRARY', cards: 4 }]),
    rulesText: 'Look at 4 cards from a single library school. Draw 1 and discard the rest to that school\u2019s discard pile.' },
-  { name: 'Draco\u2019s Skin', spellType: 'TRAP', range: Number.POSITIVE_INFINITY, target: 'SELF', moments: [],
+  { name: 'Draco\u2019s Skin', spellType: 'TRAP', range: Number.POSITIVE_INFINITY, target: 'SELF', effects: mainEffects([]),
    rulesText: 'When one of your evocations is defeated or removed, summon that model again where it stood and assign Reinforced dermis to it.',
    trigger: { event: 'EVOCATION_LOST', relation: 'SELF', relationTo: 'EVENT_MODEL', scope: 'ANY' },
    triggerEffects: [{ effect: 'SUMMON', kind: 'EVENT_MODEL', position: 'EVENT', target: 'OWNER' }, { effect: 'ASSIGN_UPGRADE', upgrade: 'REINFORCED_DERMIS', to: 'SUMMONED', target: 'OWNER' }] },
-  { name: 'Necrotic Pheromones', spellType: 'TRAP', range: 2, target: 'EVOCATION', instability: true, moments: [m.activateTarget()], triggerSight: 2, targetFrom: 'EVENT_MODEL',
+  { name: 'Necrotic Pheromones', spellType: 'TRAP', range: 2, target: 'EVOCATION', effects: unstableEffects([m.activateTarget()]), triggerSight: 2, targetFrom: 'EVENT_MODEL',
    rulesText: 'When another mage enters a room at range 2 and in line of sight, choose an evocation at range 2 from that mage. It activates under your control.',
    trigger: { event: 'ENTER_ROOM', relation: 'ENEMY', scope: 'ANY' } },
  ];
@@ -276,41 +252,41 @@ export function createTechnomancyDeck(prefix: string, schoolId?: string): Card[]
 export function createAlchemyDeck(prefix: string, schoolId?: string): Card[] {
  const m = moment;
  const patterns: Omit<Card, 'id' | 'kind'>[] = [
-  { name: 'Azoth Bomb', element: 'air', spellType: 'COMBAT', range: 3, target: 'ROOM', moments: [m.damage(2)],
+  { name: 'Azoth Bomb', element: 'air', spellType: 'COMBAT', range: 3, target: 'ROOM', effects: mainEffects([m.damage(2)]),
    enhancement: { requires: ['water', 'water'], moments: [m.damage(2)], position: 'BEFORE', text: 'Enhancement (2 water symbols): first inflict 2 damage.' },
    rulesText: 'Inflict 2 damage on every enemy model in the target room.' },
-  { name: 'Viatorium Spagyricum', element: 'water', spellType: 'COMBAT', range: 0, target: 'MODEL', targetFilter: { sameRoom: true }, instability: true, moments: [m.damage(2)],
+  { name: 'Viatorium Spagyricum', element: 'water', spellType: 'COMBAT', range: 0, target: 'MODEL', targetFilter: { sameRoom: true }, effects: unstableEffects([m.damage(2)]),
    enhancement: { requires: ['fire', 'water'], moments: [m.damage(3)], position: 'BEFORE', text: 'Enhancement (fire and water): first inflict 3 damage.' },
    rulesText: 'Target a model in your room and inflict 2 damage.' },
-  { name: 'Deflagrate', element: 'water', spellType: 'COMBAT', range: 2, target: 'MODEL', moments: [m.damage(2), { effect: 'MOVE_DAMAGED', distance: 1 }],
+  { name: 'Deflagrate', element: 'water', spellType: 'COMBAT', range: 2, target: 'MODEL', effects: mainEffects([m.damage(2), { effect: 'MOVE_DAMAGED', distance: 1 }]),
    enhancement: { requires: ['earth', 'earth'], target: 'ROOM', range: 2, text: 'Enhancement (2 earth symbols): the target becomes a room at range 2.' },
    rulesText: 'Inflict 2 damage, then move one model that suffered damage from this effect up to 1.' },
-  { name: 'Athanor Eruption', element: 'fire', spellType: 'COMBAT', range: 1, target: 'MODEL', moments: [m.damage(3)],
+  { name: 'Athanor Eruption', element: 'fire', spellType: 'COMBAT', range: 1, target: 'MODEL', effects: mainEffects([m.damage(3)]),
    enhancement: { requires: ['air', 'earth'], moments: [m.damage(1)], position: 'BEFORE', suppressReactions: true, text: 'Enhancement (air and earth): first inflict 1 damage; Traps and Protections will not trigger during this spell.' },
    rulesText: 'Inflict 3 damage.' },
-  { name: 'Marbling', element: 'earth', spellType: 'COMBAT', range: 0, target: 'SELF', moments: [{ effect: 'DAMAGE', amount: 1, scope: 'ALL_MAGES' }],
+  { name: 'Marbling', element: 'earth', spellType: 'COMBAT', range: 0, target: 'SELF', effects: mainEffects([{ effect: 'DAMAGE', amount: 1, scope: 'ALL_MAGES' }]),
    enhancement: { requires: ['fire', 'fire'], moments: [{ effect: 'DAMAGE', amount: 1, scope: 'ALL_MAGES' }], position: 'BEFORE', text: 'Enhancement (2 fire symbols): first inflict 1 damage to each mage.' },
    rulesText: 'Inflict 1 damage to each mage.' },
-  { name: 'Stone Phoenix', element: 'earth', spellType: 'TRAP', range: Number.POSITIVE_INFINITY, target: 'ROOM', moments: [],
+  { name: 'Stone Phoenix', element: 'earth', spellType: 'TRAP', range: Number.POSITIVE_INFINITY, target: 'ROOM', effects: mainEffects([]),
    triggerText: 'When one of your evocations is defeated or removed',
    rulesText: 'Summon a Nigredo in the room where it was lost.',
    trigger: { event: 'EVOCATION_LOST', relation: 'SELF', relationTo: 'EVENT_MODEL', scope: 'ANY' }, triggerTarget: 'EVENT_ROOM',
    triggerEffects: [{ effect: 'SUMMON', kind: 'NIGREDO', position: 'TARGET', target: 'EVENT_ROOM' }] },
-  { name: 'Soul Transfer', element: 'wild', spellType: 'CONTINGENCY', range: Number.POSITIVE_INFINITY, target: 'EVOCATION', targetFilter: { own: true, archetype: 'CONSTRUCT' }, moments: [{ effect: 'ACTIVATE_ROOM' }],
+  { name: 'Soul Transfer', element: 'wild', spellType: 'CONTINGENCY', range: Number.POSITIVE_INFINITY, target: 'EVOCATION', targetFilter: { own: true, archetype: 'CONSTRUCT' }, effects: mainEffects([{ effect: 'ACTIVATE_ROOM' }]),
    rulesText: 'Choose one of your constructs. Activate the room it stands in, even if the room was already used this round. Not the central chamber.' },
-  { name: 'Liquid Fire', element: 'fire', spellType: 'COMBAT', range: Number.POSITIVE_INFINITY, target: 'EVOCATION', targetFilter: { own: true }, instability: true, moments: [{ effect: 'REMOVE_EVOCATION', chosen: true }, m.ifRemoved({ effect: 'REMOVED_BLAST', amount: 2, models: true })],
+  { name: 'Liquid Fire', element: 'fire', spellType: 'COMBAT', range: Number.POSITIVE_INFINITY, target: 'EVOCATION', targetFilter: { own: true }, effects: unstableEffects([{ effect: 'REMOVE_EVOCATION', chosen: true }, m.ifRemoved({ effect: 'REMOVED_BLAST', amount: 2, models: true })]),
    enhancement: { requires: ['air', 'water'], moments: [m.ifRemoved({ effect: 'DAMAGE', amount: 1, scope: 'DAMAGED' })], position: 'AFTER', text: 'Enhancement (air and water): then inflict 1 damage to each model that suffered damage from this effect.' },
    rulesText: 'Remove the target evocation (yours). If you do, inflict 2 damage to every model in its room and up to 1 room away.' },
-  { name: 'Fountain of the Three', element: 'earth', spellType: 'CONTINGENCY', range: 1, target: 'EVOCATION', targetFilter: { maxHealth: 2 }, moments: [{ effect: 'REMOVE_EVOCATION', chosen: true }, m.ifRemoved({ effect: 'SUMMON', kind: 'NIGREDO', position: 'CHOICE' })],
+  { name: 'Fountain of the Three', element: 'earth', spellType: 'CONTINGENCY', range: 1, target: 'EVOCATION', targetFilter: { maxHealth: 2 }, effects: mainEffects([{ effect: 'REMOVE_EVOCATION', chosen: true }, m.ifRemoved({ effect: 'SUMMON', kind: 'NIGREDO', position: 'CHOICE' })]),
    enhancement: { requires: ['water', 'fire'], moments: [{ effect: 'ACTIVATE_CHOICE', archetype: 'CONSTRUCT', attackBonus: 1 }], position: 'AFTER', text: 'Enhancement (water and fire): then choose one of your constructs; it activates with +1 attack.' },
    rulesText: 'Target an evocation with less than 3 health. Remove it. If you do, summon a Nigredo in a room of your choice.' },
-  { name: 'Purifying Aludel', element: 'air', spellType: 'CONTINGENCY', range: Number.POSITIVE_INFINITY, target: 'EVOCATION', instability: true, moments: [m.heal(3), m.activateTarget()],
+  { name: 'Purifying Aludel', element: 'air', spellType: 'CONTINGENCY', range: Number.POSITIVE_INFINITY, target: 'EVOCATION', effects: unstableEffects([m.heal(3), m.activateTarget()]),
    enhancement: { requires: ['water', 'earth'], moments: [{ effect: 'ATTACK_BONUS', amount: 2 }], position: 'BEFORE', text: 'Enhancement (water and earth): the next time the target activates it has +2 attack.' },
    rulesText: 'Heal 3 on the target evocation, then activate it.' },
-  { name: 'Albify', element: 'water', spellType: 'COMBAT', range: 1, target: 'MAGE', instability: true, moments: [m.convert(4)],
+  { name: 'Albify', element: 'water', spellType: 'COMBAT', range: 1, target: 'MAGE', effects: unstableEffects([m.convert(4)]),
    enhancement: { requires: ['air', 'air'], moments: [{ effect: 'LOSE_VP', amount: 2 }], position: 'BEFORE', text: 'Enhancement (2 air symbols): the target loses 2 victory points.' },
    rulesText: 'Convert 4 damage on the target mage.' },
-  { name: 'Silver of the Sages', element: 'wild', spellType: 'PROTECTION', range: Number.POSITIVE_INFINITY, target: 'SELF', instability: true, moments: [],
+  { name: 'Silver of the Sages', element: 'wild', spellType: 'PROTECTION', range: Number.POSITIVE_INFINITY, target: 'SELF', effects: unstableEffects([]),
    triggerText: 'When you suffer damage',
    rulesText: 'Ignore up to 2 of that damage. Then activate one of your evocations; when the activation ends the Black Rose inflicts 1 damage on it.',
    trigger: { event: 'DAMAGE_TAKEN', relation: 'SELF', relationTo: 'EVENT_MODEL', scope: 'BOUND_MODEL' },
@@ -324,39 +300,39 @@ export function createNightmareDeck(prefix: string, schoolId?: string): Card[] {
  const assign = (count = 1): Moment => ({ effect: 'ASSIGN_NIGHTMARE', count });
  const activate = (of: 'ASSIGNED' | 'TARGET' | 'ALL', attackBonus?: number): Moment => ({ effect: 'ACTIVATE_NIGHTMARES', of, ...(attackBonus ? { attackBonus } : {}) });
  const patterns: Omit<Card, 'id' | 'kind'>[] = [
-  { name: 'Hysterical Escape', element: 'air', spellType: 'CONTINGENCY', range: 2, target: 'MAGE', instability: true, moments: [{ effect: 'MOVE_TARGET', distance: 1 }, { effect: 'MOVE_TARGET', distance: 1 }, assign(), activate('ASSIGNED')],
+  { name: 'Hysterical Escape', element: 'air', spellType: 'CONTINGENCY', range: 2, target: 'MAGE', effects: unstableEffects([{ effect: 'MOVE_TARGET', distance: 1 }, { effect: 'MOVE_TARGET', distance: 1 }, assign(), activate('ASSIGNED')]),
    rulesText: 'Move the target 1, then again 1. Assign an Umbra to the target and activate it under your control.' },
-  { name: 'Thorn of Thorns', element: 'stars', spellType: 'CONTINGENCY', range: 2, target: 'MAGE', moments: [{ effect: 'STEAL_VP', amount: 1 }, assign(), activate('ASSIGNED'), { effect: 'FIRST_PLAYER' }],
+  { name: 'Thorn of Thorns', element: 'stars', spellType: 'CONTINGENCY', range: 2, target: 'MAGE', effects: mainEffects([{ effect: 'STEAL_VP', amount: 1 }, assign(), activate('ASSIGNED'), { effect: 'FIRST_PLAYER' }]),
    rulesText: 'Steal 1 victory point from the target. Assign an Umbra to it and activate it under your control. The target gets the first player token.' },
-  { name: 'Persecution', element: 'evil', spellType: 'PROTECTION', range: Number.POSITIVE_INFINITY, target: 'SELF', moments: [],
+  { name: 'Persecution', element: 'evil', spellType: 'PROTECTION', range: Number.POSITIVE_INFINITY, target: 'SELF', effects: mainEffects([]),
    triggerText: 'After a spell inflicts damage to you',
    rulesText: 'Ignore up to 3 of that damage. For each ignored damage, inflict 1 damage to the caster of that spell.',
    trigger: { event: 'DAMAGE_TAKEN', relation: 'SELF', relationTo: 'EVENT_MODEL', scope: 'BOUND_MODEL', damageOrigins: ['SPELL'] },
    triggerEffects: [{ effect: 'IGNORE_DAMAGE', amount: 3, target: 'EVENT_MODEL' }] },
-  { name: 'Shifting Nightmare', element: 'evil', spellType: 'TRAP', range: Number.POSITIVE_INFINITY, target: 'MAGE', moments: [m.damage(3), activate('TARGET')], triggerTarget: 'EVENT_MODEL',
+  { name: 'Shifting Nightmare', element: 'evil', spellType: 'TRAP', range: Number.POSITIVE_INFINITY, target: 'MAGE', effects: mainEffects([m.damage(3), activate('TARGET')]), triggerTarget: 'EVENT_MODEL',
    triggerText: 'When another mage enters a purple or grey room',
    rulesText: 'Inflict 3 damage to that mage, then activate each Nightmare assigned to it under your control.',
    trigger: { event: 'ENTER_ROOM', relation: 'ENEMY', scope: 'ANY', modelKind: 'MAGE', roomColors: ['violet', 'grey'] } },
-  { name: 'Mental Chasm', element: 'evil', spellType: 'TRAP', range: Number.POSITIVE_INFINITY, target: 'MAGE', moments: [m.convert(3), { effect: 'DISCARD_CARDS', amount: 2, stealVp: true }], triggerTarget: 'EVENT_MODEL',
+  { name: 'Mental Chasm', element: 'evil', spellType: 'TRAP', range: Number.POSITIVE_INFINITY, target: 'MAGE', effects: mainEffects([m.convert(3), { effect: 'DISCARD_CARDS', amount: 2, stealVp: true }]), triggerTarget: 'EVENT_MODEL',
    triggerText: 'When another mage enters a blue or yellow room',
    rulesText: 'Convert 3 damage on that mage. It discards 2 cards; for each card it cannot discard, steal 1 victory point from it.',
    trigger: { event: 'ENTER_ROOM', relation: 'ENEMY', scope: 'ANY', modelKind: 'MAGE', roomColors: ['azure', 'amber'] } },
   { name: 'Shadow Blast', element: 'evil', spellType: 'TRAP', range: Number.POSITIVE_INFINITY, target: 'ROOM',
-   moments: [{ effect: 'DAMAGE', amount: 2, scope: 'TARGET_ROOM', magesOnly: true }, { effect: 'ASSIGN_NIGHTMARE', count: 1, others: true, scope: 'TARGET_ROOM', magesOnly: true }, { effect: 'INSTABILITY_PER_NIGHTMARE' }], triggerTarget: 'EVENT_ROOM',
+   effects: mainEffects([{ effect: 'DAMAGE', amount: 2, scope: 'TARGET_ROOM', magesOnly: true }, { effect: 'ASSIGN_NIGHTMARE', count: 1, others: true, scope: 'TARGET_ROOM', magesOnly: true }, { effect: 'INSTABILITY_PER_NIGHTMARE' }]), triggerTarget: 'EVENT_ROOM',
    triggerText: 'When another mage enters a red or green room',
    rulesText: 'Inflict 2 damage to every other mage in that room and assign an Umbra to each. For each Nightmare in that room, place 1 instability there.',
    trigger: { event: 'ENTER_ROOM', relation: 'ENEMY', scope: 'ANY', modelKind: 'MAGE', roomColors: ['crimson', 'emerald'] } },
-  { name: 'Humiliation', element: 'wild', spellType: 'COMBAT', range: 2, target: 'MAGE', instability: true, moments: [m.damage(2), activate('TARGET')],
+  { name: 'Humiliation', element: 'wild', spellType: 'COMBAT', range: 2, target: 'MAGE', effects: unstableEffects([m.damage(2), activate('TARGET')]),
    rulesText: 'Inflict 2 damage. Each Nightmare assigned to the target activates under your control.' },
-  { name: 'Traitor Nightmare', element: 'wild', spellType: 'CONTINGENCY', range: Number.POSITIVE_INFINITY, target: 'ROOM', instability: true, moments: [{ effect: 'ACTIVATE_ROOM_IF_NIGHTMARE' }],
+  { name: 'Traitor Nightmare', element: 'wild', spellType: 'CONTINGENCY', range: Number.POSITIVE_INFINITY, target: 'ROOM', effects: unstableEffects([{ effect: 'ACTIVATE_ROOM_IF_NIGHTMARE' }]),
    rulesText: 'If there is a Nightmare in the target room, activate that room even if it was already used.' },
-  { name: 'Painful Loss', element: 'stars', spellType: 'COMBAT', range: 2, target: 'ROOM', moments: [m.damage(1), { effect: 'ASSIGN_NIGHTMARE', count: 1, scope: 'TARGET_ROOM', magesOnly: true }],
+  { name: 'Painful Loss', element: 'stars', spellType: 'COMBAT', range: 2, target: 'ROOM', effects: mainEffects([m.damage(1), { effect: 'ASSIGN_NIGHTMARE', count: 1, scope: 'TARGET_ROOM', magesOnly: true }]),
    rulesText: 'Inflict 1 damage. Assign an Umbra to each mage in the target room.' },
-  { name: 'Anguish', element: 'stars', spellType: 'CONTINGENCY', range: 2, target: 'MAGE', instability: true, moments: [assign(2), activate('ALL'), { effect: 'DRAW_EVENT' }],
+  { name: 'Anguish', element: 'stars', spellType: 'CONTINGENCY', range: 2, target: 'MAGE', effects: unstableEffects([assign(2), activate('ALL'), { effect: 'DRAW_EVENT' }]),
    rulesText: 'Assign 2 Umbras to the target. Each Nightmare in the game activates under your control. Draw a new event.' },
-  { name: 'Recurring Nightmare', element: 'air', spellType: 'CONTINGENCY', range: 1, target: 'MAGE', moments: [assign(), { effect: 'REASSIGN_NIGHTMARES' }, activate('TARGET', 1)],
+  { name: 'Recurring Nightmare', element: 'air', spellType: 'CONTINGENCY', range: 1, target: 'MAGE', effects: mainEffects([assign(), { effect: 'REASSIGN_NIGHTMARES' }, activate('TARGET', 1)]),
    rulesText: 'Assign an Umbra to the target and reassign every other Umbra to it. All Umbras assigned to the target activate under your control with +1 attack.' },
-  { name: 'Ephialtes', element: 'evil', spellType: 'CONTINGENCY', range: 0, target: 'SELF', instability: true, moments: [{ effect: 'DRAW_EVENT' }, { effect: 'ASSIGN_PER_EVENT' }, { effect: 'GAIN_VP_PER_NIGHTMARE', max: 5 }],
+  { name: 'Ephialtes', element: 'evil', spellType: 'CONTINGENCY', range: 0, target: 'SELF', effects: unstableEffects([{ effect: 'DRAW_EVENT' }, { effect: 'ASSIGN_PER_EVENT' }, { effect: 'GAIN_VP_PER_NIGHTMARE', max: 5 }]),
    rulesText: 'Draw an event. For each event on the event board, assign an Umbra to a mage. Gain 1 victory point for each Nightmare in the game, up to 5.' },
  ];
  return Array.from({ length: 36 }, (_, i) => ({ ...patterns[i % patterns.length], id: `${prefix}-${i + 1}`, kind: 'SPELL', ...(schoolId ? {schoolId} : {}) }));
@@ -365,35 +341,35 @@ export function createNightmareDeck(prefix: string, schoolId?: string): Card[] {
 export function createShamanicDeck(prefix: string, schoolId?: string): Card[] {
  const m = moment;
  const patterns: Omit<Card, 'id' | 'kind'>[] = [
-  { name: 'Binding Totem', spellType: 'CONTINGENCY', range: 1, target: 'ROOM', moments: [m.summon('TOTEM', 'TARGET'), { effect: 'GAIN_VP', amount: 1 }],
+  { name: 'Binding Totem', spellType: 'CONTINGENCY', range: 1, target: 'ROOM', effects: mainEffects([m.summon('TOTEM', 'TARGET'), { effect: 'GAIN_VP', amount: 1 }]),
    rulesText: 'Summon a Totem in the target room, then gain 1 VP.' },
-  { name: 'Astral Path', spellType: 'CONTINGENCY', instability: true, range: 0, target: 'SELF', moments: [{ effect: 'COMPLETE_QUEST' }],
+  { name: 'Astral Path', spellType: 'CONTINGENCY', range: 0, target: 'SELF', effects: unstableEffects([{ effect: 'COMPLETE_QUEST' }]),
    rulesText: 'Choose one of your active quests. Lose VP equal to the moon level to complete it.' },
-  { name: 'Earth Totem', spellType: 'PROTECTION', range: 0, target: 'SELF', moments: [],
+  { name: 'Earth Totem', spellType: 'PROTECTION', range: 0, target: 'SELF', effects: mainEffects([]),
    triggerText: 'When a combat spell targets you or you are about to suffer the effect of an ongoing combat spell',
    trigger: { event: 'SPELL_TARGETED', relation: 'SELF', relationTo: 'EVENT_MODEL', scope: 'ANY', spellTypes: ['COMBAT'] },
    triggerEffects: [{ effect: 'PREVENT_SPELL', target: 'EVENT_ACTOR' }, { effect: 'SUMMON', kind: 'TOTEM', position: 'CASTER', target: 'OWNER' }],
    rulesText: 'Ignore that spell effect. Summon a Totem in your room.' },
-  { name: 'Wind Spirit', spellType: 'CONTINGENCY', instability: true, range: 0, target: 'SELF', moments: [{ effect: 'RESHUFFLE_DRAW', amount: 2 }],
+  { name: 'Wind Spirit', spellType: 'CONTINGENCY', range: 0, target: 'SELF', effects: unstableEffects([{ effect: 'RESHUFFLE_DRAW', amount: 2 }]),
    rulesText: 'Shuffle your personal discard into your grimoire, choose 2 cards from it, then shuffle your grimoire. Reveal the cards in the log.' },
-  { name: 'Valor Totem', spellType: 'CONTINGENCY', range: 1, target: 'ROOM', element: 'fire', moments: [m.summon('TOTEM', 'TARGET'), { effect: 'GAIN_VP_PER_ALTAR', max: 5 }],
+  { name: 'Valor Totem', spellType: 'CONTINGENCY', range: 1, target: 'ROOM', element: 'fire', effects: mainEffects([m.summon('TOTEM', 'TARGET'), { effect: 'GAIN_VP_PER_ALTAR', max: 5 }]),
    rulesText: 'Summon a Totem in the target room, then gain 1 VP for each Altar in play (maximum 5).' },
-  { name: 'River Spirit', spellType: 'CONTINGENCY', range: 3, target: 'ROOM', element: 'water', moments: [{ effect: 'DRAW_QUEST' }, { effect: 'ACTIVATE_TARGET_ROOM' }],
+  { name: 'River Spirit', spellType: 'CONTINGENCY', range: 3, target: 'ROOM', element: 'water', effects: mainEffects([{ effect: 'DRAW_QUEST' }, { effect: 'ACTIVATE_TARGET_ROOM' }]),
    rulesText: 'Draw 1 quest, then activate the target room.' },
-  { name: 'Dominion Token', spellType: 'CONTINGENCY', range: 2, target: 'ROOM', element: 'good', moments: [m.summon('TOTEM', 'TARGET'), m.instability(2)],
+  { name: 'Dominion Token', spellType: 'CONTINGENCY', range: 2, target: 'ROOM', element: 'good', effects: mainEffects([m.summon('TOTEM', 'TARGET'), m.instability(2)]),
    rulesText: 'Summon a Totem in the target room, then place 2 cubes in that room.' },
-  { name: 'Channeling Energy', spellType: 'CONTINGENCY', range: 0, target: 'SELF', element: 'wild', moments: [],
+  { name: 'Channeling Energy', spellType: 'CONTINGENCY', range: 0, target: 'SELF', element: 'wild', effects: mainEffects([]),
    rulesText: 'Ongoing: Each time a mage reveals a combat spell, choose whether BR may inflict 1 damage on one of your Altars to gain 1 VP.',
    ongoing: { trigger: { event: 'SPELL_CAST', relation: 'ANY', scope: 'ANY', spellTypes: ['COMBAT'] }, effects: [{ effect: 'BLACK_ROSE_ALTAR_TITHE', target: 'OWNER' }] } },
-  { name: 'Rain Totem', spellType: 'CONTINGENCY', range: 2, target: 'ROOM', element: 'water', moments: [m.summon('TOTEM', 'TARGET'), { effect: 'PLACE_ALTAR_CUBES' }],
+  { name: 'Rain Totem', spellType: 'CONTINGENCY', range: 2, target: 'ROOM', element: 'water', effects: mainEffects([m.summon('TOTEM', 'TARGET'), { effect: 'PLACE_ALTAR_CUBES' }]),
    rulesText: 'Summon a Totem in the target room, then place cubes there equal to the number of Altars in play.' },
-  { name: 'Steppe Spirit', spellType: 'CONTINGENCY', range: 2, target: 'ROOM', element: 'earth', moments: [m.convert(3)],
+  { name: 'Steppe Spirit', spellType: 'CONTINGENCY', range: 2, target: 'ROOM', element: 'earth', effects: mainEffects([m.convert(3)]),
    rulesText: 'Convert up to 3 cubes in the target room.' },
-  { name: 'Pyre Spirit', spellType: 'CONTINGENCY', instability: true, range: 2, target: 'EVOCATION', element: 'fire',
-   targetFilter: { maxHealth: 3 }, moments: [{ effect: 'REMOVE_EVOCATION', chosen: true }, { effect: 'GAIN_VP', amount: 1, when: 'EVOCATION_REMOVED' }],
+  { name: 'Pyre Spirit', spellType: 'CONTINGENCY', range: 2, target: 'EVOCATION', element: 'fire',
+   targetFilter: { maxHealth: 3 }, effects: unstableEffects([{ effect: 'REMOVE_EVOCATION', chosen: true }, { effect: 'GAIN_VP', amount: 1, when: 'EVOCATION_REMOVED' }]),
    rulesText: 'Remove a target evocation with health 3 or less. If removed, gain 1 VP.' },
   { name: 'Source of Life', spellType: 'CONTINGENCY', range: 2, target: 'ROOM', element: 'water',
-   moments: [{ effect: 'MOVE_MODEL', distance: 1 }, { effect: 'HEAL', amount: 2, scope: 'TARGET_ROOM' }, { effect: 'GAIN_VP', amount: 1 }],
+   effects: mainEffects([{ effect: 'MOVE_MODEL', distance: 1 }, { effect: 'HEAL', amount: 2, scope: 'TARGET_ROOM' }, { effect: 'GAIN_VP', amount: 1 }]),
    rulesText: 'Move any model from anywhere on the board to a room within range 1 of the target room, heal 2 on every model in the target room, then gain 1 VP.' },
  ];
  return Array.from({ length: 36 }, (_, i) => ({ ...patterns[i % patterns.length], element: patterns[i % patterns.length].element ?? SHAMANIC_ELEMENTS[i % patterns.length], id: `${prefix}-${i + 1}`, kind: 'SPELL', ...(schoolId ? { schoolId } : {}) }));
@@ -407,43 +383,43 @@ export function createHexDeck(prefix: string, schoolId?: string): Card[] {
  const steal: Moment = { effect: 'STEAL_VP', amount: 1 };
  const anyDistance = Number.POSITIVE_INFINITY;
  const patterns: Omit<Card, 'id' | 'kind'>[] = [
-  { name: 'Litany', element: 'air', spellType: 'CONTINGENCY', range: 0, target: 'SELF', moments: [moveTarget, { effect: 'DISCARD_QUEST_OR_JINX' }, { effect: 'DRAW_SPELLS', amount: 2 }],
+  { name: 'Litany', element: 'air', spellType: 'CONTINGENCY', range: 0, target: 'SELF', effects: mainEffects([moveTarget, { effect: 'DISCARD_QUEST_OR_JINX' }, { effect: 'DRAW_SPELLS', amount: 2 }]),
    rulesText: 'Move up to 1. Discard one active quest or jinx assigned to you. Draw 2 spells.' },
-  { name: 'Crypt fever', element: 'earth', spellType: 'CONTINGENCY', range: 2, target: 'MAGE', moments: [m.damage(2), assign('VULNERABILITY'), moveTarget, moveTarget, moveSelf],
+  { name: 'Crypt fever', element: 'earth', spellType: 'CONTINGENCY', range: 2, target: 'MAGE', effects: mainEffects([m.damage(2), assign('VULNERABILITY'), moveTarget, moveTarget, moveSelf]),
    rulesText: 'Inflict 2 damage and assign Vulnerability to the target. Move the target up to 1, then again up to 1. Move yourself up to 1.' },
-  { name: 'Black feather', element: 'air', spellType: 'CONTINGENCY', range: 2, target: 'MAGE', instability: true, moments: [steal, assign('WEAKNESS'), moveSelf],
+  { name: 'Black feather', element: 'air', spellType: 'CONTINGENCY', range: 2, target: 'MAGE', effects: unstableEffects([steal, assign('WEAKNESS'), moveSelf]),
    rulesText: 'Steal 1 VP from the target and assign Weakness to it. Move yourself up to 1.' },
-  { name: 'Baleful curse', element: 'earth', spellType: 'PROTECTION', range: anyDistance, target: 'MAGE', instability: true, moments: [m.damage(2), assign('SLOWNESS')], triggerTarget: 'EVENT_ACTOR',
+  { name: 'Baleful curse', element: 'earth', spellType: 'PROTECTION', range: anyDistance, target: 'MAGE', effects: unstableEffects([m.damage(2), assign('SLOWNESS')]), triggerTarget: 'EVENT_ACTOR',
    triggerText: 'When a mage inflicts damage to you',
    rulesText: 'Target that mage: inflict 2 damage and assign Slowness.',
    trigger: { event: 'DAMAGE_TAKEN', relation: 'SELF', relationTo: 'EVENT_MODEL', scope: 'ANY', modelKind: 'MAGE', damageOrigins: ['MAGE_PHYSICAL', 'SPELL'] } },
   { name: 'ca\u2019Dario\u2019s amulet', element: 'stars', spellType: 'TRAP', range: anyDistance, target: 'MAGE',
-   moments: [m.convert(2), { effect: 'INSTABILITY_PER_UNCONVERTED' }, { effect: 'STEAL_VP', amount: 1, when: 'TARGET_JINXED' }, m.damage(2)], triggerTarget: 'EVENT_MODEL',
+   effects: mainEffects([m.convert(2), { effect: 'INSTABILITY_PER_UNCONVERTED' }, { effect: 'STEAL_VP', amount: 1, when: 'TARGET_JINXED' }, m.damage(2)]), triggerTarget: 'EVENT_MODEL',
    triggerText: 'When another mage enters a blue or purple room',
    rulesText: 'Target that mage: convert 2 damage. For each unconverted damage, place 1 cube in its room. If it has at least 1 jinx assigned, steal 1 VP from it. Inflict 2 damage.',
    trigger: { event: 'ENTER_ROOM', relation: 'ENEMY', scope: 'ANY', modelKind: 'MAGE', roomColors: ['azure', 'violet'] } },
   { name: 'Cerebral worm', element: 'earth', spellType: 'TRAP', range: anyDistance, target: 'MAGE',
-   moments: [m.damage(2), assign('VULNERABILITY'), { effect: 'INSTABILITY_PER_JINX' }], triggerTarget: 'EVENT_MODEL',
+   effects: mainEffects([m.damage(2), assign('VULNERABILITY'), { effect: 'INSTABILITY_PER_JINX' }]), triggerTarget: 'EVENT_MODEL',
    triggerText: 'When another mage enters a red or yellow room',
    rulesText: 'Target that mage: inflict 2 damage and assign Vulnerability. For each jinx assigned to it, place 1 cube in its room.',
    trigger: { event: 'ENTER_ROOM', relation: 'ENEMY', scope: 'ANY', modelKind: 'MAGE', roomColors: ['crimson', 'amber'] } },
-  { name: 'Feverish dream', element: 'stars', spellType: 'COMBAT', range: 2, target: 'MAGE', instability: true, moments: [m.damage(2), assign('WEAKNESS'), moveSelf],
+  { name: 'Feverish dream', element: 'stars', spellType: 'COMBAT', range: 2, target: 'MAGE', effects: unstableEffects([m.damage(2), assign('WEAKNESS'), moveSelf]),
    rulesText: 'Inflict 2 damage and assign Weakness to the target. Move yourself up to 1.' },
-  { name: 'An eye for an eye', element: 'air', spellType: 'PROTECTION', range: anyDistance, target: 'MAGE', instability: true, moments: [{ effect: 'LOSE_VP_OR_PREVENT', amount: 1 }, assign('OBLIVION')], triggerTarget: 'EVENT_ACTOR',
+  { name: 'An eye for an eye', element: 'air', spellType: 'PROTECTION', range: anyDistance, target: 'MAGE', effects: unstableEffects([{ effect: 'LOSE_VP_OR_PREVENT', amount: 1 }, assign('OBLIVION')]), triggerTarget: 'EVENT_ACTOR',
    triggerText: 'When another mage targets you with a combat spell',
    rulesText: 'Target that mage: it chooses to lose 1 VP or you ignore the effect. Assign Oblivion to it.',
    trigger: { event: 'SPELL_TARGETED', relation: 'SELF', relationTo: 'EVENT_MODEL', scope: 'ANY', spellTypes: ['COMBAT'] } },
-  { name: 'Suffocation', element: 'stars', spellType: 'TRAP', range: anyDistance, target: 'MAGE', instability: true, moments: [{ effect: 'ACTIVATE_TARGET_ROOM', used: true }, assign('OBLIVION')], triggerTarget: 'EVENT_MODEL',
+  { name: 'Suffocation', element: 'stars', spellType: 'TRAP', range: anyDistance, target: 'MAGE', effects: unstableEffects([{ effect: 'ACTIVATE_TARGET_ROOM', used: true }, assign('OBLIVION')]), triggerTarget: 'EVENT_MODEL',
    triggerText: 'When another mage resolves a room effect',
    rulesText: 'Target that mage: activate that room, even if it was already used. Assign Oblivion to it.',
    trigger: { event: 'ROOM_ACTIVATED', relation: 'ENEMY', scope: 'ANY', modelKind: 'MAGE' } },
-  { name: 'Curse', element: 'stars', spellType: 'COMBAT', range: 2, target: 'MAGE', moments: [m.damage(1), m.convert(2), assign('CHOICE'), moveSelf],
+  { name: 'Curse', element: 'stars', spellType: 'COMBAT', range: 2, target: 'MAGE', effects: mainEffects([m.damage(1), m.convert(2), assign('CHOICE'), moveSelf]),
    rulesText: 'Inflict 1 damage and convert 2 damage on the target. Assign a jinx of your choice to it. Move yourself up to 1.' },
-  { name: 'Bad luck', element: 'good', spellType: 'TRAP', range: anyDistance, target: 'ROOM', moments: [m.convert(2)], triggerTarget: 'EVENT_ROOM',
+  { name: 'Bad luck', element: 'good', spellType: 'TRAP', range: anyDistance, target: 'ROOM', effects: mainEffects([m.convert(2)]), triggerTarget: 'EVENT_ROOM',
    triggerText: 'When another mage places a cube in a room',
    rulesText: 'Target that room: convert 2 cubes there.',
    trigger: { event: 'CUBE_PLACED', relation: 'ENEMY', scope: 'ANY' } },
-  { name: 'Cursed oracle', element: 'good', spellType: 'TRAP', range: anyDistance, target: 'MAGE', instability: true, moments: [steal, assign('SLOWNESS')], triggerTarget: 'EVENT_MODEL',
+  { name: 'Cursed oracle', element: 'good', spellType: 'TRAP', range: anyDistance, target: 'MAGE', effects: unstableEffects([steal, assign('SLOWNESS')]), triggerTarget: 'EVENT_MODEL',
    triggerText: 'When another mage solves a quest',
    rulesText: 'Target that mage: steal 1 VP from it and assign Slowness to it.',
    trigger: { event: 'QUEST_SOLVED', relation: 'ENEMY', scope: 'ANY' } },
@@ -465,9 +441,9 @@ export function createLibrary(): LibraryDeck[] {
 // A finite, separate supply. These original spells never recycle into a discard.
 export function createPowerfulDeck(): Card[] {
  const patterns: Omit<Card,'id'|'kind'>[] = [
-  {name:'Rosefall',moments: [moment.instability(3), moment.damage(6)], range:3,target:'ROOM'},
-  {name:'Sovereign Wrath',moments: [moment.instability(1), moment.damage(8)], range:4,target:'MODEL'},
-  {name:'Worldbreaker',moments: [moment.instability(4), moment.damage(4)], range:2,target:'ROOM'},
+  {name:'Rosefall',effects: mainEffects([moment.instability(3), moment.damage(6)]), range:3,target:'ROOM'},
+  {name:'Sovereign Wrath',effects: mainEffects([moment.instability(1), moment.damage(8)]), range:4,target:'MODEL'},
+  {name:'Worldbreaker',effects: mainEffects([moment.instability(4), moment.damage(4)]), range:2,target:'ROOM'},
  ];
  return shuffle(Array.from({length:12},(_,i)=>({...patterns[i%patterns.length],id:`powerful-${i+1}`,kind:'SPELL' as const,powerful:true})));
 }
@@ -503,7 +479,7 @@ export function createOngoingEvents(): EventCard[] {
 
 export function createQuests(): Quest[] {
  const reward = (name: string, moments: Moment[], range = 0, target: Card['target'] = 'SELF', targetFilter?: Card['targetFilter']): Card => ({
-  id: `${name.toLowerCase().replace(/[^a-z]+/g, '-')}-reward`, name, kind: 'SPELL', moments, range, target, ...(targetFilter?{targetFilter}:{})
+  id: `${name.toLowerCase().replace(/[^a-z]+/g, '-')}-reward`, name, kind: 'SPELL', effects: mainEffects(moments), range, target, ...(targetFilter?{targetFilter}:{})
  });
  const spell = (spellType: SpellType) => ({event:'SPELL_EFFECT' as const,spellType});
  const patterns: Omit<Quest, 'id'|'progress'|'completed'|'claimed'>[] = [

@@ -1,3 +1,4 @@
+import { mainEffects } from '../src/cards';
 import { describe, expect, it } from 'vitest';
 import { applyAction, createGame, moment, summonEvocation, upgradeLegacyCards } from '../src';
 import type { Card, GameState, Moment } from '../src';
@@ -10,7 +11,7 @@ function fixture() {
  s.ongoingSpells!.push({id:'mark',playerId:'p1',targetPlayerId:'p2',card});s.activeSpellOrder!.push('mark');return s;
 }
 function prepare(s:GameState,steps:Moment[],target:Card['target']='MAGE',owner='p2') {
- const card:Card={id:s.library[0].cards.shift()!.id,name:'Source test',kind:'SPELL',spellType:'COMBAT',range:Infinity,target,moments:steps};
+ const card:Card={id:s.library[0].cards.shift()!.id,name:'Source test',kind:'SPELL',spellType:'COMBAT',range:Infinity,target,effects:mainEffects(steps)};
  s.players.find(p=>p.id===owner)!.prepared.rapid={used:false,card};return card;
 }
 const marks=(s:GameState)=>s.feedbackEvents!.filter(e=>e.kind==='SPELL_TRIGGERED'&&e.activeSpellId==='mark');
@@ -78,7 +79,7 @@ describe('Pain Mark only reacts to the bound mage’s own physical or spell dama
  });
  it('tracks nested spell damage as a spell, not as the surrounding room activation',()=>{
   const s=fixture();s.currentPlayerId='p3';s.activation!.playerId='p3';s.board.rooms.find(r=>r.id==='room-0,0')!.effect='ROOM_DAMAGE';
-  const card:Card={id:s.library[0].cards.shift()!.id,name:'Room retaliation',kind:'SPELL',target:'MAGE',range:Infinity,moments:[moment.damage(1)],spellType:'TRAP',trigger:{event:'ROOM_ACTIVATED',relation:'ENEMY',scope:'ANY'}};
+  const card:Card={id:s.library[0].cards.shift()!.id,name:'Room retaliation',kind:'SPELL',target:'MAGE',range:Infinity,effects:mainEffects([moment.damage(1)]),spellType:'TRAP',trigger:{event:'ROOM_ACTIVATED',relation:'ENEMY',scope:'ANY'}};
   s.readiedSpells!.push({id:'retaliation',playerId:'p2',card});s.activeSpellOrder!.push('retaliation');
   let paused=applyAction(s,{type:'BEGIN_PHYSICAL_ACTION',playerId:'p3',kind:'EXPLORE'});paused=applyAction(paused,{type:'ACTIVATE_ROOM',playerId:'p3'});
   expect(paused.pendingDecision?.kind).toBe('REACTIVE_SPELL');const restored:GameState=JSON.parse(JSON.stringify(paused));upgradeLegacyCards(restored);

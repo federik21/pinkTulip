@@ -1,3 +1,4 @@
+import { mainEffects } from '../src/cards';
 import { describe, expect, it } from 'vitest';
 import {
  applyAction, BLACK_ROSE_ID, canPlayerAct, canUseSpellDummy, createGame,
@@ -11,7 +12,7 @@ const origin:Hex={q:0,r:0};
 const targets:SpellTarget[]=['SELF','ROOM','MAGE','EVOCATION','MODEL'];
 type Cast=Extract<GameAction,{type:'CAST_SPELL'}>;
 type Selection=Omit<Cast,'type'|'playerId'|'slot'>;
-const card=(target:SpellTarget,changes:Partial<Card>&FlatEffects={}):Card=>({id:'test-spell',name:'Test spell',kind:'SPELL',moments:[],range:2,target,...withMoments(changes)});
+const card=(target:SpellTarget,changes:Partial<Card>&FlatEffects={}):Card=>({id:'test-spell',name:'Test spell',kind:'SPELL',range:2,target,...withMoments(changes)});
 function fixture():GameState {
  const s=createGame(4);s.phase='ACTION';s.round=1;s.currentPlayerId='p1';
  s.activation={playerId:'p1',actionsUsed:0,exploring:0,sequencedSpellUsed:false,spellsCast:0,discardedExit:false,roomEffectUsed:false};

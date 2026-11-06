@@ -1,3 +1,4 @@
+import { mainEffects } from '../packages/game-engine/src/cards';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -18,7 +19,7 @@ type WireAction = GameAction | { type: 'SUMMON_EVOCATION'; playerId: string };
 const ids = ['p1', 'p2'] as const;
 const slots = ['slot1', 'slot2', 'slot3', 'rapid'] as const;
 const hiddenCard = (index: number): Card => ({
- id: `hidden-${index}`, name: 'Hidden spell', kind: 'SPELL', moments:[], range: 0, target: 'MODEL',
+ id: `hidden-${index}`, name: 'Hidden spell', kind: 'SPELL', effects:mainEffects([]), range: 0, target: 'MODEL',
 });
 const player = (s: GameState, id: string) => {
  const p = s.players.find(p => p.id === id); assert.ok(p); return p;

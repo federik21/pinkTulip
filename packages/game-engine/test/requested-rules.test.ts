@@ -1,3 +1,4 @@
+import { mainEffects } from '../src/cards';
 import { moment, momentTotal } from '../src/cards';
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import { applyAction, canPassActionPhase, createGame, evocationAttack, hexDistance, hexLineDistance, PHYSICAL_TOKENS_PER_ROUND } from '../src';
@@ -27,7 +28,7 @@ function greyFixture(reconstructed=false) {
  return {g,source};
 }
 function prepare(g:GameState,slot:keyof Player['prepared']='rapid',changes:Partial<Card>={},playerId='p1') {
- const card={...g.library[0].cards.shift()!,spellType:undefined,ongoing:undefined,trigger:undefined,moments:[],instability:false,range:4,target:'ROOM' as const,...changes};
+ const card={...g.library[0].cards.shift()!,spellType:undefined,ongoing:undefined,trigger:undefined,effects:mainEffects([]),instability:false,range:4,target:'ROOM' as const,...changes};
  player(g,playerId).prepared[slot]={card,used:false};return card;
 }
 function holdPower(g:GameState,target:Card['target']='MODEL',playerId='p1') {
@@ -265,7 +266,7 @@ describe('all-model targeting and physical damage cubes',()=>{
 
  it('caps summon cubes at health/supply, deals full damage without cubes, and returns every contributing owner cube on destruction',()=>{
   for(const available of [0,1,25]) {
-   let g=actionFixture();g.evocations=[cadaver('victim','p2')];prepare(g,'rapid',{target:'MODEL',moments:[moment.damage(9)]});
+   let g=actionFixture();g.evocations=[cadaver('victim','p2')];prepare(g,'rapid',{target:'MODEL',effects:mainEffects([moment.damage(9)])});
    // Account for unavailable supply on a real unrebuilt room; no phantom cubes.
    player(g).cubes.available=available;player(g).cubes.onBoard=25-available;
    room(g).instability=25-available;room(g).instabilityLimit=30;room(g).cubesByPlayer={p1:25-available};

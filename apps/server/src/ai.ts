@@ -1,6 +1,6 @@
 import {
  applyAction, areAdjacent, areInSameRoom, canStartGame, canUseSpellDummy,
- GameRuleError, getDiscardMoveCards, getEffectiveSpell, getEvocationSupply, getQuestRewardTargets, getSpellType,
+ GameRuleError, getAllMoments, getDiscardMoveCards, getMainMoments, getEffectiveSpell, getEvocationSupply, getQuestRewardTargets, getSpellType,
  getRoomEffect, hexDistance, hexKey, isInStartingRoom, isWithinSpellRange, MAGE_DRAFT_POOL, roomEffectNeedsTarget,
 } from '@brw/game-engine';
 import type { Card, FeedbackTarget, GameAction, GameState, Hex, Moment, Player, Room } from '@brw/game-engine';
@@ -31,11 +31,10 @@ function enemies(s: GameState, p: Player): Model[] {
   .sort((a, b) => (a.health - a.wounds) - (b.health - b.wounds) || compareId(a.id, b.id));
 }
 
-// The card's separate instability effect (Card.instability) is scored like a printed caster-room moment.
-const PRINTED_INSTABILITY: Moment = { effect: 'INSTABILITY', amount: 1, scope: 'CASTER_ROOM' };
+// Every Moment the card resolves; the PLACE Effect scores as a printed caster-room instability.
 function steps(card: Card, reactive = false): Moment[] {
- const printed = reactive && !card.moments.length ? card.triggerEffects ?? [] : card.moments;
- return card.instability ? [PRINTED_INSTABILITY, ...printed] : printed;
+ const all = getAllMoments(card);
+ return reactive && !getMainMoments(card).length ? [...all, ...(card.triggerEffects ?? [])] : all;
 }
 function cardValue(card: Card): number {
  return steps(card, true).reduce((value, m) => value + (

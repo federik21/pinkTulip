@@ -1,3 +1,4 @@
+import { mainEffects } from '../src/cards';
 import { describe, expect, it } from 'vitest';
 import { applyAction, createGame, moment, summonEvocation, upgradeLegacyCards } from '../src';
 import type { GameState } from '../src';
@@ -11,7 +12,7 @@ function fixture(actionsUsed=0) {
  s.activation={playerId:'p1',actionsUsed,exploring:0,sequencedSpellUsed:false,spellsCast:0,discardedExit:false,roomEffectUsed:false};
  for(const p of s.players){p.connected=true;p.wizard.position={q:0,r:0};}
  s.players[1].wizard.health=1;arm(s);
- s.players[0].prepared.rapid={used:false,card:{id:'lethal',kind:'SPELL',name:'Lethal',spellType:'COMBAT',target:'MAGE',range:Infinity,moments:[moment.damage(1)]}};
+ s.players[0].prepared.rapid={used:false,card:{id:'lethal',kind:'SPELL',name:'Lethal',spellType:'COMBAT',target:'MAGE',range:Infinity,effects:mainEffects([moment.damage(1)])}};
  return s;
 }
 function cast(s:GameState) {return applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',targetPlayerId:'p2'});}
@@ -111,14 +112,14 @@ describe('Liquefy the Pain free Succubus activation',()=>{
   expect(result.evocationActivation).toBeNull();expect(result.currentPlayerId).toBe('p1');conserved(result);
  });
  it('restores the interrupted turn if an activation reaction destroys the new Succubus',()=>{
-  const s=fixture();s.ongoingSpells!.push({id:'destroy-summon',playerId:'p3',card:{id:'destroy',name:'Destroy summon',kind:'SPELL',target:'MODEL',range:Infinity,moments:[],
+  const s=fixture();s.ongoingSpells!.push({id:'destroy-summon',playerId:'p3',card:{id:'destroy',name:'Destroy summon',kind:'SPELL',target:'MODEL',range:Infinity,effects:mainEffects([]),
    ongoing:{trigger:{event:'EVOCATION_ACTIVATED',relation:'ENEMY',scope:'ANY'},effects:[{effect:'DAMAGE',amount:20,target:'EVENT_MODEL'}]}}});
   s.activeSpellOrder!.push('destroy-summon');const result=reveal(cast(s));
   expect(result.evocations).toEqual([]);expect(result.evocationActivation).toBeNull();expect(result.currentPlayerId).toBe('p1');conserved(result);
  });
  it('also gives control after neutral Pain defeats the caster during their own turn',()=>{
   const s=fixture();s.readiedSpells=[];s.activeSpellOrder=[];arm(s,'p1');s.players[0].wizard.health=1;
-  Object.assign(s.players[0].prepared.rapid!.card,{target:'SELF',moments:[moment.pain(1)]});
+  Object.assign(s.players[0].prepared.rapid!.card,{target:'SELF',effects:mainEffects([moment.pain(1)])});
   const result=reveal(applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid'}));
   expect(result.evocationActivation?.playerId).toBe('p1');expect(result.currentPlayerId).toBe('p1');
   expect(result.players[0].victoryPoints).toBe(2);
