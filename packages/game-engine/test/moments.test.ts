@@ -122,15 +122,37 @@ describe('moments are an ordered, repeatable list of effect steps', () => {
   expect(after.players[1].wizard.damageOrder).toEqual(['p3','p1','p3']);
  });
 
- it('converts the newest eligible room instability cubes automatically',()=>{
+ it('lets the caster choose which room cube colors to convert',()=>{
   const s=fixture(),room=s.board.rooms.find(r=>r.id==='room-0,0')!;
-  room.instability=3;room.cubesByPlayer={p3:2,p4:1};room.instabilityOrder=['p3','p4','p3'];
+  room.instability=5;room.cubesByPlayer={p1:1,p3:2,p4:1,'black-rose':1};room.instabilityOrder=['p1','p3','p4','p3','black-rose'];
+  s.players[0].cubes.available--;s.players[0].cubes.onBoard++;
   s.players[2].cubes.available-=2;s.players[2].cubes.onBoard+=2;
   s.players[3].cubes.available--;s.players[3].cubes.onBoard++;
+  const paused=cast(s,spell([moment.convert(2)],'ROOM'),{roomId:room.id});
+  expect(paused.pendingDecision).toMatchObject({kind:'CHOICE',prompt:`Choose a color of cube in ${room.name} to convert.`});
+  expect(paused.pendingDecision?.kind==='CHOICE'&&paused.pendingDecision.options.map(option=>option.label)).toEqual([
+    'Amber (Amber Mage)','Green (Emerald Mage)','Pink Tulip',
+  ]);
+  const second=choose(paused,'p4');
+  expect(second.pendingDecision?.kind).toBe('CHOICE');
+  const after=choose(second,'black-rose');
+  const converted=after.board.rooms.find(r=>r.id===room.id)!;
+  expect(converted.cubesByPlayer).toEqual({p1:3,p3:2});
+  expect(converted.instabilityOrder).toEqual(['p1','p3','p3','p1','p1']);
+  expect(converted.instability).toBe(5);
+  expect(after.players[0].cubes).toMatchObject({available:22,onBoard:3});
+  expect(after.players[2].cubes).toMatchObject({available:23,onBoard:2});
+  expect(after.players[3].cubes).toMatchObject({available:25,onBoard:0});
+ });
+
+ it('converts automatically when only one foreign room cube color is available',()=>{
+  const s=fixture(),room=s.board.rooms.find(r=>r.id==='room-0,0')!;
+  room.instability=2;room.cubesByPlayer={p3:2};room.instabilityOrder=['p3','p3'];
+  s.players[2].cubes.available-=2;s.players[2].cubes.onBoard+=2;
   const after=cast(s,spell([moment.convert(1)],'ROOM'),{roomId:room.id});
   expect(after.pendingDecision).toBeUndefined();
-  expect(after.board.rooms.find(r=>r.id===room.id)!.cubesByPlayer).toEqual({p1:1,p3:1,p4:1});
-  expect(after.board.rooms.find(r=>r.id===room.id)!.instabilityOrder).toEqual(['p3','p4','p1']);
+  expect(after.board.rooms.find(r=>r.id===room.id)!.cubesByPlayer).toEqual({p1:1,p3:1});
+  expect(after.board.rooms.find(r=>r.id===room.id)!.instabilityOrder).toEqual(['p3','p1']);
  });
 
  it('summons and activates a Succubus as a card moment', () => {

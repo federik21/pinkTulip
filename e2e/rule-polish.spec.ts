@@ -13,7 +13,7 @@ test.beforeEach(async ({page})=>{
 });
 test.afterEach(async ({page})=>expect(errors.get(page)??[],'No uncaught React/browser errors').toEqual([]));
 
-const preparedSpell:Card={id:'fixture-spell',name:'Fixture Ember',kind:'SPELL',effects:mainEffects([moment.instability(1),moment.damage(2)]),range:3,target:'MODEL'};
+const preparedSpell:Card={id:'fixture-spell',name:'Fixture Ember',kind:'SPELL',effects:mainEffects([moment.instability(1),moment.damage(2)]),range:3,target:'MODEL',darkSide:{moments:[moment.damage(1)],range:1,target:'ROOM',rulesText:'Dark test side'}};
 function fixtureState(count=2):GameState {
  const game=createGame(count);
  game.gameId='rule-polish';game.round=1;game.phase='ACTION';game.firstPlayerId='p1';
@@ -41,6 +41,7 @@ async function mount(page:Page,game:GameState) {
   });
  });
  await page.goto('/');
+ await page.getByRole('button',{name:'Online play',exact:true}).click();
  await page.getByRole('button',{name:'Create room',exact:true}).click();
  await expect(page.locator('.app')).toBeVisible();
  await dismissOverlay(page);
@@ -440,7 +441,7 @@ test('mage view controls show retinues, map icons, stable slot numbers and owner
 });
 
 test('map puts the active mage first, crowns the order marker, scales mages and shows public played cards',async ({page})=>{
- const game=fixtureState();game.players[1].isBot=true;game.currentPlayerId='p2';
+ const game=fixtureState();game.players[1].isBot=true;game.firstPlayerId='p2';game.currentPlayerId='p2';
  game.activation={playerId:'p2',actionsUsed:0,exploring:0,sequencedSpellUsed:false,spellsCast:0,discardedExit:false,roomEffectUsed:false,physicalAction:null};
  game.players[1].wizard.position={q:0,r:0};game.turnRecapDraft={playerId:'p2',logStart:0,cards:[]};
  const wire=await mount(page,game);
@@ -449,10 +450,16 @@ test('map puts the active mage first, crowns the order marker, scales mages and 
  await expect(order.locator('li').first().locator('.map-first-crown')).toBeVisible();
  await expect(order.locator('li').first()).toHaveClass(/map-player-active/);
  await expect(hex(page,'room-0,0').locator('[data-mage-id="p2"] .mage-token-disc')).toHaveAttribute('r',/^5\.6/);
- game.turnRecapDraft={playerId:'p2',logStart:0,cards:[{at:1,role:'CAST',ownerId:'p2',card:preparedSpell}]};
+ game.turnRecapDraft={playerId:'p2',logStart:0,cards:[{at:1,role:'CAST',ownerId:'p2',card:preparedSpell,side:'DARK'}]};
  wire.update(game);
- await expect(page.locator('.map-played-card')).toContainText('Fixture Ember');
- await expect(page.locator('.map-played-card')).toContainText('Blue Seer');
+ const preview=page.locator('.map-played-card');
+ await expect(preview).toContainText('Fixture Ember');
+ await expect(preview).toContainText('Blue Seer');
+ await expect(preview.locator('.spell-dark-side .spell-rules')).toHaveText('Dark test side');
+ await expect(preview.locator('.spell-light-side')).toHaveCount(0);
+ await page.waitForTimeout(3500);
+ await expect(preview).toBeVisible();
+ await expect(preview).toHaveCount(0,{timeout:2500});
 });
 
 test('active own evocation can attack or finish with mage details and opponent retinues closed',async ({page})=>{

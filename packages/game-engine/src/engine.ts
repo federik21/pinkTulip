@@ -1,5 +1,5 @@
-import { Activation, ActiveSpell, Board, Card, DamageOrigin, DecisionAnswer, DecisionDetails, Element, EventCard, Evocation, EvocationKind, FeedbackTarget, GameAction, GameFeedbackEvent, GameState, Hex, Jinx, JinxName, MageDraftId, Moment, Player, PlayerId, Quest, QuestTrigger, Room, RoomId, RoomColor, RoomEffect, SpellType, TriggerCondition, TriggerEvent, TriggeredInstruction, TurnRecapCard, UpgradeName } from './types';
-import { createEvents, createLibrary, createPowerfulDeck, createQuests, getEffectiveSpell, getPhysicalEffect, getRevealedElements, getAllMoments, getMainMoments, getSpellEffects, getSpellType, hasMoment, isUnstable, mainEffects, shuffle } from './cards';
+import { Activation, ActiveSpell, AmountScale, Board, Card, DamageOrigin, DecisionAnswer, DecisionDetails, Element, EventCard, Evocation, EvocationKind, FeedbackTarget, GameAction, GameFeedbackEvent, GameState, Hex, Jinx, JinxName, MageDraftId, Moment, Player, PlayerId, PreparedCard, Quest, QuestTrigger, Room, RoomId, RoomColor, RoomEffect, SpellSide, SpellType, TriggerCondition, TriggerEvent, TriggeredInstruction, TurnRecapCard, UpgradeName } from './types';
+import { createEvents, createLibrary, createPowerfulDeck, createQuests, getDarkSideSpell, getEffectiveSpell, getPhysicalEffect, getRevealedElements, getAllMoments, getMainMoments, getSpellEffects, getSpellForSide, getSpellType, hasMoment, isUnstable, mainEffects, shuffle } from './cards';
 
 export class GameRuleError extends Error {}
 export const PHYSICAL_TOKENS_PER_ROUND = 2;
@@ -628,8 +628,8 @@ function drawQuest(s:GameState) {
 // stored in GameState; a root action remains a single clone/commit boundary.
 type ModelSnapshot = { id:string; playerId:string; kind:'MAGE'|'EVOCATION'; generation:number };
 // Local to a single effect, so a nested spell cannot replace its summoned model.
-type EffectResolution = { casterSeen?:{position:Hex}; assigned?:string[]; eventActor?:ModelSnapshot; summoned?:ModelSnapshot; activationIsExplicit:boolean; upgraded?:boolean; removed?:{position:Hex;attack:number;roomId?:string}; eventPosition?:Hex; eventKind?:EvocationKind; damaged?:ModelSnapshot[]; moved?:ModelSnapshot; spellEvent?:SpellEvent; unconverted?:number; instabilityPlaced?:number; protectedTargets?:Set<string> };
-type SpellEvent = { event:TriggerEvent; model?:ModelSnapshot; actor?:ModelSnapshot; roomId?:string; target?:FeedbackTarget; damageOrigin?:DamageOrigin; position?:Hex; kind?:EvocationKind; spellType?:Card['spellType']; sourceCard?:Card; moment?:string; prevented?:{value:boolean}; afterResolution?:()=>void };
+type EffectResolution = { casterSeen?:{position:Hex}; assigned?:string[]; eventActor?:ModelSnapshot; summoned?:ModelSnapshot; activationIsExplicit:boolean; upgraded?:boolean; removed?:{position:Hex;attack:number;roomId?:string}; eventPosition?:Hex; eventKind?:EvocationKind; damaged?:ModelSnapshot[]; blackDamaged?:Record<string,number>; moved?:ModelSnapshot; spellEvent?:SpellEvent; unconverted?:number; instabilityPlaced?:number; protectedTargets?:Set<string> };
+type SpellEvent = { event:TriggerEvent; model?:ModelSnapshot; actor?:ModelSnapshot; roomId?:string; target?:FeedbackTarget; damageOrigin?:DamageOrigin; amount?:number; position?:Hex; kind?:EvocationKind; spellType?:Card['spellType']; sourceCard?:Card; moment?:string; prevented?:{value:boolean}; afterResolution?:()=>void };
 type PendingMageDefeat = { ref:ModelSnapshot; roomId?:string; target:FeedbackTarget; source?:Player; liquefyThePain?:boolean };
 type ReplayEntropy={ids:string[];random:number[]};
 type InstructionContext = { generations:Map<string,number>; bindings:Map<string,ModelSnapshot>; defeats:Map<string,PendingMageDefeat>; resolutions:number; interruptId?:string; answers:DecisionAnswer[]; cursor:number; momentDepth:number; events:SpellEvent[]; entropy:ReplayEntropy; idCursor:number; randomCursor:number; suppress?:boolean; resolving?:{sourceCard?:Card;moment?:string}; frames?:GameState[]; frameKey?:string };
@@ -694,9 +694,46 @@ function removeActiveSpell(s:GameState,active:ActiveSpell) {
 function retireActiveSpell(s:GameState,active:ActiveSpell) {
  const revealed=s.readiedSpells!.some(a=>a.id===active.id);
  removeActiveSpell(s,active);
- if(active.card.powerful)s.removedCards.push(active.card);
- else if(revealed)getPlayer(s,active.playerId).discard.push(active.card);
- else discardCard(s,getPlayer(s,active.playerId),active.card);
+ // A dark-side spell resolves from a derived face; the physical card is the printed one.
+ const card=active.printed??active.card;
+ if(card.powerful)s.removedCards.push(card);
+ else if(revealed)getPlayer(s,active.playerId).discard.push(card);
+ else discardCard(s,getPlayer(s,active.playerId),card);
+}
+// Total wounds a model carries from BR (black damage on a mage, BR cubes on an evocation).
+function blackWounds(model:WoundedModel) {
+ return Math.max(model.blackDamage??0,0)+(model.damageByPlayer[BLACK_ROSE_ID]??0);
+}
+// Printed amount plus 1 `each` per `per` units of the scale source (optionally capped).
+function scaledAmount(s:GameState,owner:Player,step:{amount?:number;scale?:AmountScale},target?:ModelSnapshot,effect?:EffectResolution):number {
+ const base=step.amount??0,scale=step.scale;
+ if(!scale)return base;
+ let count=0;
+ switch(scale.from) {
+  case 'CASTER_BLACK_DAMAGE':count=blackWounds(owner.wizard);break;
+  case 'CASTER_DAMAGE':count=owner.wizard.damageCubes;break;
+  case 'TARGET_DAMAGE':count=liveModel(s,target)?.model.damageCubes??0;break;
+  case 'EVENT_AMOUNT':count=effect?.spellEvent?.amount??0;break;
+  case 'DAMAGED_BLACK_DAMAGE':count=Object.values(effect?.blackDamaged??{}).reduce((total,n)=>total+n,0);break;
+ }
+ const extra=Math.floor(count/scale.per)*scale.each;
+ return base+(scale.max===undefined?extra:Math.min(extra,scale.max));
+}
+// Remove the wounds that were just suffered (the most recent cubes from `sourceId`, BR when none are left).
+function takeBackDamage(s:GameState,mage:Player,amount:number,sourceId:PlayerId) {
+ const wizard=mage.wizard;
+ const physical=sourceId===BLACK_ROSE_ID?0:Math.min(amount,wizard.damageByPlayer[sourceId]??0);
+ if(physical>0) {
+  removeCubes(wizard.damageByPlayer,sourceId,physical);
+  const owner=s.players.find(p=>p.id===sourceId);
+  if(owner){owner.cubes.available+=physical;owner.cubes.onWizard-=physical;}
+ }
+ const black=Math.min(amount-physical,wizard.blackDamage);
+ wizard.blackDamage-=black;
+ const taken=physical+black;
+ wizard.damageCubes-=taken;
+ if(taken>0&&wizard.damageOrder)wizard.damageOrder.splice(Math.max(0,wizard.damageOrder.length-taken),taken);
+ return taken;
 }
 function invalidateModel(s:GameState,ref:ModelSnapshot) {
  context(s).generations.set(ref.id,ref.generation+1);
@@ -726,6 +763,8 @@ function matchesTrigger(s:GameState,active:ActiveSpell,condition:TriggerConditio
  const damageOrigins=condition.damageOrigins??(active.card.name==='Pain Mark'&&active.card.ongoing&&condition.event==='DAMAGE_DEALT'?['MAGE_PHYSICAL','SPELL']:undefined);
  if(damageOrigins&&(!event.damageOrigin||!damageOrigins.includes(event.damageOrigin)))return false;
  if(condition.modelKind&&event.model?.kind!==condition.modelKind)return false;
+ if(condition.actorKind&&event.actor?.kind!==condition.actorKind)return false;
+ if(condition.modelRelation&&(!event.model||(condition.modelRelation==='SELF')!==(event.model.playerId===active.playerId)))return false;
  if(condition.roomColors) {
   const color=event.roomId?s.board.rooms.find(r=>r.id===event.roomId)?.color:undefined;
   if(!color||!condition.roomColors.includes(color))return false;
@@ -821,6 +860,26 @@ function resolveInstructionBody(s:GameState,owner:Player,instruction:TriggeredIn
    damageEvocation(s,altar,1);
    if(altar.damageCubes>before)awardVictoryPoints(s,BLACK_ROSE_ID,1);
   }
+ } else if(instruction.effect==='GAIN_VP') {
+  if(instruction.amount<=0)return;
+  awardVictoryPoints(s,owner.id,instruction.amount);
+  s.log.push(`${owner.name} gains ${instruction.amount} VP.`);
+ } else if(instruction.effect==='REDIRECT_DAMAGE') {
+  // Pain Mark: one of the owner's evocations suffers the wounds just inflicted on the mage instead.
+  const event=effect?.spellEvent;
+  if(!target?.mage||target.mage.id!==owner.id||!event?.amount)return;
+  const options=s.evocations.filter(e=>e.playerId===owner.id&&!isNightmare(e)&&e.damageCubes<e.health);
+  if(!options.length)return;
+  const chosen=askChoice(s,owner.id,`pain-mark|${owner.id}|${event.amount}`,`Pain Mark: let one of your evocations suffer ${event.amount} damage instead of ${owner.name}?`,
+   options.map(e=>({id:e.id,label:`${e.name} #${e.number??1} (${e.health-e.damageCubes} health left)`})),true);
+  const taker=options.find(e=>e.id===chosen);
+  if(!taker)return;
+  const culprit=event.actor?s.players.find(p=>p.id===event.actor!.playerId):undefined;
+  const taken=takeBackDamage(s,owner,event.amount,culprit?.id??BLACK_ROSE_ID);
+  if(taken<=0)return;
+  s.log.push(`Pain Mark: ${taker.name} #${taker.number??1} suffers ${taken} damage instead of ${owner.name}.`);
+  appendFeedback(s,{kind:'HEAL',target:modelFeedbackTarget(s,ref)!,sourceId:owner.id,amount:taken});
+  damageEvocation(s,taker,taken,culprit,event.actor,event.damageOrigin??'NEUTRAL');
  } else if(instruction.effect==='IGNORE_DAMAGE') {
   // Persecution: heal the wounds just suffered, then return each ignored point to the damage's source.
   if(!target?.mage)return;
@@ -845,6 +904,7 @@ function resolveInstructionBody(s:GameState,owner:Player,instruction:TriggeredIn
     else damageEvocation(s,target.evocation!,instruction.amount,owner,actor,damageOrigin);
     // Remember who suffered, for "each model that suffered damage from this effect".
     if(effect&&target.model.damageCubes>wounds&&!effect.damaged?.some(d=>d.id===ref!.id))(effect.damaged??=[]).push(ref!);
+    if(effect&&target.model.damageCubes>wounds)(effect.blackDamaged??={})[ref!.id]=blackWounds(target.model);
     }
     break;
   case 'HEAL':healDamageWithChoice(s,owner,target.model,target.location,instruction.amount,modelFeedbackTarget(s,ref)!);break;
@@ -956,14 +1016,14 @@ function resolveEvent(s:GameState,event:SpellEvent) {
   if(bound&&!liveModel(s,bound))continue;
   assert(++context(s).resolutions<=128,'Reactive spell resolution limit exceeded (128); root action cancelled');
   const ongoing=s.ongoingSpells!.some(a=>a.id===active.id);
-  if(event.event==='MAGE_DEFEATED'&&active.card.name==='Liquefy the Pain'&&event.model) {
+  if(event.event==='MAGE_DEFEATED'&&active.card.name==='Liquefy the Pain'&&!active.printed&&event.model) {
    const defeat=context(s).defeats.get(event.model.id);
    if(defeat)defeat.liquefyThePain=true;
   }
   // Remove a one-shot BEFORE any nested effects; reveal/discard is physical.
   if(!ongoing)retireActiveSpell(s,active);
   s.log.push(`Interrupt ${event.event}: ${owner.name} ${ongoing?'reacts with':'reveals'} ${active.card.name}.`);
-  recordRecapCard(s,'TRIGGERED',owner.id,active.card,event.event);
+  recordRecapCard(s,'TRIGGERED',owner.id,active.printed??active.card,event.event,active.side);
   // A model binding wins over the incidental room binding stored on model spells.
   // Event targets/rooms are public only now, after the canonical reveal above.
   const roomId=selectedRoom?.id??modelFeedbackTarget(s,selectedRef)?.roomId??event.roomId??eventTarget?.roomId??active.roomId;
@@ -988,7 +1048,7 @@ function resolveEvent(s:GameState,event:SpellEvent) {
    if(instructions.length)s.log.push(`Effect 2/${effects} · ${active.card.name}: main effect.`);
   }
   const protectedTargets=new Set<string>();
-  const spellTargets=ongoing&&getSpellType(active.card)==='COMBAT'
+  const spellTargets=ongoing&&getSpellType(active.card)==='COMBAT'&&instructions.some(step=>step.effect==='DAMAGE')
    ?bound?[bound]:room?roomOccupants(s,room).map(model=>snapshot(s,model.id)!):[]
    :[];
   for(const protectedTarget of spellTargets) {
@@ -1013,7 +1073,11 @@ function resolveEvent(s:GameState,event:SpellEvent) {
     }
     if(instruction.effect==='INSTABILITY'&&instruction.scope==='CASTER_ROOM')roomId=roomAt(s,owner.wizard.position)?.id;
     if(instruction.effect==='SUMMON'&&instruction.position==='TARGET'&&!liveModel(s,ref))roomId??=room?.id;
-    try{resolveInstruction(s,owner,instruction,ref,roomId,ownerRef,effect);}finally{ctx.resolving=previous;}
+    const resolved:TriggeredInstruction=instruction.scale?{...instruction,amount:scaledAmount(s,owner,instruction,ref,effect)} as TriggeredInstruction:instruction;
+    if(instruction.scale&&'amount' in resolved&&(resolved.amount??0)<=0){
+     s.log.push(`${active.card.name}: nothing to apply.`);ctx.resolving=previous;continue;
+    }
+    try{resolveInstruction(s,owner,resolved,ref,roomId,ownerRef,effect);}finally{ctx.resolving=previous;}
      }
      if(!ongoingPrevented&&instructions.length) {
     if((effect.instabilityPlaced??0)>0)progressTriggeredQuests(s,owner,{event:'INSTABILITY_EFFECT'});
@@ -1027,16 +1091,22 @@ function resolveEvent(s:GameState,event:SpellEvent) {
  }
    }
 }
+function amountLabel(instruction:{amount?:number;scale?:AmountScale},unit:string):string {
+ const scale=instruction.scale,base=instruction.amount??0;
+ if(!scale)return `${base} ${unit}`;
+ const source={CASTER_BLACK_DAMAGE:'BR damage on the caster’s mage',CASTER_DAMAGE:'damage on the caster’s mage',TARGET_DAMAGE:'damage on the target',EVENT_AMOUNT:'damage suffered',DAMAGED_BLACK_DAMAGE:'BR damage on the models damaged by this effect'}[scale.from];
+ return `${base>0?`${base} plus `:''}${scale.each} ${unit} for each ${scale.per>1?`${scale.per} `:''}${source}${scale.max!==undefined?` (up to ${scale.max} in total)`:''}`;
+}
 function describeInstruction(instruction:TriggeredInstruction):string {
  const targets:Record<TriggeredInstruction['target'],string>={BOUND_MODEL:'the target model',BOUND_ROOM:'the bound room',EVENT_MODEL:'the triggering model',EVENT_ACTOR:'the acting model',EVENT_ROOM:'the triggering room',OWNER:'the owner’s mage'};
  const target=instruction.scope==='CASTER'?'the caster’s mage':instruction.scope==='ALL_MAGES'?'each mage':instruction.scope==='DAMAGED'?'each model damaged by this effect':instruction.scope==='CASTER_ROOM'?(instruction.effect==='INSTABILITY'?'the caster’s room':instruction.effect==='DAMAGE'?'enemy models in the caster’s room':'every model in the caster’s room'):instruction.effect==='DAMAGE'&&instruction.target==='BOUND_ROOM'?'enemy models in the selected room':targets[instruction.target];
  switch(instruction.effect) {
-  case 'DAMAGE':return `${instruction.when==='TARGET_DEFEATED'?'If the target is defeated: d':'D'}eal ${instruction.amount} damage to ${instruction.area?`each other mage within range ${instruction.area.range} of the target’s position`:target}.`;
+  case 'DAMAGE':return `${instruction.when==='TARGET_DEFEATED'?'If the target is defeated: d':'D'}eal ${amountLabel(instruction,'damage')} to ${instruction.area?`${instruction.area.choose?'one different model':'each other mage'} within range ${instruction.area.range} of the target’s position`:target}.`;
   case 'HEAL':return `Heal up to ${instruction.amount} ${instruction.amount===1?'wound':'wounds'} on ${target}.`;
   case 'CONVERT':return `Convert up to ${instruction.amount} ${instruction.amount===1?'cube':'cubes'} on ${target} to the owner’s color.`;
   case 'BLACK_ROSE_CONVERT':return `Convert the last ${instruction.amount} damage cubes received from other mages on ${target} to BR black${instruction.scope==='CASTER'?'':' (ignored on friendly models)'}.`;
-  case 'INSTABILITY':return `Place up to ${instruction.amount} instability in ${target}.`;
-  case 'PAIN':return `BR inflicts ${instruction.amount} ${instruction.amount===1?'damage cube':'damage cubes'} on the resolving mage.`;
+  case 'INSTABILITY':return `Place up to ${amountLabel(instruction,'instability')} in ${target}.`;
+  case 'PAIN':return `BR inflicts ${amountLabel(instruction,instruction.amount===1&&!instruction.scale?'damage cube':'damage cubes')} on the resolving mage.`;
   case 'SUMMON':return `Summon ${instruction.kind==='EVENT_MODEL'?'the lost model':`a ${EVOCATION_TYPES[instruction.kind].name}`} ${instruction.position==='TARGET'?'in the target’s room':instruction.position==='EVENT'?'where it stood':instruction.position==='REMOVED'?'in the same room':instruction.position==='CHOICE'?'in a room of your choice':'at the owner’s position'}${instruction.kind==='SUCCUBUS'?' and activate it':''}.`;
   case 'ACTIVATE_EVOCATION':return `Activate the summoned ${EVOCATION_TYPES[instruction.kind].name}: move and attack in either order, or use only one, without spending another action or token.`;
   case 'ACTIVATE_TARGET':return 'Activate the chosen evocation under your control: it takes your color, may attack its owner, and you and your evocations are immune to that damage.';
@@ -1065,7 +1135,8 @@ function describeInstruction(instruction:TriggeredInstruction):string {
   case 'INSTABILITY_PER_NIGHTMARE':return 'Place 1 instability in the target room for each Nightmare in it.';
   case 'DRAW_EVENT':return 'Draw a new event.';
   case 'GAIN_VP_PER_NIGHTMARE':return `Gain 1 victory point for each Nightmare in the game, up to ${instruction.max}.`;
-  case 'GAIN_VP':return `Gain ${instruction.amount} VP.`;
+  case 'GAIN_VP':return `Gain ${amountLabel(instruction,'VP')}.`;
+  case 'REDIRECT_DAMAGE':return 'One of your evocations may suffer the damage just inflicted on you instead.';
   case 'GAIN_VP_PER_ALTAR':return `Gain 1 VP for each Altar in play, up to ${instruction.max}.`;
   case 'COMPLETE_QUEST':return 'Choose an active quest and lose VP equal to the moon level to complete it.';
   case 'RESHUFFLE_DRAW':return `Shuffle your discard into your grimoire, choose ${instruction.amount} cards from it, then shuffle your grimoire.`;
@@ -1197,7 +1268,7 @@ function damage(s: GameState, target: Player, amount: number, source?: Player, a
  appendFeedback(s,{kind:'DAMAGE',target:feedbackTarget,sourceId:source?.id??BLACK_ROSE_ID,amount:inflicted});
  if(source && eventActor)cerebralImplant(s,source,eventActor);
  if(source && eventActor)modelEvent(s,'DAMAGE_DEALT',eventActor,eventActor,undefined,damageOrigin,feedbackTarget);
- emitEvent(s,{event:'DAMAGE_TAKEN',model:ref,actor:eventActor,roomId,target:feedbackTarget,damageOrigin});
+ emitEvent(s,{event:'DAMAGE_TAKEN',model:ref,actor:eventActor,roomId,target:feedbackTarget,damageOrigin,amount:inflicted});
  if(target.wizard.damageCubes<target.wizard.health)return;
  const existing=context(s).defeats.get(ref.id);
  if(existing){existing.source=source;return;}
@@ -1293,14 +1364,14 @@ function damageEvocation(s:GameState,e:Evocation,amount:number,source?:Player,ac
  appendFeedback(s,{kind:'DAMAGE',target:feedbackTarget,sourceId:source?.id??BLACK_ROSE_ID,amount:inflicted});
  if(source && actor)cerebralImplant(s,source,actor);
  if(source && actor)modelEvent(s,'DAMAGE_DEALT',actor,actor,undefined,damageOrigin,feedbackTarget);
- if(e.damageCubes<e.health){emitEvent(s,{event:'DAMAGE_TAKEN',model:ref,actor,roomId,target:feedbackTarget,damageOrigin});return;}
+ if(e.damageCubes<e.health){emitEvent(s,{event:'DAMAGE_TAKEN',model:ref,actor,roomId,target:feedbackTarget,damageOrigin,amount:inflicted});return;}
  invalidateModel(s,ref);
  for(const owner of s.players) {
   const n=e.damageByPlayer[owner.id]??0;owner.cubes.available+=n;owner.cubes.onEvocations-=n;
  }
  s.evocations=s.evocations.filter(model=>model.id!==e.id);
  s.log.push(`${e.name} is destroyed; its damage cubes return to their owners.`);
- emitEvent(s,{event:'DAMAGE_TAKEN',model:ref,actor,roomId,target:feedbackTarget,damageOrigin});
+ emitEvent(s,{event:'DAMAGE_TAKEN',model:ref,actor,roomId,target:feedbackTarget,damageOrigin,amount:inflicted});
  emitEvent(s,{event:'EVOCATION_LOST',model:ref,roomId,target:feedbackTarget,position:{...e.position},kind:getEvocationKind(e)});
 }
 
@@ -1691,10 +1762,16 @@ function convertRoomCubes(s:GameState,p:Player,room:Room,amount:number) {
  let converted=0;
  const limit=Math.min(amount,p.cubes.available,room.instability);
  while(converted<limit) {
-  let index=room.instabilityOrder.length-1;
-  while(index>=0&&room.instabilityOrder[index]===p.id)index--;
+  const sourceIds=[...new Set(room.instabilityOrder.filter(id=>id!==p.id&&(room.cubesByPlayer[id]??0)>0))];
+  if(!sourceIds.length)break;
+  const sourceId=sourceIds.length===1?sourceIds[0]:askChoice(s,p.id,`convert-room|${room.id}|${converted}`,
+   `Choose a color of cube in ${room.name} to convert.`,sourceIds.map(id=>{
+    const source=s.players.find(owner=>owner.id===id);
+    const label=id===BLACK_ROSE_ID?'Pink Tulip':`${MAGE_COLOR_NAMES[id]??'Mage'} (${source?.name??id})`;
+    return {id,label};
+   }))!;
+  const index=room.instabilityOrder.lastIndexOf(sourceId);
   if(index<0)break;
-  const sourceId=room.instabilityOrder[index];
   room.instabilityOrder.splice(index,1);
   const source=s.players.find(owner=>owner.id===sourceId);
   if((room.cubesByPlayer[sourceId]??0)>0) {
@@ -1714,9 +1791,9 @@ function convertRoomCubes(s:GameState,p:Player,room:Room,amount:number) {
 function expireRoundSpells(s:GameState) {
  for(const active of [...s.readiedSpells!]) {
   removeActiveSpell(s,active);
-  const owner=getPlayer(s,active.playerId);
-  if(active.cleanupDestination==='MEMORIES'&&!active.card.powerful)owner.discard.push(active.card);
-  else owner.hand.push(active.card);
+  const owner=getPlayer(s,active.playerId),card=active.printed??active.card;
+  if(active.cleanupDestination==='MEMORIES'&&!card.powerful)owner.discard.push(card);
+  else owner.hand.push(card);
  }
  for(const active of [...s.ongoingSpells!])retireActiveSpell(s,active);
  s.activeSpellOrder=[];
@@ -1866,7 +1943,7 @@ function resolveOngoingEvents(s:GameState) {
 function startBlackRose(s: GameState) {
  // Also settle legacy Cleanup snapshots, without returning a card twice.
  expireRoundSpells(s);
- s.round++; s.phase='BLACK_ROSE'; s.blackRoseResolved=false; s.currentPlayerId=null; s.activation=null;s.evocationActivation=null;
+ s.round++; s.phase='BLACK_ROSE'; s.blackRoseResolved=false; s.roseQuestDiscards=[]; s.currentPlayerId=null; s.activation=null;s.evocationActivation=null;
  for(const p of s.players) {
   p.actionTokens=PHYSICAL_TOKENS_PER_ROUND; p.passed=false; p.studyDrawn=false; p.studyDone=false; p.studyCardIds=[]; p.preparationDone=false;
   // Powerful spells stay with the mage until cast, including uncast preparations.
@@ -2456,14 +2533,19 @@ export function canPlayerAct(s: GameState, p: Player): boolean {
  const spells=getReadyPreparedSlots(p,a).map(slot=>p.prepared[slot]);
  return spells.some(prepared=>{
   if(!prepared || prepared.used)return false;
-  const card=prepared.card;
-  if(['TRAP','PROTECTION'].includes(getSpellType(card)))return !!card.trigger;
+  // The side chosen during Preparation is the only one this prepared spell can use.
+  const canCastFace=(card:Card)=>{
   if(card.target==='ROOM' || canUseSpellDummy(card))return s.board.rooms.some(r=>!r.startingFor && r.tiles.some(h=>isWithinSpellRange(p.wizard.position,h,card.range)));
   const legal=(ownerId:string,kind:'MAGE'|'EVOCATION',position:Hex,evocation?:Evocation)=>spellCanTargetModel(card,p.id,ownerId,kind)
    && spellFilterAllows(card,p.id,{playerId:ownerId,evocation})
    && !s.board.rooms.some(r=>r.startingFor && r.tiles.some(h=>hexKey(h)===hexKey(position)))
    && isWithinSpellRange(p.wizard.position,position,card.range);
   return s.players.some(t=>legal(t.id,'MAGE',t.wizard.position)) || s.evocations.some(e=>legal(e.playerId,'EVOCATION',e.position,e));
+  };
+  if(prepared.side==='DARK')return canCastFace(getDarkSideSpell(prepared.card));
+  const card=prepared.card;
+  if(['TRAP','PROTECTION'].includes(getSpellType(card)))return !!card.trigger;
+  return canCastFace(card);
  });
 }
 
@@ -2473,9 +2555,9 @@ export function canPassActionPhase(s:GameState,p:Player):boolean {
  return p.actionTokens===0 && !Object.values(p.prepared).some(c=>c&&!c.used);
 }
 
-function recordRecapCard(s:GameState,role:TurnRecapCard['role'],ownerId:string,card:Card,trigger?:TriggerEvent) {
+function recordRecapCard(s:GameState,role:TurnRecapCard['role'],ownerId:string,card:Card,trigger?:TriggerEvent,side?:SpellSide) {
  const draft=s.turnRecapDraft;
- if(draft)draft.cards.push({at:s.log.length-draft.logStart,role,ownerId,card:{...card},...(trigger?{trigger}:{})});
+ if(draft)draft.cards.push({at:s.log.length-draft.logStart,role,ownerId,card:{...card},...(side==='DARK'?{side}:{}),...(trigger?{trigger}:{})});
 }
 
 function startActivation(s: GameState, p: Player) {
@@ -2789,7 +2871,18 @@ function resolveEffectMoments(s:GameState,caster:Player,spell:Card,room:Room|und
     run:()=>{
      let stepRefs=refs;
      const area=step.area;
-     if(area) {
+     if(area?.choose) {
+      // One different model of the caster's choice (enemy models only, never in a starting cell).
+      const near=origin?[...s.players.filter(p=>p.wizard.alive&&p.id!==caster.id&&p.wizard.id!==chosen?.id&&!isInStartingRoom(s,p)&&hexDistance(origin!,p.wizard.position)<=area.range).map(p=>snapshot(s,p.id)!),
+       ...s.evocations.filter(e=>e.playerId!==caster.id&&e.id!==chosen?.id&&!roomAt(s,e.position)?.startingFor&&hexDistance(origin!,e.position)<=area.range).map(e=>snapshot(s,e.id)!)]:[];
+      let picked=near[0];
+      if(near.length>1) {
+       const id=askChoice(s,caster.id,`near-target|${caster.id}|${spell.id}|${index}`,`${spell.name}: choose a different model within range ${area.range} of the target.`,
+        near.map(ref=>({id:ref.id,label:modelFeedbackTarget(s,ref)?.name??ref.id})))!;
+       picked=near.find(ref=>ref.id===id)??near[0];
+      }
+      stepRefs=picked?[picked]:[];
+     } else if(area) {
       // Every other mage near the chosen model's last position; evocations are not mages.
       stepRefs=origin?s.players.filter(p=>p.wizard.alive&&p.wizard.id!==chosen?.id&&hexDistance(origin!,p.wizard.position)<=area.range).map(p=>snapshot(s,p.id)!):[];
      }
@@ -2808,6 +2901,8 @@ function resolveEffectMoments(s:GameState,caster:Player,spell:Card,room:Room|und
  }
 }
 function resolveMomentBody(s:GameState,caster:Player,spell:Card,step:Moment,room:Room|undefined,refs:ModelSnapshot[],actor:ModelSnapshot,effect:EffectResolution,damageOrigin:DamageOrigin) {
+ // Wound-dependent amounts are read when the Moment resolves, from the chosen model (before any scope change).
+ if(step.scale&&'amount' in step)step={...step,amount:scaledAmount(s,caster,step,refs[0],effect)} as Moment;
  if(step.scope==='ALL_MAGES')refs=s.players.filter(p=>p.wizard.alive).map(p=>snapshot(s,p.id)!);
  if(step.scope==='DAMAGED')refs=(effect.damaged??[]).filter(ref=>!!liveModel(s,ref));
  if(step.scope==='MOVED')refs=effect.moved&&liveModel(s,effect.moved)?[effect.moved]:[];
@@ -3183,9 +3278,10 @@ function castSpell(s: GameState, p: Player, command: Extract<GameAction,{type:'C
   assert(slots.find(slot=>p.prepared[slot] && !p.prepared[slot]!.used)===action.slot,'Cast numbered spells in order 1 → 2 → 3');
  }
  const printed=card!;
- // Enhancement: merged only if the other revealed spells on the Mage Sheet show the symbols.
- const spell=['TRAP','PROTECTION'].includes(getSpellType(printed))?printed:getEffectiveSpell(s,p,printed);
- const enhanced=spell!==printed;
+ const side=prepared?.side??'LIGHT';
+ // Enhancement: merged only if the other revealed spells on the Mage Sheet show the symbols (light side only).
+ const spell=getSpellForSide(s,p,printed,side);
+ const enhanced=side==='LIGHT'&&spell!==printed;
  let targets: ReturnType<typeof modelTarget>[]=[]; let room: Room | undefined;
  const reactive=['TRAP','PROTECTION'].includes(getSpellType(spell));
  assert(command.type!=='ACTIVATE_SPELL'||reactive,'Only Trap and Protection spells can be activated');
@@ -3227,7 +3323,7 @@ function castSpell(s: GameState, p: Player, command: Extract<GameAction,{type:'C
  // hidden/ongoing bindings or redirecting its model effects to room occupants.
  if(!action.dummy && (reactive || spell.ongoing)) {
   const target=targets[0];
-  const active:ActiveSpell={id:resolutionId(s),playerId:p.id,card:printed,
+  const active:ActiveSpell={id:resolutionId(s),playerId:p.id,card:side==='DARK'?spell:printed,...(side==='DARK'?{side,printed}:{}),
    ...(spell.target!=='ROOM' && target?.mage?{targetPlayerId:target.mage.id}:{}),
    ...(spell.target!=='ROOM' && target?.evocation?{targetEvocationId:target.evocation.id}:{}),
    ...(room?{roomId:room.id}:{})};
@@ -3237,8 +3333,8 @@ function castSpell(s: GameState, p: Player, command: Extract<GameAction,{type:'C
  else discardCard(s,p,printed);
  a.spellsCast++;if(!freeWithinRoom)a.actionsUsed++;
  if(action.slot!=='rapid')a.sequencedSpellUsed=true;
- s.log.push(freeWithinRoom?`${p.name} casts ${spell.name} through the Arena's rebuilt effect.`:reactive&&!action.dummy?`${p.name} activates a hidden spell for 1 action (no physical token).`:`${p.name} casts ${spell.name}${action.dummy?' on a dummy (no model effects)':''} for 1 action (no physical token).`);
- if(!reactive||action.dummy)recordRecapCard(s,'CAST',p.id,printed);
+ s.log.push(freeWithinRoom?`${p.name} casts ${spell.name} through the Arena's rebuilt effect.`:reactive&&!action.dummy?`${p.name} activates a hidden spell for 1 action (no physical token).`:`${p.name} casts ${side==='DARK'?'the dark side of ':''}${spell.name}${action.dummy?' on a dummy (no model effects)':''} for 1 action (no physical token).`);
+ if(!reactive||action.dummy)recordRecapCard(s,'CAST',p.id,printed,undefined,side);
  if(spell.ongoing&&!action.dummy)s.log.push(`${spell.name} remains ongoing: ${spell.ongoing.effects.map(describeInstruction).join(' ')}`);
  // Activation is not a cast and cannot trigger "when a spell is cast".
  if(!reactive)emitEvent(s,{event:'SPELL_CAST',actor,model:actor,roomId:room?.id,spellType:getSpellType(spell),sourceCard:spell});
@@ -3284,7 +3380,7 @@ export function applyAction(state: GameState, action: GameAction, frames?: GameS
   let targetId=action.targetId;
   if(action.activeSpellId) {
    const option=pending.options.find(o=>o.activeSpellId===action.activeSpellId);
-   if(option?.card.triggerTarget && option.targets.length===1)targetId??=option.targets[0].id;
+   if(option && option.targets.length===1)targetId??=option.targets[0].id;
    assert(option && option.targets.some(t=>t.id===targetId),'Choose an eligible spell and target');
   } else assert(!action.targetId,'Declining does not select a target');
   const base=structuredClone(state);delete base.pendingDecision;
@@ -3326,6 +3422,7 @@ function runAction(state: GameState, action: GameAction, answers: DecisionAnswer
  assert(s.phase!=='GAME_OVER','The game is over');
  // Wire payloads can include fields excluded by the TypeScript action union.
  assert(!('dummy' in action) || action.type==='CAST_SPELL' || action.type==='CAST_POWERFUL_SPELL','Dummy targeting is only available for spell cards');
+ assert(!('side' in action),'A spell’s side is chosen during Preparation, not when casting');
  const p=getPlayer(s,action.playerId);
  switch(action.type) {
   case 'UNDO_ACTION': case 'REDO_ACTION': throw new GameRuleError('History commands must be intercepted by the server; the engine does not process undo/redo');
@@ -3430,6 +3527,18 @@ function runAction(state: GameState, action: GameAction, answers: DecisionAnswer
    s.log.push(`${p.name} discards ${overflow} quests to meet the quest limit.`);
    beginStudyIfQuestsFit(s);break;
   }
+  case 'DISCARD_QUEST_FOR_ROSE': {
+   requirePhase(s,'BLACK_ROSE');assert(!s.blackRoseResolved,'Quests are already being drawn');
+   assert(!(s.roseQuestDiscards??[]).includes(p.id),'You already discarded a quest for the Black Rose this round');
+   const quest=activeQuests(p).find(q=>q.id===action.questId);
+   assert(quest,'Only an active quest can be discarded');
+   const remaining=heldQuests(p).filter(q=>q.id!==quest!.id);
+   s.questDiscard.push(quest!);
+   p.quest=remaining.shift()??null;p.additionalQuests=remaining;
+   s.roseQuestDiscards=[...(s.roseQuestDiscards??[]),p.id];
+   s.log.push(`${p.name} discards the quest ${quest!.name}; the Black Rose gains 1 VP.`);
+   awardVictoryPoints(s,BLACK_ROSE_ID,1);break;
+  }
   case 'DISCARD_HAND_LIMIT': {
    requirePhase(s,'PREPARATION');assert(!p.preparationDone,'Already prepared');
    const overflow=p.hand.length-p.cardLimit;
@@ -3449,20 +3558,24 @@ function runAction(state: GameState, action: GameAction, answers: DecisionAnswer
     assert(Array.isArray(action.preparedCardIds),'Choose ordered spells');
     assert(Array.from(action.preparedCardIds).every(id=>id===null||typeof id==='string'),'Ordered spells must be card IDs or empty slots');
     assert(action.rapidCardId===undefined || typeof action.rapidCardId==='string','Quick spell must be a card ID');
+    const sides=action.sides??{};
+    assert(typeof sides==='object'&&sides!==null&&!Array.isArray(sides)&&Object.entries(sides).every(([,side])=>side==='LIGHT'||side==='DARK'),'Choose the light or the dark side for each spell');
     // Null placeholders preserve the player's exact numbered destinations.
     // Legacy contiguous string arrays remain valid and unchanged.
     const numbered=action.preparedCardIds.filter((id):id is string=>id!==null);
     const ids=[...numbered,...(action.rapidCardId===undefined?[]:[action.rapidCardId])];
     assert(action.preparedCardIds.length<=3 && ids.length>=2 && ids.length<=4 && new Set(ids).size===ids.length,'Choose 2 to 4 different spells, at most 3 numbered and 1 Quick');
    assert(ids.every(id=>p.hand.some(c=>c.id===id)),'Spell not in hand');
+   assert(Object.keys(sides).every(id=>ids.includes(id)),'Choose a side only for the spells you prepare');
+   const sideOf=(id:string):Partial<Pick<PreparedCard,'side'>>=>sides[id]==='DARK'?{side:'DARK'}:{};
    for(const [i,id] of action.preparedCardIds.entries()) {
     if(id===null)continue;
     const card=p.hand.splice(p.hand.findIndex(c=>c.id===id),1)[0];
-    p.prepared[slots[i]]={card,used:false};
+    p.prepared[slots[i]]={card,used:false,...sideOf(id)};
    }
    if(action.rapidCardId!==undefined) {
     const card=p.hand.splice(p.hand.findIndex(c=>c.id===action.rapidCardId),1)[0];
-    p.prepared.rapid={card,used:false};
+    p.prepared.rapid={card,used:false,...sideOf(card.id)};
    }
    p.preparationDone=true;
   if(s.players.every(p=>p.preparationDone)) { s.phase='ACTION'; s.log.push('ACTION — up to 2 total actions per turn, including spell casts and discard-to-move; at most one numbered spell per turn.'); startActivation(s,seatOrder(s)[0]); }

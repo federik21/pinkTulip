@@ -31,7 +31,7 @@
 .quest-entry>button{margin-top:10px;min-height:44px;white-space:normal;max-width:100%}
 .quick-access button>small{margin:0;font-size:10px;line-height:1.3}
 .quick-access button.selected,.quick-access button[aria-expanded="true"]{background:#d7b67b22;border-color:#d7b67b88;color:#f4d5a2}
-.control-banner.is-floating{position:fixed;z-index:65;left:50%;transform:translateX(-50%);bottom:calc(88px + env(safe-area-inset-bottom,0px));width:min(960px,calc(100% - 24px));max-height:calc(100dvh - 110px - env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;margin:0;padding:14px 18px;box-shadow:0 -8px 55px #0009;border-color:#b09263;background:#211a25fa;backdrop-filter:blur(16px)}
+.control-banner.is-floating{position:fixed;z-index:100;left:50%;transform:translateX(-50%);bottom:calc(88px + env(safe-area-inset-bottom,0px));width:min(960px,calc(100% - 24px));max-height:calc(100dvh - 110px - env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;margin:0;padding:14px 18px;box-shadow:0 -8px 55px #0009;border-color:#b09263;background:#211a25fa;backdrop-filter:blur(16px)}
 .is-floating .control-banner-heading{margin-bottom:8px;flex-shrink:0}
 .back-to-map{font-size:12px;min-height:44px;padding:8px 12px}
 .is-floating .control-panel{min-height:0;max-height:50dvh;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#b09263 #18131d;padding:12px 2px 2px}
@@ -47,7 +47,7 @@
 .is-floating .spell-rules{font-size:10px;line-height:1.35;margin:0 0 6px;color:#d9c4c3}
 .is-floating .spell .hint{font-size:10px}
 .is-floating .evocation-card>p.hint{display:none}
-.quick-target,.quick-modes{position:fixed;z-index:64;left:50%;transform:translateX(-50%);bottom:calc(88px + env(safe-area-inset-bottom,0px));width:min(560px,calc(100% - 24px));max-height:40dvh;overflow:auto;margin:0;padding:14px;background:#211a25fa;border:1px solid #b09263;border-radius:12px;box-shadow:0 -6px 35px #0008}
+.quick-target,.quick-modes{position:fixed;z-index:100;left:50%;transform:translateX(-50%);bottom:calc(88px + env(safe-area-inset-bottom,0px));width:min(560px,calc(100% - 24px));max-height:40dvh;overflow:auto;margin:0;padding:14px;background:#211a25fa;border:1px solid #b09263;border-radius:12px;box-shadow:0 -6px 35px #0008}
 .quick-target>span,.quick-target>.contributions,.quick-target>p.hint{display:none}
 .quick-target>strong{display:block;font-size:14px;margin-bottom:5px}
 .quick-target .target-mode,.quick-modes .target-mode{margin:0 0 8px}
@@ -68,7 +68,7 @@
 .chronicle-drawer .log:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
 @keyframes chronicle-slide{from{transform:translateX(100%);opacity:.5}to{transform:translateX(0);opacity:1}}
 /* Acting-mage strip: stays under the top of the viewport and carries Undo/Redo and End turn. */
-.turn-banner{position:sticky;top:0;z-index:45;margin:10px auto 0;padding:9px 18px;gap:10px 14px;flex-wrap:wrap;background:linear-gradient(110deg,#45301f,#211b25 75%),#211b25;box-shadow:0 6px 22px #000a,0 0 24px #d7b67b1c}
+.turn-banner{position:sticky;top:0;z-index:100;margin:10px auto 0;padding:9px 18px;gap:10px 14px;flex-wrap:wrap;background:linear-gradient(110deg,#45301f,#211b25 75%),#211b25;box-shadow:0 6px 22px #000a,0 0 24px #d7b67b1c}
 .turn-banner>.acting-mage-icon{font-size:30px;flex-shrink:0}
 .turn-banner strong{font-size:18px;margin:1px 0}
 .turn-banner-text{flex:1 1 160px}

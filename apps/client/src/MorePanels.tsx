@@ -49,6 +49,7 @@ function rewardMoment(moment:Moment):string {
   case 'PREVENT_SPELL':return 'Ignore that spell effect';
   case 'BLACK_ROSE_ALTAR_TITHE':return 'Optional Altar damage for BR VP';
   case 'IGNORE_DAMAGE':return `Ignore ${moment.amount} damage`;
+  case 'REDIRECT_DAMAGE':return 'Redirect the damage to an evocation';
   default:return `${{DAMAGE:'Damage',HEAL:'Heal',CONVERT:'Convert',BLACK_ROSE_CONVERT:'BR convert',INSTABILITY:'Instability',PAIN:'Pain'}[moment.effect]} ${moment.amount}`;
  }
 }

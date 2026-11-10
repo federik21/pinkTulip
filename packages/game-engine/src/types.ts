@@ -5,6 +5,7 @@ export type MageDraftId = 'tizio' | 'caio' | 'sempronio' | 'tiriki';
 export type Hex = { q: number; r: number };
 export type SpellTarget = 'SELF' | 'ROOM' | 'MAGE' | 'EVOCATION' | 'MODEL';
 export type SpellType = 'COMBAT' | 'CONTINGENCY' | 'TRAP' | 'PROTECTION';
+export type SpellSide = 'LIGHT' | 'DARK';
 export type TriggerEvent = 'ENTER_ROOM' | 'DAMAGE_TAKEN' | 'DAMAGE_DEALT' | 'SPELL_CAST' | 'SPELL_TARGETED' | 'ROOM_ACTIVATED' | 'EVOCATION_ACTIVATED' | 'MAGE_ATTACK' | 'EVOCATION_ATTACK' | 'QUEST_SOLVED' | 'MAGE_DEFEATED' | 'VP_CHANGED' | 'EVOCATION_LOST' | 'CUBE_PLACED';
 // Jinx cards (Hex school): a negative effect attached to a mage. `cubes` is a plain progress counter.
 export type JinxName = 'OBLIVION' | 'SLOWNESS' | 'VULNERABILITY' | 'WEAKNESS';
@@ -20,7 +21,13 @@ export type GameFeedbackEvent = { id: string; round: number; interruptId?: strin
  | { kind: 'MAGE_DEFEATED'; target: FeedbackTarget; sourceId: string; contributions: Record<string, number>; awards: Array<{ playerId: string; cubes: number; rank: number; tied: boolean; points: number }>; bonusPlayerId?: string; returnedCubes: Record<string, number>; respawnRoomId: string }
  | { kind: 'SPELL_TRIGGERED'; activeSpellId: string; ownerId: string; cardName: string; spellType: SpellType; trigger: TriggerEvent; target?: FeedbackTarget; roomId?: string; ongoing: boolean; effects?: string[] }
 );
-export type TriggerCondition = { event: TriggerEvent; relation: 'ENEMY' | 'SELF' | 'ANY'; scope: 'BOUND_MODEL' | 'BOUND_ROOM' | 'BOUND_COLOR' | 'ANY'; relationTo?: 'EVENT_ACTOR' | 'EVENT_MODEL'; damageOrigins?: DamageOrigin[]; roomColors?: RoomColor[]; modelKind?: 'MAGE' | 'EVOCATION'; spellTypes?: SpellType[] };
+export type TriggerCondition = { event: TriggerEvent; relation: 'ENEMY' | 'SELF' | 'ANY'; scope: 'BOUND_MODEL' | 'BOUND_ROOM' | 'BOUND_COLOR' | 'ANY'; relationTo?: 'EVENT_ACTOR' | 'EVENT_MODEL'; damageOrigins?: DamageOrigin[]; roomColors?: RoomColor[]; modelKind?: 'MAGE' | 'EVOCATION'; spellTypes?: SpellType[];
+ // Independent checks on top of `relation`: whether the event model belongs to the owner, and what kind of model acted.
+ modelRelation?: 'ENEMY' | 'SELF'; actorKind?: 'MAGE' | 'EVOCATION' };
+// Dynamic Moment amount: amount + each * floor(count / per), the dynamic part capped at `max`.
+// CASTER_* read the resolving mage (the owner for reactions); TARGET_DAMAGE the chosen model's wounds;
+// EVENT_AMOUNT the damage of the triggering event; DAMAGED_BLACK_DAMAGE the BR wounds on every model this effect damaged.
+export type AmountScale = { from: 'CASTER_BLACK_DAMAGE' | 'CASTER_DAMAGE' | 'TARGET_DAMAGE' | 'EVENT_AMOUNT' | 'DAMAGED_BLACK_DAMAGE'; per: number; each: number; max?: number };
 // One step of an effect. A Moment is a tagged union (the TypeScript equivalent of
 // a Swift enum with associated values): add a variant with its own payload to
 // teach the engine a new kind of step. A card resolves its moments in array
@@ -101,7 +108,9 @@ export type Moment = (
  | { effect: 'BLACK_ROSE_ALTAR_TITHE' }
  // Ignore up to `amount` of the damage just suffered; each ignored point is inflicted on the damage's source.
  | { effect: 'IGNORE_DAMAGE'; amount: number }
-) & { scope?: 'CASTER' | 'CASTER_ROOM' | 'TARGET_ROOM' | 'ALL_MAGES' | 'DAMAGED' | 'MOVED'; when?: MomentCondition; area?: { range: number }; magesOnly?: boolean };
+ // The owner may let one of their evocations suffer the damage just suffered instead (the wounds move over).
+ | { effect: 'REDIRECT_DAMAGE' }
+) & { scope?: 'CASTER' | 'CASTER_ROOM' | 'TARGET_ROOM' | 'ALL_MAGES' | 'DAMAGED' | 'MOVED'; when?: MomentCondition; area?: { range: number; choose?: boolean }; magesOnly?: boolean; scale?: AmountScale };
 export type MomentEffect = Moment['effect'];
 // An Effect is an ordered list of Moments. Each Moment is applied in full, in order; the parts of a
 // Moment that cannot be applied (even all of them) are skipped and resolution continues with the next
@@ -122,13 +131,19 @@ export type TriggeredInstruction = Moment & { target: 'BOUND_MODEL' | 'BOUND_ROO
 // enhancement moments are added (before or after the printed ones) and may override the target.
 export type Enhancement = { requires: Element[]; moments?: Moment[]; position?: 'BEFORE' | 'AFTER'; target?: SpellTarget; range?: number; suppressReactions?: boolean; text: string };
 // Extra printed restrictions on the chosen model.
-export type TargetFilter = { own?: boolean; archetype?: 'CONSTRUCT'; maxHealth?: number; sameRoom?: boolean };
+export type TargetFilter = { own?: boolean; archetype?: 'CONSTRUCT' | 'DEMON'; maxHealth?: number; sameRoom?: boolean };
 // triggerText is optional display copy only; trigger conditions govern matching.
 // `effects` are resolved in order. An unstable card starts with a PLACE Effect ("place 1 instability in the
 // caster's current room") followed by its MAIN Effect, so quests and triggers that count Effects (not
 // Moments) can tell them apart. Reactive cards keep their body in `triggerEffects` and have no MAIN Effect.
-export type Card = { id: string; name: string; kind: 'SPELL'; effects: Effect[]; range: number; target: SpellTarget; element?: Element; enhancement?: Enhancement; targetFilter?: TargetFilter; suppressReactions?: boolean; schoolId?: string; powerful?: boolean; spellType?: SpellType; triggerText?: string; rulesText?: string; trigger?: TriggerCondition; triggerTarget?: 'EVENT_MODEL' | 'EVENT_ACTOR' | 'EVENT_ROOM'; triggerSight?: number; targetFrom?: 'EVENT_MODEL'; triggerEffects?: TriggeredInstruction[]; ongoing?: { trigger: TriggerCondition; effects: TriggeredInstruction[] } };
-export type ActiveSpell = { id: string; playerId: string; card: Card; targetPlayerId?: string; targetEvocationId?: string; roomId?: string; cleanupDestination?: 'HAND' | 'MEMORIES' };
+// The dark side of a spell card. Only the name and PLACE (instability) Effect are shared with the light side;
+// moments, range, target, element, type, trigger, ongoing and enhancement are side-specific.
+// A card without `darkSide` uses the placeholder dark side (see getDarkSide in cards.ts).
+// Reactive (Trap/Protection) and ongoing dark sides carry their own trigger data; `spellType` defaults to CONTINGENCY.
+export type DarkSide = { moments: Moment[]; range: number; target: SpellTarget; element?: Element; rulesText?: string; spellType?: SpellType; targetFilter?: TargetFilter; trigger?: TriggerCondition; triggerTarget?: Card['triggerTarget']; triggerText?: string; triggerEffects?: TriggeredInstruction[]; ongoing?: Card['ongoing'] };
+export type Card = { id: string; name: string; kind: 'SPELL'; effects: Effect[]; darkSide?: DarkSide; range: number; target: SpellTarget; element?: Element; enhancement?: Enhancement; targetFilter?: TargetFilter; suppressReactions?: boolean; schoolId?: string; powerful?: boolean; spellType?: SpellType; triggerText?: string; rulesText?: string; trigger?: TriggerCondition; triggerTarget?: 'EVENT_MODEL' | 'EVENT_ACTOR' | 'EVENT_ROOM'; triggerSight?: number; targetFrom?: 'EVENT_MODEL'; triggerEffects?: TriggeredInstruction[]; ongoing?: { trigger: TriggerCondition; effects: TriggeredInstruction[] } };
+// `card` is the face that resolves; for a dark side it is the dark-face card and `printed` is the physical card (discarded on retire).
+export type ActiveSpell = { id: string; playerId: string; card: Card; printed?: Card; side?: SpellSide; targetPlayerId?: string; targetEvocationId?: string; roomId?: string; cleanupDestination?: 'HAND' | 'MEMORIES' };
 export type RoomColor = 'crimson' | 'azure' | 'emerald' | 'amber' | 'violet' | 'grey';
 export type QuestTrigger =
  | { event: 'SPELL_EFFECT'; spellType?: SpellType; summon?: boolean; elementGroup?: Element[]; minimumElements?: number }
@@ -157,7 +172,7 @@ export type Quest = {
  trigger?: QuestTrigger;
  progress?: number; completed?: boolean; claimed?: boolean; rewardAction?: Card;
 };
-export type PreparedCard = { card: Card; used: boolean };
+export type PreparedCard = { card: Card; used: boolean; side?: SpellSide };
 export type PreparedCards = { rapid: PreparedCard | null; slot1: PreparedCard | null; slot2: PreparedCard | null; slot3: PreparedCard | null };
 // health is the authoritative maximum HP; damageCubes tracks current wounds.
 export type Wizard = { id: string; playerId: PlayerId; health: number; attack: number; movement: number; damageCubes: number; blackDamage: number; damageByPlayer: Record<PlayerId, number>; damageOrder: PlayerId[]; position: Hex; startingRoomId: RoomId; alive: boolean };
@@ -245,7 +260,7 @@ export type Board = { tiles: Hex[]; rooms: Room[] };
 export type PhysicalAction = { kind: 'EXPLORE' | 'ATTACK'; mainEffectUsed: boolean; movementStarted: boolean };
 // actionsUsed counts every turn action, including spells and discard-to-move.
 export type Activation = { playerId: PlayerId; actionsUsed: number; exploring: number; sequencedSpellUsed: boolean; spellsCast: number; discardedExit: boolean; roomEffectUsed: boolean; physicalAction?: PhysicalAction | null; mustExitCell?: boolean };
-export type TurnRecapCard = { at: number; role: 'CAST' | 'DISCARDED' | 'TRIGGERED'; ownerId: PlayerId; card: Card; trigger?: TriggerEvent };
+export type TurnRecapCard = { at: number; role: 'CAST' | 'DISCARDED' | 'TRIGGERED'; ownerId: PlayerId; card: Card; side?: SpellSide; trigger?: TriggerEvent };
 // `lines` is the public log of one Action-phase turn; each card is shown after line `at - 1`.
 // Only publicly revealed cards are recorded: a hidden Trap/Protection appears once it triggers.
 export type TurnRecap = { id: string; round: number; playerId: PlayerId; playerName: string; isBot: boolean; lines: string[]; cards: TurnRecapCard[] };
@@ -276,6 +291,8 @@ export type GameState = {
  turnRecapDraft?: { playerId: PlayerId; logStart: number; cards: TurnRecapCard[] } | null;
  turnRecaps?: TurnRecap[];
  usedEvent: EventCard | null; blackRoseResolved: boolean;
+ // Mages who already discarded a quest for the Black Rose this round. Optional for older snapshots.
+ roseQuestDiscards?: PlayerId[];
  // Public ongoing-event board, slot 0 = newest. Optional for older snapshots.
  eventBoard?: (EventCard | null)[];
 };
@@ -294,9 +311,11 @@ export type GameAction =
  | ({ type: 'DRAW_STUDY'; playerId: PlayerId } & ({ deckId: string; deckIds?: never } | { deckIds: string[]; deckId?: never }))
  | { type: 'DISCARD_STUDY'; playerId: PlayerId; cardIds: string[] }
  | { type: 'DISCARD_QUESTS'; playerId: PlayerId; questIds: string[] }
+ // Optional once-per-round Black Rose phase discard (after the event, before quests are drawn): the Black Rose gains 1 VP.
+ | { type: 'DISCARD_QUEST_FOR_ROSE'; playerId: PlayerId; questId: string }
  | { type: 'DISCARD_HAND_LIMIT'; playerId: PlayerId; cardIds: string[] }
  // Numbered entries retain their slot index; null means an intentionally empty slot.
- | { type: 'PREPARE_CARDS'; playerId: PlayerId; rapidCardId?: string; preparedCardIds: (string | null)[] }
+ | { type: 'PREPARE_CARDS'; playerId: PlayerId; rapidCardId?: string; preparedCardIds: (string | null)[]; sides?: Record<string, SpellSide> }
  | { type: 'END_ACTIVATION'; playerId: PlayerId }
  | { type: 'RESPOND_SOUL_TITHE'; playerId: PlayerId; accept: boolean }
  | { type: 'RESPOND_CHOICE'; playerId: PlayerId; key: string; choiceId?: string }

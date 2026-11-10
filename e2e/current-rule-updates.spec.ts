@@ -25,7 +25,9 @@ async function mount(page:Page,initial:GameState) {
    catch(error){errors.push(String(error));route.send(JSON.stringify({type:'ERROR',requestId:msg.requestId,message:String(error)}));}
   });
  });
- await page.goto('/');await page.getByRole('button',{name:'Create room',exact:true}).click();
+ await page.goto('/');
+ const online=page.getByRole('button',{name:'Online play',exact:true});if(await online.isVisible())await online.click();
+ await page.getByRole('button',{name:'Create room',exact:true}).click();
  await expect(page.locator('.phase-overlay')).toBeVisible();await page.locator('.phase-overlay').click();
  return {actions,errors,get state(){return game;},dispatch(action:GameAction){game=history.apply(game,action,action.playerId);publish();}};
 }
@@ -79,6 +81,28 @@ for(const viewport of [{width:1440,height:1000},{width:390,height:844}])test.des
   const resolved=structuredClone(wire.state);await chronicle.getByRole('button',{name:'Close Chronicle',exact:true}).click();
   await page.getByRole('button',{name:'Undo action',exact:true}).click();await expect.poll(()=>wire.actions.length).toBe(2);expect(wire.state).toEqual(s);
   await page.getByRole('button',{name:'Redo action',exact:true}).click();await expect.poll(()=>wire.actions.length).toBe(3);expect(wire.state).toEqual(resolved);expect(wire.errors).toEqual([]);
+ });
+ test('room conversion lets the mage choose which contributor color to replace',async({page})=>{
+  const s=fixture(),card={...take(s,'Grim Torment'),name:'Room color test',target:'ROOM' as const,range:2,
+   effects:mainEffects([{effect:'CONVERT',amount:1}])};
+  s.players[0].prepared.rapid={used:false,card};
+  const room=s.board.rooms.find(r=>r.id==='room-0,0')!;
+  room.instability=2;room.cubesByPlayer={p2:1,'black-rose':1};room.instabilityOrder=['p2','black-rose'];
+  s.players[1].cubes.available--;s.players[1].cubes.onBoard++;
+  const wire=await mount(page,s);await selectSpells(page);
+  const spell=page.locator('.prepared .spell').filter({has:page.locator('strong',{hasText:'Room color test'})});
+  await spell.click();await page.locator(`.hex[data-room-id="${room.id}"]`).click();
+  await page.getByRole('button',{name:'Cast Room color test here',exact:true}).click();
+  const prompt=page.getByRole('dialog',{name:`Choose a color of cube in ${room.name} to convert.`});
+  await expect(prompt).toBeVisible();
+  await expect(prompt.getByRole('button',{name:'Blue (Blue Seer)',exact:true})).toBeVisible();
+  await expect(prompt.getByRole('button',{name:'Pink Tulip',exact:true})).toBeVisible();
+  await prompt.getByRole('button',{name:'Pink Tulip',exact:true}).click();await expect(prompt).toBeHidden();
+  await expect.poll(()=>wire.actions.length).toBe(2);
+  expect(wire.state.board.rooms.find(r=>r.id===room.id)).toMatchObject({instability:2,cubesByPlayer:{p1:1,p2:1},instabilityOrder:['p2','p1']});
+  expect(wire.state.players[0].cubes).toMatchObject({available:24,onBoard:1});
+  expect(wire.state.players[1].cubes).toMatchObject({available:24,onBoard:1});
+  expect(wire.errors).toEqual([]);
  });
  test('Peak offers Soul Tithe for final Pain after converting wounds, never for friendly room damage',async({page})=>{
   const s=fixture(),card=take(s,'Peak of Agony');s.players[0].prepared.rapid={used:false,card};s.players[1].wizard.position={q:2,r:0};

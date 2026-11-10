@@ -25,7 +25,7 @@
 .damage-count{font-size:11px;line-height:1.5;color:#e5e0da;margin:0 0 8px}
 .damage-contributions{gap:5px;margin-bottom:12px;font-size:10px}
 .cube-warning{color:#edc998}
-.powerful-panel .spell:disabled{opacity:.85;cursor:default}
+.powerful-panel .spell.is-disabled{opacity:.85;cursor:default}
 .actions-panel,.evocation-controls{order:-3}
 .evocations-panel{order:0}
 .black-rose-score{border-top:1px solid #5b4b60;padding:18px 0;color:#d4cedd}
@@ -48,6 +48,8 @@
 .rebuilt-badge rect{fill:#24473a;stroke:#8cd5ac;stroke-width:.6}
 .rebuilt-badge.used rect{fill:#302b35;stroke:#9b8ca7}
 .hex .rebuilt-badge text{font:800 7px 'DM Sans',sans-serif;fill:#e4f5e9;letter-spacing:.2px}
+.spell .spell-title{font-size:23px}
+.spell .spell-title .spell-rune{font-size:23px}
 @media(max-width:720px){.actions-panel,.evocation-controls{order:-3}.evocations-panel{order:0}.damage-contributions{font-size:9px}}
 .schools{grid-template-columns:repeat(2,minmax(0,1fr));max-width:none}
 .schools button[data-school-id="technomancy"] .school-rune,.spell .heal-effect{color:#86d9c0}
@@ -223,6 +225,40 @@ aside .log-panel{position:sticky;top:20px}aside .log{max-height:70vh}
 
 .spell-element{display:inline-block;margin-left:.35rem;padding:0 .35rem;border-radius:999px;border:1px solid currentColor;font-size:.75rem}
 .spell-enhancement{display:block;margin-top:.25rem;font-size:.8rem;font-style:italic;color:#d9b45a}
+.spell{display:flex;flex-direction:column;align-items:flex-start}
+.spell-visual{position:relative;z-index:2;display:flex;flex-direction:column;align-items:flex-start;width:100%}
+.spell-card-label{display:block;font-size:10px;line-height:1.4;margin-bottom:3px;color:var(--muted)}
+.spell.is-disabled{opacity:.4;cursor:not-allowed}
+.spell-light-side,.spell-dark-side{position:relative;display:flex;flex-direction:column;gap:5px;width:100%;margin:0;padding:8px;border-radius:6px}
+.spell-light-side{border:1px dashed var(--gold);background:#17140f;color:#e3d8c8}
+.spell-dark-side{border:1px dashed #6b4d7a;background:#150f1b;color:#cdbbe0}
+.spell button.spell-face-select{appearance:none;min-height:0;text-align:left;font:inherit;line-height:inherit;cursor:pointer;transition:border-color .15s,background-color .15s,box-shadow .15s}
+.spell button.spell-face-select:hover:not(:disabled){border-style:solid;border-color:#76cf91;background:#183625;color:#e4f2e7}
+.spell button.spell-face-select:focus-visible{outline:2px solid #76cf91;outline-offset:2px}
+.spell button.spell-face-select[data-selected="true"]{border:2px solid #76cf91;background:#173624;color:#e4f2e7;box-shadow:inset 0 0 0 1px #76cf9166,0 0 12px #61bd7940}
+.spell-dark-effects{display:flex;flex-direction:column;gap:4px;font-size:11px}
+.spell-dark-side .spell-rules{margin-bottom:0;font-style:italic}
+.spell-title{display:flex;align-items:center;gap:8px;width:100%;margin:7px 0 9px!important;min-height:0!important;font-size:23px;line-height:1.05}
+.spell-title .spell-rune{align-self:auto;flex:0 0 auto;margin:0;font-size:23px;line-height:1}
+.spell.side-choice.chosen{border-color:#76cf91;background:#193426;box-shadow:0 0 18px #61bd7940}
+.spell.side-choice.chosen .spell-card-label{color:#9ed4aa}
+.spell-meta-line{display:flex;align-items:center;flex-wrap:wrap;gap:3px 8px;font-size:8px;line-height:1.35;color:#d7c6a9}
+.spell-meta-line .spell-type{font-size:8px;letter-spacing:.35px;gap:3px}
+.spell-meta-line .spell-type .spell-type-icon{font-size:12px}
+.spell-meta-line .spell-element{margin:0;font-size:8px}
+.spell-light-side .spell-trigger{margin:1px 0 2px;padding-bottom:5px;font-size:10px}
+.spell-light-side .spell-effects,.spell-light-side .spell-enhancement,.spell-light-side .spell-rules{margin:0;font-size:9px;line-height:1.45}
+.spell-light-side .spell-effects{gap:3px}
+.spell-light-side .spell-rules{font-style:normal}
+.spell-instability-note{align-self:center;margin:3px 0;padding:3px 7px;border:1px solid #b98f54;border-radius:999px;color:#e8c98d;background:#4b371b;font-size:8px;font-weight:700;line-height:1.3;text-align:center}
+.spell-dark-side{margin-top:0;font-size:9px}
+.spell-dark-side .eyebrow{font-size:8px;letter-spacing:.5px}
+.spell-dark-effects{font-size:9px;line-height:1.45}
+.spell-dark-side .spell-rules{font-size:9px;line-height:1.45}
+.spell-card-label+.spell-title{margin-top:5px!important}
+.spell-status{position:relative;z-index:2;pointer-events:none}
+.spell-choice{display:flex;flex-direction:column;gap:6px;min-width:0}
+.spell-choice .spell{flex:1}
 .nightmare-card{border:1px dashed var(--mage-color);border-radius:8px;padding:.5rem;margin-top:.5rem;background:color-mix(in srgb,var(--mage-color) 10%,#19171d)}
 .hex .nightmare-marker .nightmare-crescent{fill:color-mix(in srgb,var(--mage-color) 25%,#18121f);stroke:var(--mage-color);stroke-width:1.2;stroke-dasharray:2 1;stroke-linejoin:round;pointer-events:none}
 
@@ -235,7 +271,7 @@ aside .log-panel{position:sticky;top:20px}aside .log{max-height:70vh}
 .map-played-card{position:absolute;z-index:4;top:66px;right:8px;width:min(230px,38%);max-height:min(390px,calc(100% - 78px));overflow:auto;padding:8px;border:1px solid var(--gold);border-radius:9px;background:#16121bf2;box-shadow:0 8px 26px #0009;animation:feedback-appear .2s ease-out}
 .map-played-card>.eyebrow{display:block;margin:2px 3px 6px}
 .map-played-card .spell{width:100%;max-height:330px;overflow:auto;padding:9px;text-align:left;cursor:default}
-.map-played-card .spell:disabled{opacity:1;color:#eee5dc}
+.map-played-card .spell.is-disabled{opacity:1;color:#eee5dc}
 .map-played-card .spell>strong{font-size:15px}
 .map-played-card .spell .spell-description{font-size:11px}
 .combat-feedback.modal-active{position:fixed;inset:0;z-index:1200;display:grid;place-items:center;max-width:none;margin:0;padding:20px;background:#08060bc9}

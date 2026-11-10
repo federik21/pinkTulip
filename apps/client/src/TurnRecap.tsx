@@ -3,7 +3,7 @@ import { GameState, TurnRecap as Recap, TurnRecapCard, getSpellType } from '@brw
 import { highlightMages } from './ChronicleDrawer';
 import { TRIGGER_LABELS } from './CombatFeedback';
 import { mageStyle, ownerName } from './presentation';
-import { SpellDescription } from './SpellDescription';
+import { DarkSideDescription, SpellDescription } from './SpellDescription';
 import { SpellTypeIcon } from './SpellTypeIcon';
 
 const ROLE_LABELS: Record<TurnRecapCard['role'], string> = { CAST: 'Cast', DISCARDED: 'Discarded to move', TRIGGERED: 'Triggered' };
@@ -13,7 +13,7 @@ function RecapCard({ game, entry }: { game: GameState; entry: TurnRecapCard }) {
  return <div className="recap-card" data-recap-role={entry.role} data-card-name={card.name} style={mageStyle(entry.ownerId)}>
   <strong><SpellTypeIcon type={getSpellType(card)} /> {card.name}</strong>
   <small>{ROLE_LABELS[entry.role]} · {ownerName(game, entry.ownerId)}{entry.trigger ? ` · ${TRIGGER_LABELS[entry.trigger]}` : ''}</small>
-  <SpellDescription card={card} />
+    {entry.side==='DARK'?<DarkSideDescription card={card}/>:<SpellDescription card={card}/>}
  </div>;
 }
 

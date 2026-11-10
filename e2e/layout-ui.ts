@@ -123,16 +123,17 @@ export type PreparationSlot = 1 | 2 | 3 | 'Quick';
 export async function assignPreparationCard(page: Page, card: Locator, slot: PreparationSlot) {
   const panel = page.locator('.preparation-panel');
   const destination = slot === 'Quick' ? 'Quick slot' : `slot ${slot}`;
-  const name = (await card.locator('strong').textContent())!;
-  await card.click();
+  const name = await card.locator('.spell-title').evaluate(element => element.lastChild?.textContent?.trim() ?? '');
+  await card.locator('.spell-light-side.spell-face-select').click();
   await expect(card).toHaveClass(/\bchosen\b/);
   await expect(panel.locator('.cards .spell.chosen')).toHaveCount(1);
   const button = panel.locator('.preparation-order').getByRole('button', { name: `Place in ${destination}`, exact: true });
   await expect(button).toBeEnabled();
   await button.click();
   await expect(panel.locator('.cards .spell.chosen')).toHaveCount(0);
-  await expect(card.getByText(new RegExp(`^In ${destination}(?:\\s*·.*)?$`))).toBeVisible();
-  await expect(panel.locator('.preparation-order')).toContainText(name);
+  await expect(button).toContainText(name);
+  await expect(panel.locator('.preparation-slot-cards')).toHaveCount(0);
+  await expect(card).toBeVisible();
   for (const label of ['slot 1', 'slot 2', 'slot 3', 'Quick slot']) {
     await expect(panel.locator('.preparation-order').getByRole('button', { name: `Place in ${label}`, exact: true })).toBeDisabled();
   }

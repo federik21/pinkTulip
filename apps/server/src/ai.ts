@@ -1,6 +1,6 @@
 import {
  applyAction, areAdjacent, areInSameRoom, canStartGame, canUseSpellDummy,
- GameRuleError, getAllMoments, getDiscardMoveCards, getMainMoments, getEffectiveSpell, getEvocationSupply, getQuestRewardTargets, getSpellType,
+ GameRuleError, getAllMoments, getDiscardMoveCards, getMainMoments, getEffectiveSpell, getEvocationSupply, getQuestRewardTargets, getSpellForSide, getSpellType,
  getRoomEffect, hexDistance, hexKey, isInStartingRoom, isWithinSpellRange, MAGE_DRAFT_POOL, roomEffectNeedsTarget,
 } from '@brw/game-engine';
 import type { Card, FeedbackTarget, GameAction, GameState, Hex, Moment, Player, Room } from '@brw/game-engine';
@@ -255,8 +255,9 @@ function* actionTurn(s: GameState, p: Player): Generator<GameAction> {
    const prepared = p.prepared[slot];
    if (!prepared || prepared.used) continue;
    const card = prepared.card;
-   if (['TRAP', 'PROTECTION'].includes(getSpellType(card))) spells.push({ action: { type: 'ACTIVATE_SPELL', playerId: p.id, slot }, score: 2 });
-   else for (const choice of targets(s, p, getEffectiveSpell(s, p, card))) spells.push({ action: { type: 'CAST_SPELL', playerId: p.id, slot, ...choice.target }, score: choice.score });
+   const face = prepared.side === 'DARK' ? getSpellForSide(s, p, card, 'DARK') : card;
+   if (['TRAP', 'PROTECTION'].includes(getSpellType(face))) spells.push({ action: { type: 'ACTIVATE_SPELL', playerId: p.id, slot }, score: 2 });
+   else for (const choice of targets(s, p, prepared.side === 'DARK' ? face : getEffectiveSpell(s, p, card))) spells.push({ action: { type: 'CAST_SPELL', playerId: p.id, slot, ...choice.target }, score: choice.score });
   }
   spells.sort((a, b) => b.score - a.score); // Stable ties preserve numbered-before-Quick order.
   for (const spell of spells) if (spell.score > 0) yield spell.action;
@@ -276,8 +277,9 @@ function* actionTurn(s: GameState, p: Player): Generator<GameAction> {
   for (const spell of spells) if (spell.score <= 0) yield spell.action;
   for (const slot of available) {
    const c = p.prepared[slot];
-   if (c && !c.used && !['TRAP', 'PROTECTION'].includes(getSpellType(c.card)) && canUseSpellDummy(c.card)) {
-    for (const room of s.board.rooms) if (!room.startingFor && room.tiles.some(h => isWithinSpellRange(p.wizard.position, h, c.card.range)))
+   const face = c && c.side === 'DARK' ? getSpellForSide(s, p, c.card, 'DARK') : c?.card;
+   if (c && face && !c.used && !['TRAP', 'PROTECTION'].includes(getSpellType(face)) && canUseSpellDummy(face)) {
+    for (const room of s.board.rooms) if (!room.startingFor && room.tiles.some(h => isWithinSpellRange(p.wizard.position, h, face.range)))
      yield { type: 'CAST_SPELL', playerId: p.id, slot, dummy: true, roomId: room.id };
    }
   }

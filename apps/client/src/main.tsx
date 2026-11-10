@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ACTIONS_PER_TURN, getAllMoments, ELEMENT_GLYPHS, getEffectiveSpell, spellFilterAllows, spellReaches, getSpellType, getDiscardMoveCards, canUseSpellDummy, spellCanTargetModel, upgradeLegacyCards, getMageEvocationCount, getRoomEffect, roomEffectNeedsTarget, Card, EventCard, GameAction, GameState, Player, Room, MAX_MAGES, MIN_MAGES, ROOM_COLORS, ROOM_EFFECT_LABELS, isInStartingRoom, isWithinSpellRange, mustLeaveCell, hexDistance, hexKey } from '@brw/game-engine';
+import { ACTIONS_PER_TURN, getAllMoments, ELEMENT_GLYPHS, getEffectiveSpell, getSpellForSide, SpellSide, spellFilterAllows, spellReaches, getSpellType, getDiscardMoveCards, canUseSpellDummy, spellCanTargetModel, upgradeLegacyCards, getMageEvocationCount, getRoomEffect, roomEffectNeedsTarget, Card, EventCard, GameAction, GameState, Player, Room, MAX_MAGES, MIN_MAGES, ROOM_COLORS, ROOM_EFFECT_LABELS, isInStartingRoom, isWithinSpellRange, mustLeaveCell, hexDistance, hexKey, isUnstable } from '@brw/game-engine';
 import type { TurnRecapCard } from '@brw/game-engine';
 import { ActiveEvocationControls, EvocationSupply, EvocationsPanel, evocationIcon, targetModels } from './EvocationsPanel';
 import { PhysicalActionsPanel, PhysicalBannerActions, physicalContext } from './PhysicalActionsPanel';
@@ -13,7 +13,7 @@ import { MageRoster } from './MageRoster';
 import { ActiveSpellsPanel, TrapReminders } from './ActiveSpellsPanel';
 import { QuestsPanel, QuickReference } from './MorePanels';
 import { SpellTypeIcon } from './SpellTypeIcon';
-import { SpellDescription } from './SpellDescription';
+import { SpellDescription, DarkSideDescription } from './SpellDescription';
 import { SchoolIcon } from './SchoolIcon';
 import { LobbyPanel } from './LobbyPanel';
 import { SetupPanel } from './SetupPanel';
@@ -85,16 +85,29 @@ function renderAlphaMarkdown(markdown:string) {
  });
 }
 
-function SpellCard({card,label,selected,disabled,onClick,used=false}:{card:Card;label?:string;selected?:boolean;disabled?:boolean;onClick?:()=>void;used?:boolean}) {
- const spellType=getSpellType(card);
- return <button type="button" className={`spell ${card.powerful?'powerful':''} ${selected?'chosen':''} ${used?'used':''}`} aria-pressed={onClick?!!selected:undefined} disabled={disabled} onClick={onClick}>
-  {label&&<span>{label}</span>}
-  <span className="spell-type" data-spell-type={spellType}><SpellTypeIcon type={spellType}/><span>{SPELL_TYPE_LABELS[spellType]}{card.ongoing?' · Ongoing':''}</span>{card.element&&<span className="spell-element" data-element={card.element} title={`${card.element} symbol`}>{ELEMENT_GLYPHS[card.element]} {card.element}</span>}</span>
-  <span className="eyebrow">Range {card.range===Number.POSITIVE_INFINITY?'∞':card.range} · {SPELL_TARGET_DESCRIPTIONS[card.target]}{card.powerful?' · Remove after use':''}</span>
-  <strong>{card.name}</strong><span className="spell-rune"><SchoolIcon schoolId={card.schoolId} powerful={card.powerful}/></span>
-  <SpellDescription card={card} showMoments/>
-  {used&&<span className="spell-status" data-spell-status="SPENT">Spent</span>}
- </button>;
+function SpellCard({card,label,selected,disabled,onClick,used=false,side,chooseSide=false,onSideChange}:{card:Card;label?:string;selected?:boolean;disabled?:boolean;onClick?:()=>void;used?:boolean;side?:SpellSide;chooseSide?:boolean;onSideChange?:(side:SpellSide)=>void}) {
+ const sideIsChosen=side!==undefined&&!chooseSide;
+ const showLight=!sideIsChosen||side==='LIGHT';
+ const showDark=!sideIsChosen||side==='DARK';
+ const lightType=getSpellType(card);
+ const className=`spell ${card.powerful?'powerful':''} ${selected?'chosen':''} ${used?'used':''} ${disabled?'is-disabled':''} ${chooseSide?'side-choice':''}`;
+ const instability=isUnstable(card)&&<span className="spell-instability-note">◆ 1 instability · caster’s room</span>;
+ const lightContent=<>
+  <span className="spell-meta-line"><span className="spell-type" data-spell-type={lightType}><SpellTypeIcon type={lightType}/><span>{SPELL_TYPE_LABELS[lightType]}{card.ongoing?' · Ongoing':''}</span></span><span>Range {card.range===Number.POSITIVE_INFINITY?'∞':card.range}</span><span>Target: {SPELL_TARGET_DESCRIPTIONS[card.target]}</span>{card.element&&<span className="spell-element" data-element={card.element} title={`${card.element} symbol`}>{ELEMENT_GLYPHS[card.element]} {card.element}</span>}{card.powerful&&<span>Remove after use</span>}</span>
+  <SpellDescription card={card} showMoments showInstability={false}/>
+ </>;
+ const visual=<div className="spell-visual">
+   {label&&<span className="spell-card-label">{label}</span>}
+   <strong className="spell-title"><span className="spell-rune"><SchoolIcon schoolId={card.schoolId} powerful={card.powerful}/></span>{card.name}</strong>
+   {instability}
+   {showLight&&(chooseSide
+    ?<button type="button" className="spell-light-side spell-face-select" data-side="LIGHT" data-selected={side==='LIGHT'?true:undefined} aria-label={`Choose light face of ${card.name}`} aria-pressed={side==='LIGHT'} disabled={disabled} onClick={()=>{onSideChange?.('LIGHT');onClick?.();}}>{lightContent}</button>
+    :<span className="spell-light-side" data-side="LIGHT">{lightContent}</span>)}
+   {showDark&&<DarkSideDescription card={card} showInstability={false} selected={chooseSide&&side==='DARK'} chooseSide={chooseSide} onSelectSide={()=>{onSideChange?.('DARK');onClick?.();}} disabled={disabled}/ >}
+   {used&&<span className="spell-status" data-spell-status="SPENT">Spent</span>}
+  </div>;
+ if(chooseSide)return <article className={className} data-chosen-side={side}>{visual}</article>;
+ return <button type="button" className={className} data-chosen-side={side} aria-pressed={onClick?!!selected:undefined} disabled={disabled} onClick={onClick}>{visual}</button>;
 }
 
 function StudyPanel({game,me,send}:{game:GameState;me:Player;send:Send}) {
@@ -112,6 +125,9 @@ function StudyPanel({game,me,send}:{game:GameState;me:Player;send:Send}) {
 function PreparationPanel({me,send}:{me:Player;send:Send}) {
  const [selected,setSelected]=useState<string|null>(null);
  const [placed,setPlaced]=useState<Record<Slot,string|null>>({slot1:null,slot2:null,slot3:null,rapid:null});
+ const [darkIds,setDarkIds]=useState<string[]>([]);
+ const sideOf=(id:string):SpellSide=>darkIds.includes(id)?'DARK':'LIGHT';
+ const setSide=(id:string,side:SpellSide)=>setDarkIds(old=>side==='DARK'?old.includes(id)?old:[...old,id]:old.filter(x=>x!==id));
  const count=slotKeys.filter(slot=>placed[slot]!==null).length;
  const selectedCard=me.hand.find(card=>card.id===selected);
  const destination=(slot:Slot)=>slot==='rapid'?'Quick slot':`slot ${slot.slice(-1)}`;
@@ -129,23 +145,27 @@ function PreparationPanel({me,send}:{me:Player;send:Send}) {
   if(count<2)return;
   const preparedCardIds=[placed.slot1,placed.slot2,placed.slot3];
   while(preparedCardIds.length&&preparedCardIds[preparedCardIds.length-1]===null)preparedCardIds.pop();
-  send({type:'PREPARE_CARDS',playerId:me.id,preparedCardIds,...(placed.rapid?{rapidCardId:placed.rapid}:{})});
+  const sides:Record<string,SpellSide>={};
+  for(const key of slotKeys){const id=placed[key];if(id&&darkIds.includes(id))sides[id]='DARK';}
+  send({type:'PREPARE_CARDS',playerId:me.id,preparedCardIds,...(placed.rapid?{rapidCardId:placed.rapid}:{}),...(Object.keys(sides).length?{sides}:{})});
  };
  if(me.preparationDone)return <div className="notice">✓ Spells prepared. Waiting for the other mages.</div>;
  if(me.hand.length>me.cardLimit)return <HandLimitPanel me={me} send={send}/>;
- return <section className="phase-panel preparation-panel"><span className="eyebrow">Plan your sequence</span><h2>Prepare 2–4 spells</h2><p>Tap one card, then the slot where you want to prepare it. Numbered spells cast in order; the ✧ Quick spell can be cast on any turn. Place at least 2 spells. Unplaced cards stay in hand. Forgotten spells must be prepared before casting.</p>
+ return <section className="phase-panel preparation-panel"><span className="eyebrow">Plan your sequence</span><h2>Prepare 2–4 spells</h2><p>Tap a dashed light or dark face to choose the spell and side, then tap a slot to place it. Numbered spells cast in order; the ✧ Quick spell can be cast on any turn. Place at least 2 spells. The highlighted face is the one you will use. Unplaced cards stay in hand. Forgotten spells must be prepared before casting.</p>
   <div className="preparation-toolbar">
    <div className="preparation-order" role="group" aria-label="Prepared spell slots">{slotKeys.map((slot,index)=>{
     const card=me.hand.find(card=>card.id===placed[slot]);
     return <div key={slot} className={`preparation-slot${card?' is-filled':''}`} data-preparation-slot={slot}>
-     <button type="button" className="preparation-destination" aria-label={`Place in ${destination(slot)}`} disabled={!selectedCard} onClick={()=>place(slot)}><b>{slot==='rapid'?'✧ Quick':`Slot ${index+1}`}</b><span>{card?.name??'Empty slot'}</span></button>
+    <button type="button" className="preparation-destination" aria-label={`Place in ${destination(slot)}`} disabled={!selectedCard} onClick={()=>place(slot)}><b>{slot==='rapid'?'✧ Quick':`Slot ${index+1}`}</b><span>{card?card.name:'Empty slot'}</span></button>
      {card&&<button type="button" className="preparation-remove" aria-label={`Remove from ${destination(slot)}`} onClick={()=>setPlaced(old=>({...old,[slot]:null}))}>✕</button>}
     </div>;
    })}</div>
    <div className="preparation-status" role="status" aria-live="polite">{selectedCard?`${selectedCard.name} selected. Tap a slot to place it.`:`${count}/4 spells placed. ${count<2?'Place at least 2 to finish.':'Ready when you are.'}`}</div>
-   <div className="button-row"><button type="button" disabled={!count&&!selected} onClick={()=>{setSelected(null);setPlaced({slot1:null,slot2:null,slot3:null,rapid:null});}}>Reset selection</button><button type="button" className="primary" disabled={count<2} onClick={submit}>Done</button></div>
+   <div className="button-row"><button type="button" disabled={!count&&!selected} onClick={()=>{setSelected(null);setPlaced({slot1:null,slot2:null,slot3:null,rapid:null});setDarkIds([]);}}>Reset selection</button><button type="button" className="primary" disabled={count<2} onClick={submit}>Done</button></div>
   </div>
-  <div className="cards">{me.hand.map(card=>{const slot=slotKeys.find(key=>placed[key]===card.id);return <SpellCard key={card.id} card={card} label={slot?`In ${destination(slot)}`:'Choose this spell'} selected={selected===card.id} onClick={()=>setSelected(old=>old===card.id?null:card.id)}/>;})}</div>
+  <div className="cards">{me.hand.map(card=>{const slot=slotKeys.find(key=>placed[key]===card.id);return <div className="spell-choice" key={card.id}>
+  <SpellCard card={card} label={slot?`In ${destination(slot)}`:'Choose this spell'} selected={selected===card.id} side={sideOf(card.id)} chooseSide onSideChange={side=>setSide(card.id,side)} onClick={()=>setSelected(card.id)}/>
+  </div>;})}</div>
   <p className="hint">To move or replace a prepared spell, select its card and tap another slot. Use ✕ to empty a slot, or Reset selection to start again.</p>
  </section>;
 }
@@ -163,6 +183,14 @@ function QuestLimitPanel({me,send}:{me:Player;send:Send}) {
  const excess=activeQuests.length-me.questLimit;
  if(excess<=0)return <div className="notice">Your active quests meet the limit of {me.questLimit}. Completed quests do not count. Waiting for the other mages to discard excess quests.</div>;
  return <section className="phase-panel quest-limit-panel"><span className="eyebrow">End of BR</span><h2>Keep up to {me.questLimit} active quests</h2><p>Choose exactly {excess} active quests to discard. Completed quests are kept and do not count toward your limit. Study will begin when all mages meet their limits.</p><div className="quest-choices">{activeQuests.map(quest=><button key={quest.id} className={selected.includes(quest.id)?'chosen':''} aria-pressed={selected.includes(quest.id)} onClick={()=>setSelected(old=>old.includes(quest.id)?old.filter(id=>id!==quest.id):old.length<excess?[...old,quest.id]:old)}><strong>{quest.name}</strong><span>{quest.description}</span><small>+{quest.reward} VP</small></button>)}</div><button className="primary" disabled={selected.length!==excess} onClick={()=>send({type:'DISCARD_QUESTS',playerId:me.id,questIds:selected})}>Discard excess quests ({selected.length}/{excess})</button></section>;
+}
+
+function RoseQuestDiscardPanel({game,me,send}:{game:GameState;me:Player;send:Send}) {
+ const quests=[me.quest,...me.additionalQuests].filter((q):q is NonNullable<Player['quest']>=>!!q&&!q.completed&&!q.claimed);
+ const used=(game.roseQuestDiscards??[]).includes(me.id);
+ if(!quests.length&&!used)return null;
+ if(used)return <div className="notice">You discarded a quest for the Black Rose this round.</div>;
+ return <section className="quest-limit-panel"><span className="eyebrow">Before quests are drawn</span><h3>Discard a quest? (optional)</h3><p>Once per round you may discard one active quest. The Black Rose gains 1 VP.</p><div className="quest-choices">{quests.map(quest=><button key={quest.id} onClick={()=>send({type:'DISCARD_QUEST_FOR_ROSE',playerId:me.id,questId:quest.id})}><strong>{quest.name}</strong><span>{quest.description}</span><small>+{quest.reward} VP</small></button>)}</div></section>;
 }
 
 function App() {
@@ -230,7 +258,7 @@ function App() {
  },[game,playerId]);
  useEffect(()=>{
   if(!playedCards.length)return;
-  const timer=window.setTimeout(()=>setPlayedCards(previous=>previous.slice(1)),3000);
+  const timer=window.setTimeout(()=>setPlayedCards(previous=>previous.slice(1)),5000);
   return()=>window.clearTimeout(timer);
  },[playedCards[0]?.key]);
  useEffect(()=>{
@@ -401,9 +429,10 @@ function App() {
   openQuickControls('evocations');
  };
  const powerfulCards=me.hand.filter(c=>c.powerful);
- const printedSpell=active?.physicalAction?null:selectedSlot?me.prepared[selectedSlot]?.card:null;
+ const printedPrepared=active?.physicalAction?null:selectedSlot?me.prepared[selectedSlot]:null;
+ const printedSpell=printedPrepared?.card??null;
  // Enhancements change targeting only when the other revealed spells show the symbols.
- const spell=printedSpell?(['TRAP','PROTECTION'].includes(getSpellType(printedSpell))?printedSpell:getEffectiveSpell(game,me,printedSpell)):null;
+ const spell=printedSpell?getSpellForSide(game,me,printedSpell,printedPrepared?.side):null;
  const activatingSpell=!!spell&&['TRAP','PROTECTION'].includes(getSpellType(spell));
  const nextSlot=(['slot1','slot2','slot3'] as Slot[]).find(key=>me.prepared[key]&&!me.prepared[key]!.used);
  const spellModelsInRoom=(room:Room)=>!spell||room.startingFor||inStart?[]:targetModels(game).filter(t=>spellCanTargetModel(spell,me.id,t.playerId,t.evocation?'EVOCATION':'MAGE')&&spellFilterAllows(spell,me.id,{playerId:t.playerId,evocation:game.evocations.find(e=>e.id===t.id)})&&room.tiles.some(h=>hexKey(h)===hexKey(t.position))&&spellReaches(game,spell,me.wizard.position,t.position));
@@ -459,13 +488,12 @@ function App() {
       </div>
       {dummy&&<p className="hint dummy-target-help">Select any non-starting room in spell range, occupied or empty. Infinite range ignores line of sight. Only printed room instability resolves. Damage, healing, conversion and model-bound effects are ignored. The spell still costs its card and 1 turn action.</p>}
      </>:null;
- // With the dashboard closed after choosing a spell, the same toggle stays reachable beside the target confirmation.
  const dockedModes=!quickControls&&game.phase==='ACTION'?targetModes:null;
  const spellControls=<>
     {game.phase==='ACTION'&&<section className="phase-panel"><div className="section-heading"><div><span className="eyebrow">Your prepared grimoire · 1 action per cast</span><h2>{game.evocationActivation?.playerId===me.id?'Finish your evocation activation':myTurn?'Choose your next action':'Watch the other mage’s turn'}</h2></div><span className="badge">{myTurn?`${turnActionsRemaining} turn actions left`:me.passed?'Passed':'Waiting'}</span></div>
     {inStart&&<div className="notice">Leave your starting room with Explore or discard-to-move using any unused prepared spell before casting or attacking.</div>}
     {myTurn&&active?.physicalAction&&<div className="notice">Finish or skip your {active.physicalAction.kind==='EXPLORE'?'Explore':'Attack'} effects before casting spells.</div>}
-      <div className="cards prepared">{slotKeys.map((key,i)=>{const c=me.prepared[key];return c&&<SpellCard key={key} card={c.card} used={c.used} label={key==='rapid'?'✧ Quick':`Spell ${i+1}`} selected={key===selectedSlot} disabled={pending||!myTurn||turnActionsRemaining===0||inStart||!!active?.physicalAction||!!active?.exploring||c.used||(key!=='rapid'&&(key!==nextSlot||!!active?.sequencedSpellUsed))} onClick={()=>{const hidden=['TRAP','PROTECTION'].includes(getSpellType(c.card));setSelectedSlot(old=>old===key?null:key);setSelectedRoom(!hidden&&selectedSlot!==key&&c.card.target==='SELF'?game.board.rooms.find(r=>r.tiles.some(h=>hexKey(h)===hexKey(me.wizard.position)))?.id??null:null);setSelectedModelId('');setDummy(false);setExitCardId('');if(quickControls)closeQuickControls();setToast(hidden?'Confirm activation. No room or target is chosen.':c.card.target==='SELF'?'Your mage is selected. Confirm the spell to cast on yourself.':'Choose a highlighted room, then an eligible target.');}}/>;})}</div>
+      <div className="cards prepared">{slotKeys.map((key,i)=>{const c=me.prepared[key];return c&&<SpellCard key={key} card={c.card} side={c.side??'LIGHT'} used={c.used} label={key==='rapid'?'✧ Quick':`Spell ${i+1}`} selected={key===selectedSlot} disabled={pending||!myTurn||turnActionsRemaining===0||inStart||!!active?.physicalAction||!!active?.exploring||c.used||(key!=='rapid'&&(key!==nextSlot||!!active?.sequencedSpellUsed))} onClick={()=>{const face=getSpellForSide(game,me,c.card,c.side);const hidden=['TRAP','PROTECTION'].includes(getSpellType(face));setSelectedSlot(old=>old===key?null:key);setSelectedRoom(!hidden&&selectedSlot!==key&&face.target==='SELF'?game.board.rooms.find(r=>r.tiles.some(h=>hexKey(h)===hexKey(me.wizard.position)))?.id??null:null);setSelectedModelId('');setDummy(false);setExitCardId('');if(quickControls)closeQuickControls();setToast(hidden?'Confirm activation. No room or target is chosen.':face.target==='SELF'?'Your mage is selected. Confirm the spell to cast on yourself.':'Choose a highlighted room, then an eligible target.');}}/>;})}</div>
     {spell&&<>
     <p className="hint">1 turn action per spell; no physical token. One numbered spell per turn. Finite range follows a straight hex line; infinite range ignores line of sight.</p>
     {activatingSpell&&<p className="notice">Activate face down without choosing a room or target. Only the spell type is public. You may reveal when its condition occurs, or keep it hidden. Unrevealed cards return to hand at Cleanup.</p>}
@@ -505,7 +533,7 @@ function App() {
     {paused&&<div className="notice">Game paused. Waiting for the disconnected mage to rejoin room <b>{roomId}</b>.</div>}
     {game.phase==='LOBBY'&&<LobbyPanel game={game} me={me} connected={connected} pending={pending} send={send}/>}
     {game.phase==='SETUP'&&<SetupPanel game={game} me={me} connected={connected} pending={pending} send={send}/>}
-    {game.phase==='BLACK_ROSE'&&<section className="phase-panel event-panel"><span className="eyebrow">Event revealed · Round {game.round}</span><h2>✺ {game.usedEvent?.name}{game.usedEvent?.crown&&<span className="event-crown" title="The last player becomes first"> ♛</span>}</h2><p>{game.usedEvent?.description}</p><div className="notice">{eventNotice(game.usedEvent)}</div><p className="hint">At the end of BR, discard excess active quests to meet your limit of {me.questLimit}; completed quests do not count. Study and its 2 grimoire draws wait until all mages meet their limits.</p>{game.blackRoseResolved?<fieldset disabled={!enabled||pending}><QuestLimitPanel key={`quests-${game.round}`} me={me} send={send}/></fieldset>:isHost?<button className="primary" disabled={!enabled||pending} onClick={continuePhase}>Receive quests & begin Study →</button>:<p className="waiting">Waiting for the creator to begin Study…</p>}</section>}
+    {game.phase==='BLACK_ROSE'&&<section className="phase-panel event-panel"><span className="eyebrow">Event revealed · Round {game.round}</span><h2>✺ {game.usedEvent?.name}{game.usedEvent?.crown&&<span className="event-crown" title="The last player becomes first"> ♛</span>}</h2><p>{game.usedEvent?.description}</p><div className="notice">{eventNotice(game.usedEvent)}</div><p className="hint">At the end of BR, discard excess active quests to meet your limit of {me.questLimit}; completed quests do not count. Study and its 2 grimoire draws wait until all mages meet their limits.</p>{game.blackRoseResolved?<fieldset disabled={!enabled||pending}><QuestLimitPanel key={`quests-${game.round}`} me={me} send={send}/></fieldset>:<><fieldset disabled={!enabled||pending}><RoseQuestDiscardPanel game={game} me={me} send={send}/></fieldset>{isHost?<button className="primary" disabled={!enabled||pending} onClick={continuePhase}>Receive quests & begin Study →</button>:<p className="waiting">Waiting for the creator to begin Study…</p>}</>}</section>}
     {game.phase==='STUDY'&&<fieldset disabled={!enabled||pending}><StudyPanel key={`study-${game.round}`} game={game} me={me} send={send}/></fieldset>}
     {game.phase==='PREPARATION'&&<fieldset disabled={!enabled||pending}><PreparationPanel key={`prep-${game.round}`} me={me} send={send}/></fieldset>}
     {game.phase==='CLEANUP'&&<section className="phase-panel"><span className="eyebrow">The end of the round</span><h2>❖ The lodge settles</h2><p>Full rooms have rebuilt, awarded contribution points and returned their cubes once. They accept no more instability; their double specials are now ready. Endgame follows Cleanup in round 3, or when any mage or the BR reaches 30 VP.</p>{isHost?<button className="primary" disabled={!enabled||pending} onClick={continuePhase}>Begin round {game.round+1} →</button>:<p className="waiting">Waiting for the creator to begin the next round…</p>}</section>}
@@ -528,7 +556,7 @@ function App() {
       {game.phase!=='LOBBY'&&<ol className="map-player-order" aria-label={`Turn order, ${mapPlayerOrder[0]?.name} first`}>
        {mapPlayerOrder.map((player,index)=><li className={player.id===actingPlayer?.id?'map-player-active':''} data-player-id={player.id} aria-label={`${player.name}${index===0?', first in turn order':''}${player.id===actingPlayer?.id?', acting now':''}`} title={player.name} style={mageStyle(player.id)} key={player.id}><span className="map-player-icon" aria-hidden="true">{index===0&&<span className="map-first-crown">♛</span>}{emoji[player.id]}</span></li>)}
       </ol>}
-      {playedCards[0]&&<aside className="map-played-card" role="status" aria-label={`Card played by ${ownerName(game,playedCards[0].entry.ownerId)}`}><span className="eyebrow">Played by {ownerName(game,playedCards[0].entry.ownerId)}</span><SpellCard card={playedCards[0].entry.card} label={playedCards[0].entry.role==='TRIGGERED'?'Revealed card':'Card played'} disabled/></aside>}
+      {playedCards[0]&&<aside className="map-played-card" role="status" aria-label={`Card played by ${ownerName(game,playedCards[0].entry.ownerId)}`}><span className="eyebrow">Played by {ownerName(game,playedCards[0].entry.ownerId)}</span><SpellCard card={playedCards[0].entry.card} side={playedCards[0].entry.side??'LIGHT'} label={playedCards[0].entry.role==='TRIGGERED'?'Revealed card':'Card played'} disabled/></aside>}
       <div className="board-viewport" ref={boardZoom.setViewport} style={boardZoom.viewportStyle} tabIndex={0} role="region" aria-label="Scrollable lodge board"><svg className="board" style={boardZoom.boardStyle} viewBox="-210 -165 420 330" role="group" aria-label="Hexagonal lodge board">{game.board.rooms.map(r=>{
       const h=r.tiles[0],x=(h.q+h.r/2)*62,y=h.r*54;
       const occupants=game.players.filter(p=>r.tiles.some(tile=>hexKey(p.wizard.position)===hexKey(tile)));

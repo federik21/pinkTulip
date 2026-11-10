@@ -88,8 +88,9 @@ test.describe('Preparation on a short mobile screen', () => {
   test('slot destinations and Done stay reachable while selecting the last hand card', async ({ page }, info) => {
     const wire = await mount(page, preparationFixture());
     const panel = page.locator('.preparation-panel'), last = panel.locator('.cards .spell').last();
-    await last.scrollIntoViewIfNeeded();
-    await last.evaluate(element => {
+    const selectableFace = last.locator('.spell-light-side');
+    await selectableFace.scrollIntoViewIfNeeded();
+    await selectableFace.evaluate(element => {
       const rect = element.getBoundingClientRect();
       window.scrollBy(0, rect.y + rect.height / 2 - innerHeight * .65);
     });
@@ -107,7 +108,7 @@ test.describe('Preparation on a short mobile screen', () => {
       expect(await element.evaluate((node, p) => node.contains(document.elementFromPoint(p.x, p.y)), point)).toBe(true);
       return point;
     };
-    const cardPoint = await hit(last, false);
+    const cardPoint = await hit(selectableFace, false);
     await page.mouse.click(cardPoint.x, cardPoint.y);
     await expect(last).toHaveClass(/\bchosen\b/);
     await expect(panel.locator('.preparation-toolbar')).toHaveCSS('position', 'sticky');
@@ -118,7 +119,7 @@ test.describe('Preparation on a short mobile screen', () => {
     await hit(done); await expect(done).toBeDisabled();
     const quickPoint = await hit(panel.getByRole('button', { name: 'Place in Quick slot', exact: true }));
     await page.mouse.click(quickPoint.x, quickPoint.y);
-    await expect(last.locator('.eyebrow')).toContainText('In Quick slot');
+    await expect(last.locator('.spell-card-label')).toContainText('In Quick slot');
     await expect(done).toBeDisabled(); await hit(done);
     expect(wire.commands).toEqual([]);
     await page.screenshot({ path: info.outputPath('preparation-short-mobile.png'), animations: 'disabled' });
@@ -279,8 +280,8 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
         for (const destination of ['slot 1', 'slot 2', 'slot 3', 'Quick slot']) {
           await expect(panel.locator('.preparation-order').getByRole('button', { name: `Place in ${destination}`, exact: true })).toBeDisabled();
         }
-        await expect(confirm).toBeDisabled(); await cards.nth(0).click(); await expect(confirm).toBeDisabled();
-        await cards.nth(1).click(); await expect(confirm).toBeDisabled();
+        await expect(confirm).toBeDisabled(); await cards.nth(0).locator('.spell-light-side').click(); await expect(confirm).toBeDisabled();
+        await cards.nth(1).locator('.spell-light-side').click(); await expect(confirm).toBeDisabled();
         await expect(panel.locator('.cards .spell.chosen')).toHaveCount(1);
         await expect(cards.nth(1)).toHaveClass(/\bchosen\b/);
         await expect(panel.locator('.preparation-order')).not.toContainText(hand[0].name);
@@ -315,7 +316,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       const panel = page.locator('.preparation-panel'), cards = panel.locator('.cards .spell');
       const done = panel.getByRole('button', { name: 'Done', exact: true });
       await assignPreparationCard(page, cards.nth(3), 'Quick'); await expect(done).toBeDisabled();
-      await cards.nth(1).click(); await expect(done).toBeDisabled();
+      await cards.nth(1).locator('.spell-light-side').click(); await expect(done).toBeDisabled();
       await expect(cards.nth(1)).toHaveClass(/\bchosen\b/);
       await panel.locator('.preparation-order').getByRole('button', { name: 'Place in slot 3', exact: true }).click();
       await expect(cards.nth(1).getByText(/^In slot 3(?:\s*·.*)?$/)).toBeVisible();
@@ -323,7 +324,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       await expect(cards.filter({ hasText: 'In Quick slot' })).toHaveCount(1);
       await expect(done).toBeEnabled(); await expect(done).toHaveText('Done');
       // A third card is only pending, not a third placement or part of the payload.
-      await cards.nth(4).click(); await expect(cards.nth(4)).toHaveClass(/\bchosen\b/);
+      await cards.nth(4).locator('.spell-light-side').click(); await expect(cards.nth(4)).toHaveClass(/\bchosen\b/);
       const broadcast = structuredClone(wire.state); broadcast.log.push('Preparation selections remain local across a peer broadcast.');
       wire.update(broadcast);
       const chronicle = await openChronicle(page);
@@ -358,7 +359,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
       }
       await expect(done).toBeEnabled(); await expect(done).toHaveText('Done');
       await expect(cards.locator('strong')).toHaveText(hand.map(card => card.name));
-      await cards.nth(4).click(); await expect(cards.nth(4)).toHaveClass(/\bchosen\b/);
+      await cards.nth(4).locator('.spell-light-side').click(); await expect(cards.nth(4)).toHaveClass(/\bchosen\b/);
       await expect(done).toBeEnabled(); // Four placed plus a pending fifth still means four.
       expect(wire.commands).toEqual([]); expect(wire.state.players[0].hand).toEqual(hand);
       await info.attach(`preparation-order-${viewport.width}`, { body: await panel.screenshot({ path: info.outputPath('preparation-order.png') }), contentType: 'image/png' });
@@ -404,7 +405,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
         await expect(cards.getByText(new RegExp(`^In ${destination}(?:\\s*·.*)?$`))).toHaveCount(0);
         if (enabled) await expect(done).toBeEnabled(); else await expect(done).toBeDisabled();
       }
-      await cards.nth(4).click(); await expect(done).toBeDisabled();
+      await cards.nth(4).locator('.spell-light-side').click(); await expect(done).toBeDisabled();
       await expect(cards.nth(4)).toHaveClass(/\bchosen\b/);
       await panel.getByRole('button', { name: 'Reset selection', exact: true }).click();
       await expect(panel.locator('.cards .spell.chosen')).toHaveCount(0);

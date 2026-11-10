@@ -1,15 +1,18 @@
-import { Card, Effect, PhysicalEffect, PhysicalMoment, Element, EvocationKind, EventCard, GameState, JinxName, LibraryDeck, Moment, MomentEffect, Player, Quest, SpellType, TriggerCondition, UpgradeName } from './types';
+import { Card, DarkSide, Effect, PhysicalEffect, PhysicalMoment, Element, EvocationKind, EventCard, GameState, JinxName, LibraryDeck, Moment, MomentEffect, Player, Quest, SpellSide, SpellType, TriggerCondition, UpgradeName } from './types';
 
 export const ELEMENTS: readonly Element[] = ['air', 'fire', 'water', 'earth', 'evil', 'good', 'stars', 'wild'];
 export const ELEMENT_GLYPHS: Readonly<Record<Element, string>> = { air: '🜁', fire: '🜂', water: '🜄', earth: '🜃', evil: '☠', good: '✚', stars: '★', wild: '✦' };
 
-// Symbols shown by the caster's OTHER revealed spells: prepared spells already resolved this round,
+// Side symbols shown by the caster's OTHER revealed spells: prepared spells already resolved this round,
 // except hidden Trap/Protection cards that are still face down.
 export function getRevealedElements(s: Pick<GameState, 'readiedSpells'>, p: Pick<Player, 'id' | 'prepared'>, current: Card): Element[] {
  const hidden = new Set((s.readiedSpells ?? []).filter(a => a.playerId === p.id).map(a => a.card.id));
  return Object.values(p.prepared)
   .filter(x => !!x && x.used && x.card.id !== current.id && !hidden.has(x.card.id))
-  .flatMap(x => x!.card.element ? [x!.card.element] : []);
+  .flatMap(x => {
+   const element=x!.side==='DARK'?x!.card.darkSide?.element:x!.card.element;
+   return element?[element]:[];
+  });
 }
 
 // Wild symbols stand in for any single missing symbol.
@@ -40,6 +43,41 @@ export function getEffectiveSpell(s: Pick<GameState, 'readiedSpells'>, p: Pick<P
   range: enhancement.range ?? card.range,
   ...(enhancement.suppressReactions ? { suppressReactions: true } : {}),
  };
+}
+
+// Every spell card has two sides: the light side (the printed card data) and the dark side. They share only the
+// card's name and its PLACE (instability) Effect. Dark sides are placeholders for now: they target the caster,
+// have no moments and so resolve nothing beyond the shared instability.
+export const DARK_SIDE_PLACEHOLDER: DarkSide = { moments: [], range: 0, target: 'SELF', rulesText: 'No effect yet.' };
+export const getDarkSide = (card: Pick<Card, 'darkSide'>): DarkSide => card.darkSide ?? DARK_SIDE_PLACEHOLDER;
+
+// The card as it resolves when its dark side is cast. The shared PLACE Effect is kept; every light-side
+// property (reactive trigger, ongoing, enhancement, filters, type) is dropped.
+export function getDarkSideSpell(card: Card): Card {
+ const { enhancement, trigger, triggerTarget, triggerSight, triggerText, triggerEffects, targetFrom, targetFilter, suppressReactions, ongoing, spellType, rulesText, darkSide, element: lightElement, ...shared } = card;
+ void lightElement;
+ const dark = getDarkSide(card);
+ return {
+  ...shared,
+  effects: [...card.effects.filter(effect => effect.kind === 'PLACE'), ...mainEffects(dark.moments)],
+  range: dark.range,
+  target: dark.target,
+  spellType: dark.spellType ?? 'CONTINGENCY',
+  ...(dark.targetFilter ? { targetFilter: dark.targetFilter } : {}),
+  ...(dark.trigger ? { trigger: dark.trigger } : {}),
+  ...(dark.triggerTarget ? { triggerTarget: dark.triggerTarget } : {}),
+  ...(dark.triggerText ? { triggerText: dark.triggerText } : {}),
+  ...(dark.triggerEffects ? { triggerEffects: dark.triggerEffects } : {}),
+  ...(dark.ongoing ? { ongoing: dark.ongoing } : {}),
+  ...(dark.element?{element:dark.element}:{}),
+  ...(dark.rulesText ? { rulesText: dark.rulesText } : {}),
+ };
+}
+
+// The card as it resolves for the chosen side. Light: reactive cards as printed, others with enhancement.
+export function getSpellForSide(s: Pick<GameState, 'readiedSpells'>, p: Pick<Player, 'id' | 'prepared'>, card: Card, side: SpellSide = 'LIGHT'): Card {
+ if (side === 'DARK') return getDarkSideSpell(card);
+ return ['TRAP', 'PROTECTION'].includes(getSpellType(card)) ? card : getEffectiveSpell(s, p, card);
 }
 
 const peakOfAgonyMoments=():Moment[]=>[
@@ -150,6 +188,10 @@ export function upgradeLegacyCards(value: unknown): void {
  if (Array.isArray(value)) { value.forEach(upgradeLegacyCards); return; }
  const node = value as Record<string, unknown>;
  if (node.kind === 'SPELL' && node.range === null) node.range = Number.POSITIVE_INFINITY;
+ const dark = node.kind === 'SPELL' ? node.darkSide as { range: number | null } | undefined : undefined;
+ if (dark && dark.range === null) dark.range = Number.POSITIVE_INFINITY;
+ // Saved Agony cards predate their dark sides.
+ if (node.kind === 'SPELL' && !node.darkSide && typeof node.name === 'string' && AGONY_DARK_SIDES[node.name] && (node.schoolId === 'agony' || String(node.id).startsWith('agony-'))) node.darkSide = structuredClone(AGONY_DARK_SIDES[node.name]);
  if(node.kind==='SPELL'&&node.name==='Pain Mark'&&(node.schoolId==='agony'||String(node.id).startsWith('agony-'))) {
   const ongoing=node.ongoing as Card['ongoing'];
   if(ongoing?.trigger.event==='DAMAGE_DEALT'&&!ongoing.trigger.damageOrigins) {
@@ -181,6 +223,48 @@ const AGONY_ELEMENTS: Element[] = ['evil', 'fire', 'stars', 'water', 'fire', 'ev
 const TECHNOMANCY_ELEMENTS: Element[] = ['earth', 'water', 'air', 'stars', 'fire', 'evil', 'earth', 'wild', 'good', 'stars', 'air', 'fire'];
 const SHAMANIC_ELEMENTS: Element[] = ['good', 'good', 'earth', 'good', 'fire', 'water', 'good', 'wild', 'water', 'earth', 'fire', 'water'];
 
+// Dark sides of the Agony school, keyed by card name. Amounts that depend on wounds use `scale`.
+const AGONY_DARK_SIDES: Record<string, DarkSide> = {
+ 'Shared Torture': { moments: [{ effect: 'DAMAGE', amount: 0, scale: { from: 'CASTER_BLACK_DAMAGE', per: 2, each: 1 } }], range: 1, target: 'MODEL', element: 'evil', spellType: 'COMBAT',
+  rulesText: 'Inflict 1 damage for each 2 BR damage on your mage.' },
+ 'Grim Torment': { moments: [{ effect: 'PAIN', amount: 1 }, { effect: 'DAMAGE', amount: 0, scale: { from: 'CASTER_DAMAGE', per: 2, each: 1 } }], range: 2, target: 'ROOM', element: 'evil', spellType: 'COMBAT',
+  rulesText: 'BR inflicts 1 damage on you. Then inflict 1 damage for each 2 damage on your mage.' },
+ 'Cross and Delight': { moments: [{ effect: 'DAMAGE', amount: 2, scale: { from: 'TARGET_DAMAGE', per: 1, each: 1 }, scope: 'TARGET_ROOM' }, { effect: 'REMOVE_EVOCATION', chosen: true }],
+  range: Number.POSITIVE_INFINITY, target: 'EVOCATION', targetFilter: { own: true, archetype: 'DEMON' }, element: 'water', spellType: 'COMBAT',
+  rulesText: 'Choose one of your demons. Inflict 2 damage, plus 1 for each damage on it, on every model in its room. Then remove it.' },
+ 'Torment': { moments: [], range: Number.POSITIVE_INFINITY, target: 'MODEL', element: 'air', spellType: 'TRAP',
+  trigger: { event: 'DAMAGE_TAKEN', relation: 'ENEMY', scope: 'ANY', modelRelation: 'SELF', modelKind: 'MAGE', actorKind: 'MAGE' }, triggerTarget: 'EVENT_ACTOR',
+  triggerText: 'When another mage inflicts damage on you',
+  triggerEffects: [{ effect: 'DAMAGE', amount: 1, scale: { from: 'EVENT_AMOUNT', per: 1, each: 1 }, target: 'EVENT_ACTOR' }],
+  rulesText: 'Inflict the damage you suffered +1 on that mage.' },
+ 'Visceral Fire': { moments: [{ effect: 'DAMAGE', amount: 0, scale: { from: 'CASTER_BLACK_DAMAGE', per: 1, each: 1, max: 5 } }], range: 1, target: 'ROOM', element: 'fire', spellType: 'COMBAT',
+  rulesText: 'Inflict 1 damage (max 5) for each BR damage on your mage.' },
+ 'Peak of Agony': { moments: [{ effect: 'DAMAGE', amount: 3 }, { effect: 'DAMAGE', amount: 0, scale: { from: 'CASTER_DAMAGE', per: 2, each: 1, max: 3 }, area: { range: 1, choose: true } }],
+  range: 1, target: 'MODEL', element: 'air', spellType: 'COMBAT',
+  rulesText: 'Inflict 3 damage. Then inflict 1 damage (max 3) for each 2 damage on your mage on a different model within range 1 of the target.' },
+ 'Pain Mark': { moments: [], range: 0, target: 'SELF', element: 'evil', spellType: 'COMBAT',
+  ongoing: { trigger: { event: 'DAMAGE_TAKEN', relation: 'SELF', relationTo: 'EVENT_MODEL', scope: 'BOUND_MODEL', modelKind: 'MAGE' }, effects: [{ effect: 'REDIRECT_DAMAGE', target: 'EVENT_MODEL' }] },
+  rulesText: 'Ongoing: when you suffer damage, one of your evocations can suffer it instead.' },
+ 'Master of Pleasure': { moments: [], range: Number.POSITIVE_INFINITY, target: 'SELF', element: 'fire', spellType: 'TRAP',
+  trigger: { event: 'DAMAGE_TAKEN', relation: 'ENEMY', relationTo: 'EVENT_MODEL', scope: 'ANY', modelKind: 'MAGE' },
+  triggerText: 'When another mage suffers damage',
+  triggerEffects: [{ effect: 'PAIN', amount: 0, scale: { from: 'EVENT_AMOUNT', per: 1, each: 1 }, target: 'OWNER' }, { effect: 'GAIN_VP', amount: 0, scale: { from: 'CASTER_BLACK_DAMAGE', per: 2, each: 1, max: 4 }, target: 'OWNER' }],
+  rulesText: 'BR inflicts that much damage on you. Gain 1 VP (max 4) for each 2 BR damage on your mage.' },
+ 'Liquefy the Pain': { moments: [], range: Number.POSITIVE_INFINITY, target: 'ROOM', element: 'water', spellType: 'TRAP',
+  trigger: { event: 'MAGE_DEFEATED', relation: 'ENEMY', relationTo: 'EVENT_MODEL', scope: 'ANY' }, triggerTarget: 'EVENT_ROOM',
+  triggerText: 'When another mage is defeated',
+  triggerEffects: [{ effect: 'INSTABILITY', amount: 0, scale: { from: 'CASTER_DAMAGE', per: 2, each: 1 }, target: 'EVENT_ROOM' }],
+  rulesText: 'Place 1 instability in the room where it was for each 2 damage on your mage.' },
+ 'Submission': { moments: [{ effect: 'DAMAGE', amount: 2 }, { effect: 'INSTABILITY', amount: 0, scale: { from: 'DAMAGED_BLACK_DAMAGE', per: 1, each: 1 }, scope: 'CASTER_ROOM' }],
+  range: 1, target: 'ROOM', element: 'evil', spellType: 'COMBAT',
+  rulesText: 'Inflict 2 damage. Place 1 instability in your room for each BR damage on the models that suffered damage from this effect.' },
+ 'Ineluctable Pain': { moments: [], range: 0, target: 'SELF', element: 'wild', spellType: 'CONTINGENCY',
+  ongoing: { trigger: { event: 'DAMAGE_TAKEN', relation: 'SELF', relationTo: 'EVENT_MODEL', scope: 'BOUND_MODEL', modelKind: 'MAGE', damageOrigins: ['NEUTRAL'] }, effects: [{ effect: 'GAIN_VP', amount: 1, target: 'OWNER' }] },
+  rulesText: 'Ongoing: when you suffer damage from BR, gain 1 VP.' },
+ 'Hearth of Ice': { moments: [{ effect: 'INSTABILITY', amount: 0, scale: { from: 'CASTER_BLACK_DAMAGE', per: 1, each: 1, max: 4 } }], range: 2, target: 'ROOM', element: 'water', spellType: 'COMBAT',
+  rulesText: 'Place 1 instability (max 4) in the target room for each BR damage on your mage.' },
+};
+
 export function createAgonyDeck(prefix: string, schoolId?: string): Card[] {
  const patterns: Omit<Card, 'id' | 'kind'>[] = [
   { name: 'Shared Torture', effects: mainEffects([moment.damage(4), moment.convert(1), moment.pain(3)]), range: 1, target: 'MODEL' },
@@ -211,7 +295,7 @@ export function createAgonyDeck(prefix: string, schoolId?: string): Card[] {
    ongoing:{trigger:{event:'VP_CHANGED',relation:'ANY',scope:'BOUND_MODEL'},effects:[{effect:'DAMAGE',amount:2,target:'EVENT_MODEL'}]} },
   { name: 'Hearth of Ice', effects: mainEffects([moment.damage(3), moment.convert(2), moment.pain(2)]), range: 2, target: 'MODEL' },
  ];
- return Array.from({ length: 36 }, (_, i) => ({ ...patterns[i % patterns.length], element: AGONY_ELEMENTS[i % patterns.length], id: `${prefix}-${i + 1}`, kind: 'SPELL', ...(schoolId ? {schoolId} : {}) }));
+ return Array.from({ length: 36 }, (_, i) => { const pattern = patterns[i % patterns.length]; return { ...pattern, darkSide: structuredClone(AGONY_DARK_SIDES[pattern.name]), element: AGONY_ELEMENTS[i % patterns.length], id: `${prefix}-${i + 1}`, kind: 'SPELL' as const, ...(schoolId ? {schoolId} : {}) }; });
 }
 
 

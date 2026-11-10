@@ -162,7 +162,8 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
         await dismissOverlay(page);
         const rendered = page.locator('.phase-panel .spell');
         await expect(rendered).toHaveCount(cards.length);
-        await expect(page.locator('.phase-panel .spell:enabled')).toHaveCount(phase === 'STUDY' ? 4 : cards.length);
+        const enabledCards=phase==='PREPARATION'?page.locator('.phase-panel .spell-light-side.spell-face-select:enabled'):page.locator('.phase-panel .spell:enabled');
+        await expect(enabledCards).toHaveCount(phase === 'STUDY' ? 4 : cards.length);
         for (const canonical of cards) {
           expect(canonical.schoolId).toBeDefined();
           const school = schools[canonical.schoolId as keyof typeof schools];
