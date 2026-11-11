@@ -27,7 +27,8 @@ export type TriggerCondition = { event: TriggerEvent; relation: 'ENEMY' | 'SELF'
 // Dynamic Moment amount: amount + each * floor(count / per), the dynamic part capped at `max`.
 // CASTER_* read the resolving mage (the owner for reactions); TARGET_DAMAGE the chosen model's wounds;
 // EVENT_AMOUNT the damage of the triggering event; DAMAGED_BLACK_DAMAGE the BR wounds on every model this effect damaged.
-export type AmountScale = { from: 'CASTER_BLACK_DAMAGE' | 'CASTER_DAMAGE' | 'TARGET_DAMAGE' | 'EVENT_AMOUNT' | 'DAMAGED_BLACK_DAMAGE'; per: number; each: number; max?: number };
+// REVEALED_ELEMENT counts `element` and wild symbols on the caster's other revealed spells.
+export type AmountScale = { from: 'CASTER_BLACK_DAMAGE' | 'CASTER_DAMAGE' | 'TARGET_DAMAGE' | 'EVENT_AMOUNT' | 'DAMAGED_BLACK_DAMAGE' | 'REVEALED_ELEMENT'; per: number; each: number; max?: number; element?: Element };
 // One step of an effect. A Moment is a tagged union (the TypeScript equivalent of
 // a Swift enum with associated values): add a variant with its own payload to
 // teach the engine a new kind of step. A card resolves its moments in array
@@ -46,7 +47,8 @@ export type Moment = (
  | { effect: 'BLACK_ROSE_CONVERT'; amount: number }
  | { effect: 'INSTABILITY'; amount: number }
  | { effect: 'PAIN'; amount: number }
- | { effect: 'SUMMON'; kind: EvocationKind | 'EVENT_MODEL'; position?: 'CASTER' | 'TARGET' | 'EVENT' | 'REMOVED' | 'CHOICE' }
+ // CHOICE: the owner picks which evocation to summon among those with at most `maxHealth` health.
+ | { effect: 'SUMMON'; kind: EvocationKind | 'EVENT_MODEL' | 'CHOICE'; position?: 'CASTER' | 'TARGET' | 'EVENT' | 'REMOVED' | 'CHOICE'; maxHealth?: number }
  // The target loses victory points (never below zero).
  | { effect: 'LOSE_VP'; amount: number }
  // The chosen evocation gets +attack on its next activation.
@@ -56,13 +58,15 @@ export type Moment = (
  // Activates the room effect where the chosen (own) evocation stands, even if used; never the central or violet room.
  | { effect: 'ACTIVATE_ROOM' }
  // The owner chooses one of their evocations to activate; optional bonus attack and damage inflicted by the Black Rose when it ends.
- | { effect: 'ACTIVATE_CHOICE'; archetype?: 'CONSTRUCT' | 'UNDEAD'; attackBonus?: number; endDamage?: number }
- | { effect: 'ACTIVATE_EVOCATION'; kind: EvocationKind }
+ // `movementBonus` adds movement for that activation only.
+ | { effect: 'ACTIVATE_CHOICE'; archetype?: 'CONSTRUCT' | 'UNDEAD'; attackBonus?: number; movementBonus?: number; endDamage?: number }
+ // EVENT_MODEL activates whatever the preceding EVENT_MODEL summon created.
+ | { effect: 'ACTIVATE_EVOCATION'; kind: EvocationKind | 'EVENT_MODEL' }
  // Activates the chosen evocation under the caster's control (borrowed if it belongs to another mage).
  | { effect: 'ACTIVATE_TARGET' }
  | { effect: 'ASSIGN_UPGRADE'; upgrade: UpgradeName | 'RANDOM'; to?: 'SUMMONED' }
  // The caster may remove one of their evocations standing in the chosen model's room.
- | { effect: 'REMOVE_EVOCATION'; archetype?: 'UNDEAD'; chosen?: boolean }
+ | { effect: 'REMOVE_EVOCATION'; archetype?: 'UNDEAD' | 'CONSTRUCT'; chosen?: boolean }
  // Damage equal to the removed model's attack to every mage in its room and adjacent rooms.
  // Fixed `amount` and `models` (evocations too) override the removed model's attack / mages-only default.
  | { effect: 'REMOVED_BLAST'; amount?: number; models?: boolean }
@@ -126,7 +130,9 @@ export type Effect = { kind: 'PLACE' | 'MAIN' | 'ROOM'; moments: Moment[] };
 // Attack: the attack, then the room activation.
 export type PhysicalMoment = { moment: 'MOVE'; distance: 1 } | { moment: 'ATTACK' } | { moment: 'ACTIVATE_ROOM' };
 export type PhysicalEffect = { kind: 'EXPLORE' | 'ATTACK'; moments: PhysicalMoment[]; resumeAfterDefeat: false };
-export type TriggeredInstruction = Moment & { target: 'BOUND_MODEL' | 'BOUND_ROOM' | 'EVENT_MODEL' | 'EVENT_ACTOR' | 'EVENT_ROOM' | 'OWNER' };
+// `choose` makes the instruction one option of a choose-one group: the owner picks an option once, when the
+// first instruction of the group is reached, and only that option's instructions resolve.
+export type TriggeredInstruction = Moment & { target: 'BOUND_MODEL' | 'BOUND_ROOM' | 'EVENT_MODEL' | 'EVENT_ACTOR' | 'EVENT_ROOM' | 'OWNER'; choose?: { group: string; option: string; label: string } };
 // Enhancement: if the caster's other revealed spells show `requires` symbols, the
 // enhancement moments are added (before or after the printed ones) and may override the target.
 export type Enhancement = { requires: Element[]; moments?: Moment[]; position?: 'BEFORE' | 'AFTER'; target?: SpellTarget; range?: number; suppressReactions?: boolean; text: string };
@@ -140,7 +146,7 @@ export type TargetFilter = { own?: boolean; archetype?: 'CONSTRUCT' | 'DEMON'; m
 // moments, range, target, element, type, trigger, ongoing and enhancement are side-specific.
 // A card without `darkSide` uses the placeholder dark side (see getDarkSide in cards.ts).
 // Reactive (Trap/Protection) and ongoing dark sides carry their own trigger data; `spellType` defaults to CONTINGENCY.
-export type DarkSide = { moments: Moment[]; range: number; target: SpellTarget; element?: Element; rulesText?: string; spellType?: SpellType; targetFilter?: TargetFilter; trigger?: TriggerCondition; triggerTarget?: Card['triggerTarget']; triggerText?: string; triggerEffects?: TriggeredInstruction[]; ongoing?: Card['ongoing'] };
+export type DarkSide = { moments: Moment[]; range: number; target: SpellTarget; element?: Element; enhancement?: Enhancement; rulesText?: string; spellType?: SpellType; targetFilter?: TargetFilter; trigger?: TriggerCondition; triggerTarget?: Card['triggerTarget']; triggerText?: string; triggerEffects?: TriggeredInstruction[]; ongoing?: Card['ongoing'] };
 export type Card = { id: string; name: string; kind: 'SPELL'; effects: Effect[]; darkSide?: DarkSide; range: number; target: SpellTarget; element?: Element; enhancement?: Enhancement; targetFilter?: TargetFilter; suppressReactions?: boolean; schoolId?: string; powerful?: boolean; spellType?: SpellType; triggerText?: string; rulesText?: string; trigger?: TriggerCondition; triggerTarget?: 'EVENT_MODEL' | 'EVENT_ACTOR' | 'EVENT_ROOM'; triggerSight?: number; targetFrom?: 'EVENT_MODEL'; triggerEffects?: TriggeredInstruction[]; ongoing?: { trigger: TriggerCondition; effects: TriggeredInstruction[] } };
 // `card` is the face that resolves; for a dark side it is the dark-face card and `printed` is the physical card (discarded on retire).
 export type ActiveSpell = { id: string; playerId: string; card: Card; printed?: Card; side?: SpellSide; targetPlayerId?: string; targetEvocationId?: string; roomId?: string; cleanupDestination?: 'HAND' | 'MEMORIES' };
@@ -191,8 +197,9 @@ export type Evocation = {
  // Triggered ability. SOUL_TITHE: when the owner's mage takes damage, one of those
  // damage cubes may go on this model instead. autoAbility skips the owner's prompt.
  ability?: 'SOUL_TITHE' | 'ENTRY_SHOCK' | 'ALCHEMY' | 'TOTEM'; autoAbility?: boolean;
- // Extra attack on the next/current activation only; cleared when that activation ends.
+ // Extra attack / movement on the next/current activation only; cleared when that activation ends.
  bonusAttack?: number;
+ bonusMovement?: number;
 };
 // A root action paused until a mage answers. `resume` is server-private: the
 // original action and the answers given so far, replayed once the next answer arrives.

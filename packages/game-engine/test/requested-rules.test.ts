@@ -288,9 +288,11 @@ describe('all-model targeting and physical damage cubes',()=>{
 
 describe('free Evocation phase scheduling',()=>{
  it('alternates owners after each model, skips owners without ready models and forbids a second free activation',()=>{
-  let g=actionFixture();addPlayer(g,'p3');g.evocations=[cadaver('a'),cadaver('b'),cadaver('enemy','p2')];g=evocationPhaseFixture(g);
+  let g=actionFixture();addPlayer(g,'p3');g.evocations=[{...cadaver('a'),number:1},{...cadaver('b'),number:2},{...cadaver('enemy','p2'),number:1}];g=evocationPhaseFixture(g);
   expect(g.phase).toBe('EVOCATION');expect(g.currentPlayerId).toBe('p1');expect(g.activation).toBeNull();
+  expect(g.log.at(-1)).toContain(`Ready models by owner: ${player(g).name}: Cadaver #1, Cadaver #2; ${player(g,'p2').name}: Cadaver #1.`);
   g=applyAction(g,{type:'ACTIVATE_EVOCATION',playerId:'p1',evocationId:'a'});
+  expect(g.log.at(-1)).toContain(`${player(g).name} activates Cadaver #1 during the free Evocation phase`);
   expectRejected(g,{type:'EXPLORE',playerId:'p1'},/unavailable in EVOCATION/);
   g=applyAction(g,{type:'END_EVOCATION',playerId:'p1'});expect(g.currentPlayerId).toBe('p2');
   expectRejected(g,{type:'ACTIVATE_EVOCATION',playerId:'p1',evocationId:'b'},/turn/);

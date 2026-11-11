@@ -65,7 +65,7 @@ function targetValue(s: GameState, p: Player, card: Card, target: FeedbackTarget
   const affected = m.scope === 'CASTER' ? all.filter(t => t.id === p.id) : m.scope === 'CASTER_ROOM' ? all.filter(t => room ? at(room, t.position) : areInSameRoom(s, p.wizard.position, t.position)) : selected;
   if (m.effect === 'PAIN') { value -= m.amount * 2; continue; }
   if (m.effect === 'SUMMON') {
-   if (m.kind !== 'EVENT_MODEL' && getEvocationSupply(s)[m.kind] > 0 && s.evocations.filter(e => e.playerId === p.id).length < 3) value += 7;
+   if ((m.kind === 'CHOICE' || (m.kind !== 'EVENT_MODEL' && getEvocationSupply(s)[m.kind] > 0)) && s.evocations.filter(e => e.playerId === p.id).length < 3) value += 7;
    continue;
   }
   if(m.effect==='GAIN_VP') { value+=3*m.amount;continue; }
@@ -105,7 +105,7 @@ function targetValue(s: GameState, p: Player, card: Card, target: FeedbackTarget
   if (m.effect === 'ACTIVATE_ROOM' || m.effect === 'ACTIVATE_CHOICE') { value += 1; continue; }
   if (m.effect === 'ATTACK_BONUS' || m.effect === 'MOVE_DAMAGED') continue;
   if (m.effect === 'ACTIVATE_EVOCATION') {
-   if (getEvocationSupply(s)[m.kind] > 0 && s.evocations.filter(e => e.playerId === p.id).length < 3) value += 1;
+   if ((m.kind === 'EVENT_MODEL' || getEvocationSupply(s)[m.kind] > 0) && s.evocations.filter(e => e.playerId === p.id).length < 3) value += 1;
    continue;
   }
   if (m.effect === 'INSTABILITY') {

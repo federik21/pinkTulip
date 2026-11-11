@@ -69,15 +69,17 @@ export function getDarkSideSpell(card: Card): Card {
   ...(dark.triggerText ? { triggerText: dark.triggerText } : {}),
   ...(dark.triggerEffects ? { triggerEffects: dark.triggerEffects } : {}),
   ...(dark.ongoing ? { ongoing: dark.ongoing } : {}),
+  ...(dark.enhancement ? { enhancement: dark.enhancement } : {}),
   ...(dark.element?{element:dark.element}:{}),
   ...(dark.rulesText ? { rulesText: dark.rulesText } : {}),
  };
 }
 
-// The card as it resolves for the chosen side. Light: reactive cards as printed, others with enhancement.
+// The card as it resolves for the chosen side. Reactive cards resolve as printed; others merge their enhancement
+// (each side has its own) when the other revealed spells show the required symbols.
 export function getSpellForSide(s: Pick<GameState, 'readiedSpells'>, p: Pick<Player, 'id' | 'prepared'>, card: Card, side: SpellSide = 'LIGHT'): Card {
- if (side === 'DARK') return getDarkSideSpell(card);
- return ['TRAP', 'PROTECTION'].includes(getSpellType(card)) ? card : getEffectiveSpell(s, p, card);
+ const face = side === 'DARK' ? getDarkSideSpell(card) : card;
+ return ['TRAP', 'PROTECTION'].includes(getSpellType(face)) ? face : getEffectiveSpell(s, p, face);
 }
 
 const peakOfAgonyMoments=():Moment[]=>[
@@ -191,7 +193,12 @@ export function upgradeLegacyCards(value: unknown): void {
  const dark = node.kind === 'SPELL' ? node.darkSide as { range: number | null } | undefined : undefined;
  if (dark && dark.range === null) dark.range = Number.POSITIVE_INFINITY;
  // Saved Agony cards predate their dark sides.
- if (node.kind === 'SPELL' && !node.darkSide && typeof node.name === 'string' && AGONY_DARK_SIDES[node.name] && (node.schoolId === 'agony' || String(node.id).startsWith('agony-'))) node.darkSide = structuredClone(AGONY_DARK_SIDES[node.name]);
+ // Saved Agony and Alchemy cards predate their dark sides.
+ if (node.kind === 'SPELL' && !node.darkSide && typeof node.name === 'string') {
+  const isSchool = (id: string) => node.schoolId === id || String(node.id).startsWith(`${id}-`);
+  if (AGONY_DARK_SIDES[node.name] && isSchool('agony')) node.darkSide = structuredClone(AGONY_DARK_SIDES[node.name]);
+  else if (ALCHEMY_DARK_SIDES[node.name] && isSchool('alchemy')) node.darkSide = structuredClone(ALCHEMY_DARK_SIDES[node.name]);
+ }
  if(node.kind==='SPELL'&&node.name==='Pain Mark'&&(node.schoolId==='agony'||String(node.id).startsWith('agony-'))) {
   const ongoing=node.ongoing as Card['ongoing'];
   if(ongoing?.trigger.event==='DAMAGE_DEALT'&&!ongoing.trigger.damageOrigins) {
@@ -219,9 +226,9 @@ export const shuffle = <T>(items: T[], random:()=>number = Math.random): T[] => 
 };
 
 // TODO: those are placeholders
-const AGONY_ELEMENTS: Element[] = ['evil', 'fire', 'stars', 'water', 'fire', 'evil', 'wild', 'earth', 'good', 'evil', 'air', 'water'];
-const TECHNOMANCY_ELEMENTS: Element[] = ['earth', 'water', 'air', 'stars', 'fire', 'evil', 'earth', 'wild', 'good', 'stars', 'air', 'fire'];
-const SHAMANIC_ELEMENTS: Element[] = ['good', 'good', 'earth', 'good', 'fire', 'water', 'good', 'wild', 'water', 'earth', 'fire', 'water'];
+const AGONY_ELEMENTS: Element[] = ['evil', 'evil', 'water', 'air', 'fire', 'air', 'evil', 'fire', 'water', 'evil', 'wild', 'water'];
+const TECHNOMANCY_ELEMENTS: Element[] = ['earth', 'stars', 'fire', 'stars', 'fire', 'evil', 'earth', 'fire', 'evil', 'earth', 'wild', 'stars'];
+const SHAMANIC_ELEMENTS: Element[] = ['good', 'wild', 'earth', 'air', 'fire', 'water', 'good', 'water', 'wild', 'water', 'earth', 'fire'];
 
 // Dark sides of the Agony school, keyed by card name. Amounts that depend on wounds use `scale`.
 const AGONY_DARK_SIDES: Record<string, DarkSide> = {
@@ -333,6 +340,52 @@ export function createTechnomancyDeck(prefix: string, schoolId?: string): Card[]
  return Array.from({ length: 36 }, (_, i) => ({ ...patterns[i % patterns.length], element: TECHNOMANCY_ELEMENTS[i % patterns.length], id: `${prefix}-${i + 1}`, kind: 'SPELL', ...(schoolId ? {schoolId} : {}) }));
 }
 
+// Dark sides of the Alchemy school, keyed by card name. Each side has its own element, enhancement and rules.
+const revealed = (element: Element): NonNullable<Moment['scale']> => ({ from: 'REVEALED_ELEMENT', per: 1, each: 1, element });
+const ALCHEMY_DARK_SIDES: Record<string, DarkSide> = {
+ 'Azoth Bomb': { moments: [{ effect: 'DAMAGE', amount: 2 }], range: 1, target: 'ROOM', element: 'air', spellType: 'COMBAT',
+  enhancement: { requires: ['earth'], moments: [{ effect: 'DAMAGE', amount: 0, scale: revealed('earth') }], position: 'BEFORE', text: 'Enhancement (earth): first inflict 1 damage for each earth or wild symbol on your other revealed spells.' },
+  rulesText: 'Inflict 2 damage on every enemy model in the target room.' },
+ 'Viatorium Spagyricum': { moments: [{ effect: 'DAMAGE', amount: 2 }], range: 2, target: 'MODEL', element: 'air', spellType: 'COMBAT',
+  enhancement: { requires: ['water'], moments: [{ effect: 'DAMAGE', amount: 2 }], position: 'BEFORE', text: 'Enhancement (water): first inflict 2 damage.' },
+  rulesText: 'Inflict 2 damage.' },
+ 'Deflagrate': { moments: [{ effect: 'DAMAGE', amount: 1 }, { effect: 'INSTABILITY', amount: 2 }], range: 1, target: 'ROOM', element: 'water', spellType: 'COMBAT',
+  enhancement: { requires: ['fire'], moments: [{ effect: 'DAMAGE', amount: 1 }], position: 'BEFORE', text: 'Enhancement (fire): first inflict 1 damage.' },
+  rulesText: 'Inflict 1 damage on every enemy model in the target room, then place 2 instability there.' },
+ 'Athanor Eruption': { moments: [{ effect: 'DAMAGE', amount: 2 }], range: 2, target: 'MODEL', element: 'fire', spellType: 'COMBAT',
+  enhancement: { requires: ['air'], moments: [{ effect: 'INSTABILITY', amount: 0, scale: revealed('air') }], position: 'BEFORE', text: 'Enhancement (air): first place 1 instability in the target\u2019s room for each air or wild symbol on your other revealed spells.' },
+  rulesText: 'Inflict 2 damage.' },
+ 'Marbling': { moments: [{ effect: 'DAMAGE', amount: 1 }], range: 2, target: 'ROOM', element: 'earth', spellType: 'COMBAT',
+  enhancement: { requires: ['water'], moments: [{ effect: 'INSTABILITY', amount: 2 }], position: 'BEFORE', text: 'Enhancement (water): first place 2 instability in the target room.' },
+  rulesText: 'Inflict 1 damage on every enemy model in the target room.' },
+ 'Stone Phoenix': { moments: [], range: Number.POSITIVE_INFINITY, target: 'ROOM', element: 'fire', spellType: 'TRAP',
+  trigger: { event: 'EVOCATION_LOST', relation: 'ANY', relationTo: 'EVENT_MODEL', scope: 'ANY' }, triggerTarget: 'EVENT_ROOM',
+  triggerText: 'When any evocation is defeated or removed',
+  triggerEffects: [{ effect: 'SUMMON', kind: 'EVENT_MODEL', position: 'EVENT', target: 'OWNER' }, { effect: 'ACTIVATE_EVOCATION', kind: 'EVENT_MODEL', target: 'OWNER' }],
+  rulesText: 'Summon an evocation of the same kind as the lost one in the room where it was lost, under your control, and activate it.' },
+ 'Soul Transfer': { moments: [{ effect: 'REMOVE_EVOCATION', archetype: 'CONSTRUCT' }, { effect: 'SUMMON', kind: 'CHOICE', maxHealth: 3, position: 'REMOVED', when: 'EVOCATION_REMOVED' }], range: 1, target: 'ROOM', element: 'wild', spellType: 'CONTINGENCY',
+  rulesText: 'You may remove one of your constructs in the target room. If you do, choose and summon an evocation with at most 3 health in that room.' },
+ 'Liquid Fire': { moments: [{ effect: 'DAMAGE', amount: 1 }, { effect: 'SUMMON', kind: 'NIGREDO', position: 'CASTER' }], range: 0, target: 'ROOM', element: 'fire', spellType: 'COMBAT',
+  enhancement: { requires: ['water'], moments: [{ effect: 'ACTIVATE_CHOICE', archetype: 'CONSTRUCT', movementBonus: 1 }], position: 'AFTER', text: 'Enhancement (water): then one of your constructs activates with +1 movement.' },
+  rulesText: 'Inflict 1 damage on every enemy model in your room, then summon a Nigredo there.' },
+ 'Fountain of the Three': { moments: [], range: Number.POSITIVE_INFINITY, target: 'ROOM', element: 'water', spellType: 'TRAP',
+  rulesText: 'No effect yet.' },
+ 'Purifying Aludel': { moments: [{ effect: 'ACTIVATE_TARGET' }], range: Number.POSITIVE_INFINITY, target: 'EVOCATION', element: 'air', spellType: 'CONTINGENCY',
+  rulesText: 'The target evocation activates under your control.' },
+ 'Albify': { moments: [{ effect: 'CONVERT', amount: 3, scope: 'TARGET_ROOM' }], range: 2, target: 'ROOM', element: 'water', spellType: 'COMBAT',
+  enhancement: { requires: ['fire'], moments: [{ effect: 'DAMAGE', amount: 1 }], position: 'BEFORE', text: 'Enhancement (fire): first inflict 1 damage on every enemy model in the target room.' },
+  rulesText: 'Convert 3 damage on every model in the target room.' },
+ 'Silver of the Sages': { moments: [], range: Number.POSITIVE_INFINITY, target: 'ROOM', element: 'wild', spellType: 'PROTECTION',
+  trigger: { event: 'MAGE_DEFEATED', relation: 'SELF', relationTo: 'EVENT_MODEL', scope: 'ANY' }, triggerTarget: 'EVENT_ROOM',
+  triggerText: 'When you are defeated',
+  triggerEffects: [
+   { effect: 'ACTIVATE_CHOICE', archetype: 'CONSTRUCT', target: 'OWNER', choose: { group: 'silver', option: 'activate', label: 'Activate a construct' } },
+   { effect: 'GAIN_VP', amount: 1, target: 'OWNER', choose: { group: 'silver', option: 'summon', label: 'Gain 1 VP and summon a Nigredo' } },
+   { effect: 'SUMMON', kind: 'NIGREDO', position: 'TARGET', target: 'EVENT_ROOM', choose: { group: 'silver', option: 'summon', label: 'Gain 1 VP and summon a Nigredo' } },
+  ],
+  rulesText: 'Choose one: one of your constructs activates; or gain 1 VP and summon a Nigredo in the room where you were defeated.' },
+};
+
 export function createAlchemyDeck(prefix: string, schoolId?: string): Card[] {
  const m = moment;
  const patterns: Omit<Card, 'id' | 'kind'>[] = [
@@ -376,7 +429,7 @@ export function createAlchemyDeck(prefix: string, schoolId?: string): Card[] {
    trigger: { event: 'DAMAGE_TAKEN', relation: 'SELF', relationTo: 'EVENT_MODEL', scope: 'BOUND_MODEL' },
     triggerEffects: [{ effect: 'HEAL', amount: 2, target: 'EVENT_MODEL' }, { effect: 'ACTIVATE_CHOICE', endDamage: 1, target: 'OWNER' }] },
  ];
- return Array.from({ length: 36 }, (_, i) => ({ ...patterns[i % patterns.length], id: `${prefix}-${i + 1}`, kind: 'SPELL', ...(schoolId ? {schoolId} : {}) }));
+ return Array.from({ length: 36 }, (_, i) => { const pattern = patterns[i % patterns.length]; return { ...pattern, darkSide: structuredClone(ALCHEMY_DARK_SIDES[pattern.name]), id: `${prefix}-${i + 1}`, kind: 'SPELL' as const, ...(schoolId ? {schoolId} : {}) }; });
 }
 
 export function createNightmareDeck(prefix: string, schoolId?: string): Card[] {
