@@ -154,8 +154,7 @@ export type TriggeredInstruction = Moment & { target: 'BOUND_MODEL' | 'BOUND_ROO
 // enhancement moments are added (before or after the printed ones) and may override the target.
 export type Enhancement = { requires: Element[]; moments?: Moment[]; position?: 'BEFORE' | 'AFTER'; target?: SpellTarget; range?: number; suppressReactions?: boolean; text: string };
 // Extra printed restrictions on the chosen model.
-// `includeSelf`: a Mage-target spell that may also choose the caster's own mage ("any mage").
-export type TargetFilter = { own?: boolean; archetype?: 'CONSTRUCT' | 'DEMON'; maxHealth?: number; sameRoom?: boolean; includeSelf?: boolean };
+export type TargetFilter = { own?: boolean; archetype?: 'CONSTRUCT' | 'DEMON'; maxHealth?: number; sameRoom?: boolean };
 // triggerText is optional display copy only; trigger conditions govern matching.
 // `effects` are resolved in order. An unstable card starts with a PLACE Effect ("place 1 instability in the
 // caster's current room") followed by its MAIN Effect, so quests and triggers that count Effects (not

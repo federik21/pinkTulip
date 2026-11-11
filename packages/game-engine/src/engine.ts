@@ -628,11 +628,11 @@ function drawQuest(s:GameState) {
 // stored in GameState; a root action remains a single clone/commit boundary.
 type ModelSnapshot = { id:string; playerId:string; kind:'MAGE'|'EVOCATION'; generation:number };
 // Local to a single effect, so a nested spell cannot replace its summoned model.
-type EffectResolution = { casterSeen?:{position:Hex}; choices?:Record<string,string>; assigned?:string[]; eventActor?:ModelSnapshot; summoned?:ModelSnapshot; activationIsExplicit:boolean; upgraded?:boolean; removed?:{position:Hex;attack:number;roomId?:string}; eventPosition?:Hex; eventKind?:EvocationKind; damaged?:ModelSnapshot[]; blackDamaged?:Record<string,number>; moved?:ModelSnapshot; spellEvent?:SpellEvent; unconverted?:number; instabilityPlaced?:number; protectedTargets?:Set<string>; vpLost?:number; healed?:number; upgradeDiscarded?:boolean };
+type EffectResolution = { casterSeen?:{position:Hex}; choices?:Record<string,string>; assigned?:string[]; eventActor?:ModelSnapshot; summoned?:ModelSnapshot; activationIsExplicit:boolean; upgraded?:boolean; removed?:{position:Hex;attack:number;roomId?:string}; eventPosition?:Hex; eventKind?:EvocationKind; damaged?:ModelSnapshot[]; blackDamaged?:Record<string,number>; moved?:ModelSnapshot; spellEvent?:SpellEvent; unconverted?:number; instabilityPlaced?:number; protectedTargets?:Set<string>; vpLost?:number; healed?:number; upgradeDiscarded?:boolean; painResolved?:boolean; trapsAtStart?:number };
 type SpellEvent = { event:TriggerEvent; model?:ModelSnapshot; actor?:ModelSnapshot; roomId?:string; target?:FeedbackTarget; damageOrigin?:DamageOrigin; amount?:number; position?:Hex; kind?:EvocationKind; spellType?:Card['spellType']; sourceCard?:Card; moment?:string; prevented?:{value:boolean}; afterResolution?:()=>void };
 type PendingMageDefeat = { ref:ModelSnapshot; roomId?:string; target:FeedbackTarget; source?:Player; liquefyThePain?:boolean };
 type ReplayEntropy={ids:string[];random:number[]};
-type InstructionContext = { generations:Map<string,number>; bindings:Map<string,ModelSnapshot>; defeats:Map<string,PendingMageDefeat>; resolutions:number; interruptId?:string; answers:DecisionAnswer[]; cursor:number; momentDepth:number; events:SpellEvent[]; entropy:ReplayEntropy; idCursor:number; randomCursor:number; suppress?:boolean; resolving?:{sourceCard?:Card;moment?:string}; frames?:GameState[]; frameKey?:string };
+type InstructionContext = { generations:Map<string,number>; bindings:Map<string,ModelSnapshot>; defeats:Map<string,PendingMageDefeat>; resolutions:number; interruptId?:string; answers:DecisionAnswer[]; cursor:number; momentDepth:number; events:SpellEvent[]; entropy:ReplayEntropy; idCursor:number; randomCursor:number; suppress?:boolean; trapsTriggered?:number; resolving?:{sourceCard?:Card;moment?:string}; frames?:GameState[]; frameKey?:string };
 const instructionContexts=new WeakMap<GameState,InstructionContext>();
 const context=(s:GameState)=>instructionContexts.get(s)!;
 // IDs and random outcomes encountered before a pause must be identical on
@@ -717,6 +717,7 @@ function scaledAmount(s:GameState,owner:Player,step:{amount?:number;scale?:Amoun
   case 'DAMAGED_BLACK_DAMAGE':count=Object.values(effect?.blackDamaged??{}).reduce((total,n)=>total+n,0);break;
   case 'REVEALED_ELEMENT':count=card&&scale.element?getRevealedElements(s,owner,card).filter(element=>element===scale.element||element==='wild').length:0;break;
   case 'HEALED':count=effect?.healed??0;break;
+  case 'TARGET_NIGHTMARES':{const mage=liveModel(s,target)?.mage;count=mage?nightmaresOf(s,mage.id).length:0;break;}
  }
  const extra=Math.floor(count/scale.per)*scale.each;
  return base+(scale.max===undefined?extra:Math.min(extra,scale.max));
@@ -851,7 +852,19 @@ function resolveInstructionBody(s:GameState,owner:Player,instruction:TriggeredIn
   // Reactive movement of the bound model (e.g. a model that just entered the owner's room).
   const source=context(s).resolving?.sourceCard;
   if(target&&ref&&source&&(target.mage||instruction.models))chooseMove(s,owner,source,ref,instruction.distance);
- } else if(instruction.effect==='ACTIVATE_TARGET'||instruction.effect==='REMOVE_EVOCATION'||instruction.effect==='REMOVED_BLAST'||instruction.effect==='LOOK_LIBRARY'||instruction.effect==='ACTIVATE_ROOM'||instruction.effect==='ATTACK_BONUS'||instruction.effect==='MOVE_DAMAGED'||instruction.effect==='LOSE_VP'||instruction.effect==='ASSIGN_NIGHTMARE'||instruction.effect==='ASSIGN_PER_EVENT'||instruction.effect==='ACTIVATE_NIGHTMARES'||instruction.effect==='REASSIGN_NIGHTMARES'||instruction.effect==='STEAL_VP'||instruction.effect==='FIRST_PLAYER'||instruction.effect==='DISCARD_CARDS'||instruction.effect==='ACTIVATE_ROOM_IF_NIGHTMARE'||instruction.effect==='INSTABILITY_PER_NIGHTMARE'||instruction.effect==='DRAW_EVENT'||instruction.effect==='GAIN_VP_PER_NIGHTMARE') {
+ } else if(instruction.effect==='ACTIVATE_NIGHTMARES'&&instruction.of==='TARGET') {
+  // Recurring Nightmare: every Nightmare assigned to the bound mage activates under the owner's control.
+  const mage=target?.mage;
+  const list=mage?nightmaresOf(s,mage.id):[];
+  if(!list.length)s.log.push('No Nightmare to activate.');
+  for(const umbra of list)activateNightmare(s,umbra,owner,instruction.attackBonus??0);
+ } else if(instruction.effect==='STEAL_CROWN_OR_VP') {
+  // Persecution: take the first player token; a mage that does not hold it loses victory points instead.
+  const mage=target?.mage;
+  if(!mage||mage.id===owner.id)return;
+  if(s.firstPlayerId===mage.id){s.firstPlayerId=owner.id;s.log.push(`${owner.name} steals the first player token from ${mage.name}.`);}
+  else stealVictoryPoints(s,owner,mage,instruction.amount);
+ } else if(instruction.effect==='ACTIVATE_TARGET'||instruction.effect==='REMOVE_EVOCATION'||instruction.effect==='REMOVED_BLAST'||instruction.effect==='LOOK_LIBRARY'||instruction.effect==='ACTIVATE_ROOM'||instruction.effect==='ATTACK_BONUS'||instruction.effect==='MOVE_DAMAGED'||instruction.effect==='LOSE_VP'||instruction.effect==='ASSIGN_NIGHTMARE'||instruction.effect==='ASSIGN_PER_EVENT'||instruction.effect==='ACTIVATE_NIGHTMARES'||instruction.effect==='REASSIGN_NIGHTMARES'||instruction.effect==='STEAL_VP'||instruction.effect==='FIRST_PLAYER'||instruction.effect==='DISCARD_CARDS'||instruction.effect==='ACTIVATE_ROOM_IF_NIGHTMARE'||instruction.effect==='INSTABILITY_PER_NIGHTMARE'||instruction.effect==='DRAW_EVENT'||instruction.effect==='GAIN_VP_PER_NIGHTMARE'||instruction.effect==='MOVE_ROOM_MAGE'||instruction.effect==='GAIN_VP_PER_TRAP'||instruction.effect==='DEFEAT_TARGET'||instruction.effect==='DRAW_QUESTS_PER_NIGHTMARE') {
   // Spell moments only; triggered instructions never use these.
  } else if(instruction.effect==='PREVENT_SPELL') {
   if(effect?.spellEvent?.prevented)effect.spellEvent.prevented.value=true;
@@ -1047,12 +1060,26 @@ function resolveEvent(s:GameState,event:SpellEvent) {
    cardName:active.card.name,spellType:getSpellType(active.card),trigger:event.event,ongoing,
   effects:[...(!ongoing&&isUnstable(active.card)?[describeInstruction(PRINTED_INSTABILITY)]:[]),...(!ongoing&&getMainMoments(active.card).length?getMainMoments(active.card).map(step=>describeInstruction({...step,target:active.card.target==='ROOM'?'BOUND_ROOM':'BOUND_MODEL'})):instructions.map(describeInstruction))],...(target?{target}:{}),...(roomId?{roomId}:{})});
   const ownerRef=snapshot(s,owner.id);
+  const isTrap=!ongoing&&getSpellType(active.card)==='TRAP';
+  if(isTrap)context(s).trapsTriggered=(context(s).trapsTriggered??0)+1;
   const previousInterruptId=context(s).interruptId;
   context(s).interruptId=trigger.id;
   try {
+    // A Trap targets every enemy model it resolves against; Protections may ignore that.
+    const trapProtected=new Set<string>();
+    if(isTrap) {
+     const affected=bound?[bound]:room?roomOccupants(s,room):[];
+     for(const model of affected) {
+      if(model.playerId===owner.id||!liveModel(s,model))continue;
+      const prevented={value:false};
+      emitEvent(s,{event:'SPELL_TARGETED',actor:ownerRef,model,roomId:modelFeedbackTarget(s,model)?.roomId,spellType:'TRAP',sourceCard:active.card,prevented});
+      if(prevented.value)trapProtected.add(model.id);
+     }
+    }
     if(!ongoing && getMainMoments(active.card).length) {
      const refs=selectedRef?[selectedRef]:selectedRoom?[...s.players.filter(p=>inRoom(p,selectedRoom)).map(p=>snapshot(s,p.id)!),...s.evocations.filter(e=>selectedRoom.tiles.some(h=>hexKey(h)===hexKey(e.position))).map(e=>snapshot(s,e.id)!)]:[];
-     resolveEffectMoments(s,owner,active.card,selectedRoom??room,refs,ownerRef!,'SPELL',new Set<string>(),false,event);
+     const preventMain=active.card.target!=='ROOM'&&refs.length===1&&trapProtected.has(refs[0].id);
+     resolveEffectMoments(s,owner,active.card,selectedRoom??room,refs,ownerRef!,'SPELL',trapProtected,preventMain,event);
     } else {
    const effect:EffectResolution={activationIsExplicit:instructions.some(step=>step.effect==='ACTIVATE_EVOCATION'),eventPosition:event.position,eventKind:event.kind,eventActor:event.actor,spellEvent:event};
   if(!ongoing&&isUnstable(active.card)) {
@@ -1060,7 +1087,7 @@ function resolveEvent(s:GameState,event:SpellEvent) {
    resolveInstabilityEffect(s,owner,active.card,ownerRef,effects,{position:{...owner.wizard.position}});
    if(instructions.length)s.log.push(`Effect 2/${effects} · ${active.card.name}: main effect.`);
   }
-  const protectedTargets=new Set<string>();
+  const protectedTargets=new Set<string>(trapProtected);
   const spellTargets=ongoing&&getSpellType(active.card)==='COMBAT'&&instructions.some(step=>step.effect==='DAMAGE')
    ?bound?[bound]:room?roomOccupants(s,room).map(model=>snapshot(s,model.id)!):[]
    :[];
@@ -1118,7 +1145,7 @@ function resolveEvent(s:GameState,event:SpellEvent) {
 function amountLabel(instruction:{amount?:number;scale?:AmountScale},unit:string):string {
  const scale=instruction.scale,base=instruction.amount??0;
  if(!scale)return `${base} ${unit}`;
- const sources:Record<AmountScale['from'],string>={CASTER_BLACK_DAMAGE:'BR damage on the caster’s mage',CASTER_DAMAGE:'damage on the caster’s mage',TARGET_DAMAGE:'damage on the target',EVENT_AMOUNT:'damage suffered',DAMAGED_BLACK_DAMAGE:'BR damage on the models damaged by this effect',REVEALED_ELEMENT:`${scale.element??'matching'} symbol (or wild) on the caster’s other revealed spells`,HEALED:'damage healed by this effect'};
+ const sources:Record<AmountScale['from'],string>={CASTER_BLACK_DAMAGE:'BR damage on the caster’s mage',CASTER_DAMAGE:'damage on the caster’s mage',TARGET_DAMAGE:'damage on the target',EVENT_AMOUNT:'damage suffered',DAMAGED_BLACK_DAMAGE:'BR damage on the models damaged by this effect',REVEALED_ELEMENT:`${scale.element??'matching'} symbol (or wild) on the caster’s other revealed spells`,HEALED:'damage healed by this effect',TARGET_NIGHTMARES:'Nightmare assigned to the target'};
  const source=sources[scale.from];
  return `${base>0?`${base} plus `:''}${scale.each} ${unit} for each ${scale.per>1?`${scale.per} `:''}${source}${scale.max!==undefined?` (up to ${scale.max} in total)`:''}`;
 }
@@ -1135,7 +1162,7 @@ function describeInstructionBody(instruction:TriggeredInstruction):string {
   case 'CONVERT':return `Convert up to ${instruction.amount} ${instruction.amount===1?'cube':'cubes'} on ${instruction.scope==='TARGET_ROOM'?'every model in the target room':target} to the owner’s color.`;
   case 'BLACK_ROSE_CONVERT':return `Convert the last ${instruction.amount} damage cubes received from other mages on ${target} to BR black${instruction.scope==='CASTER'?'':' (ignored on friendly models)'}.`;
   case 'INSTABILITY':return `Place up to ${amountLabel(instruction,'instability')} in ${target}.`;
-  case 'PAIN':return `BR inflicts ${amountLabel(instruction,instruction.amount===1&&!instruction.scale?'damage cube':'damage cubes')} on the resolving mage.`;
+  case 'PAIN':return `${instruction.optional?'You may let ':''}BR inflict${instruction.optional?'':'s'} ${amountLabel(instruction,instruction.amount===1&&!instruction.scale?'damage cube':'damage cubes')} on the resolving mage.`;
   case 'SUMMON':return `Summon ${instruction.kind==='EVENT_MODEL'?'the lost model':instruction.kind==='CHOICE'?`an evocation of your choice${instruction.maxHealth!==undefined?` with at most ${instruction.maxHealth} health`:''}`:`a ${EVOCATION_TYPES[instruction.kind].name}`} ${instruction.position==='TARGET'?'in the target’s room':instruction.position==='EVENT'?'where it stood':instruction.position==='REMOVED'?'in the same room':instruction.position==='CHOICE'?'in a room of your choice':'at the owner’s position'}${instruction.kind==='SUCCUBUS'?' and activate it':''}.`;
   case 'ACTIVATE_EVOCATION':return `Activate the summoned ${instruction.kind==='EVENT_MODEL'?'model':EVOCATION_TYPES[instruction.kind].name}: move and attack in either order, or use only one, without spending another action or token.`;
   case 'ACTIVATE_TARGET':return 'Activate the chosen evocation under your control: it takes your color, may attack its owner, and you and your evocations are immune to that damage.';
@@ -1156,6 +1183,11 @@ function describeInstructionBody(instruction:TriggeredInstruction):string {
   case 'MOVE_TARGET':return `Move ${target} up to ${instruction.distance} ${instruction.distance===1?'space':'spaces'}${instruction.models?' (mage or evocation)':''}.`;
   case 'ASSIGN_NIGHTMARE':return `Assign ${instruction.count??1} Umbra${(instruction.count??1)===1?'':'s'} to ${instruction.scope==='TARGET_ROOM'?`each ${instruction.others?'other ':''}mage in the target room`:target}; you choose each Umbra’s evocation slot.`;
   case 'ASSIGN_PER_EVENT':return 'For each event on the event board, assign an Umbra to a mage of your choice.';
+  case 'MOVE_ROOM_MAGE':return `Choose a mage in the target room and move it up to ${instruction.distance} ${instruction.distance===1?'space':'spaces'}.`;
+  case 'GAIN_VP_PER_TRAP':return 'Gain 1 victory point for each Trap triggered during this effect.';
+  case 'STEAL_CROWN_OR_VP':return `Steal the first player token from ${targets[instruction.target]}; if it does not hold it, steal ${instruction.amount} victory ${instruction.amount===1?'point':'points'} from it instead.`;
+  case 'DEFEAT_TARGET':return `Defeat ${target}.`;
+  case 'DRAW_QUESTS_PER_NIGHTMARE':return 'Draw 1 quest for each Nightmare in the game, then discard one of the quests just drawn.';
   case 'ACTIVATE_NIGHTMARES':return `Activate ${instruction.of==='ASSIGNED'?'the Umbra just assigned':instruction.of==='ALL'?'each Nightmare in the game':'each Nightmare assigned to the target'} under your control${instruction.attackBonus?` with +${instruction.attackBonus} attack`:''}.`;
   case 'REASSIGN_NIGHTMARES':return 'Reassign every other Umbra to the target.';
   case 'STEAL_VP':return `Steal ${instruction.amount} victory ${instruction.amount===1?'point':'points'} from ${target}.`;
@@ -2912,7 +2944,7 @@ function resolveInstabilityEffect(s:GameState,owner:Player,spell:Card,actor:Mode
 }
 function resolveEffectMoments(s:GameState,caster:Player,spell:Card,room:Room|undefined,refs:ModelSnapshot[],actor:ModelSnapshot,damageOrigin:DamageOrigin='SPELL',protectedTargets=new Set<string>(),preventMainEffect=false,spellEvent?:SpellEvent) {
  const seen={position:{...caster.wizard.position}};
- const effect:EffectResolution={activationIsExplicit:getAllMoments(spell).some(step=>step.effect==='ACTIVATE_EVOCATION'),casterSeen:seen,protectedTargets,...(spellEvent?{spellEvent}:{})};
+ const effect:EffectResolution={activationIsExplicit:getAllMoments(spell).some(step=>step.effect==='ACTIVATE_EVOCATION'),casterSeen:seen,protectedTargets,trapsAtStart:context(s).trapsTriggered??0,...(spellEvent?{spellEvent}:{})};
  // The chosen model and where it stands, remembered while it is still on the board.
  const chosen=spell.target==='ROOM'?undefined:refs[0];
  let origin=chosen?liveModel(s,chosen)?.model.position:room?.tiles[0];
@@ -2937,6 +2969,8 @@ function resolveEffectMoments(s:GameState,caster:Player,spell:Card,room:Room|und
      if(step.when==='VP_LOST'&&!effect.vpLost)return 'no victory point was lost';
      if(step.when==='UPGRADE_DISCARDED'&&!effect.upgradeDiscarded)return 'no upgrade was discarded';
      if(step.when==='TARGET_UPGRADED'&&!live?.evocation?.upgrade)return 'the target has no upgrade';
+     if(step.when==='TARGET_HAS_3_NIGHTMARES'&&!(live?.mage&&nightmaresOf(s,live.mage.id).length>=3))return 'the target does not carry 3 Nightmares';
+     if(step.when==='PAIN_RESOLVED'&&!effect.painResolved)return 'no Pain was suffered';
      return undefined;
     },
     run:()=>{
@@ -2986,7 +3020,54 @@ function resolveMomentBody(s:GameState,caster:Player,spell:Card,step:Moment,room
  }
  if(effect.protectedTargets)refs=refs.filter(ref=>!effect.protectedTargets!.has(ref.id));
  if(step.effect==='PAIN') {
+  if(step.optional) {
+   const accepted=askChoice(s,caster.id,`optional-pain|${caster.id}|${spell.id}`,`${spell.name}: suffer ${step.amount} Pain?`,[{id:'PAIN',label:`Suffer ${step.amount} Pain`}],true);
+   if(accepted!=='PAIN'){s.log.push(`${caster.name} declines the Pain.`);return;}
+  }
   damage(s,caster,step.amount);
+  effect.painResolved=true;
+  return;
+ }
+ if(step.effect==='MOVE_ROOM_MAGE') {
+  const mages=room?s.players.filter(p=>p.wizard.alive&&inRoom(p,room)):[];
+  if(!mages.length){s.log.push(`${spell.name}: no mage in the target room.`);return;}
+  const id=mages.length===1?mages[0].id:askChoice(s,caster.id,`room-mage|${caster.id}|${spell.id}`,`${spell.name}: choose a mage in ${room!.name} to move.`,mages.map(p=>({id:p.id,label:p.name})))!;
+  const mage=mages.find(p=>p.id===id)??mages[0];
+  chooseMove(s,caster,spell,snapshot(s,mage.id)!,step.distance);
+  return;
+ }
+ if(step.effect==='GAIN_VP_PER_TRAP') {
+  const traps=(context(s).trapsTriggered??0)-(effect.trapsAtStart??0);
+  if(traps>0){awardVictoryPoints(s,caster.id,traps);s.log.push(`${caster.name} gains ${traps} VP from triggered Traps.`);}
+  else s.log.push(`${spell.name}: no Trap was triggered.`);
+  return;
+ }
+ if(step.effect==='DEFEAT_TARGET') {
+  for(const ref of refs) {
+   const mage=liveModel(s,ref)?.mage;
+   if(!mage||mage.id===caster.id)continue;
+   const remaining=Math.max(0,mage.wizard.health-mage.wizard.damageCubes);
+   if(remaining>0)damage(s,mage,remaining,caster,actor,damageOrigin);
+  }
+  return;
+ }
+ if(step.effect==='DRAW_QUESTS_PER_NIGHTMARE') {
+  const count=s.evocations.filter(isNightmare).length;
+  const drawn:Quest[]=[];
+  for(let i=0;i<count;i++) {
+   const quest=drawQuest(s);
+   if(!quest){s.log.push(`${spell.name}: no more quest cards are available.`);break;}
+   drawn.push(quest);
+   if(caster.quest)caster.additionalQuests.push(quest);else caster.quest=quest;
+  }
+  if(!drawn.length){s.log.push(`${spell.name}: no quest drawn.`);return;}
+  s.log.push(`${caster.name} draws ${drawn.length} quest${drawn.length===1?'':'s'}.`);
+  const id=drawn.length===1?drawn[0].id:askChoice(s,caster.id,`ephialtes-quest|${caster.id}|${spell.id}`,`${spell.name}: choose one of the drawn quests to discard.`,drawn.map(q=>({id:q.id,label:q.name})))!;
+  const discarded=drawn.find(q=>q.id===id)??drawn[0];
+  s.questDiscard.push(discarded);
+  if(caster.quest?.id===discarded.id)caster.quest=caster.additionalQuests.shift()??null;
+  else caster.additionalQuests=caster.additionalQuests.filter(q=>q.id!==discarded.id);
+  s.log.push(`${caster.name} discards the quest “${discarded.name}”.`);
   return;
  }
  if(step.effect==='SUMMON') {
@@ -3646,6 +3727,7 @@ function runAction(state: GameState, action: GameAction, answers: DecisionAnswer
     assert(action.preparedCardIds.length<=3 && ids.length>=2 && ids.length<=4 && new Set(ids).size===ids.length,'Choose 2 to 4 different spells, at most 3 numbered and 1 Quick');
    assert(ids.every(id=>p.hand.some(c=>c.id===id)),'Spell not in hand');
    assert(Object.keys(sides).every(id=>ids.includes(id)),'Choose a side only for the spells you prepare');
+   assert(Object.entries(sides).every(([id,side])=>side!=='DARK'||!p.hand.find(c=>c.id===id)?.lightOnly),'This spell has only a light side');
    const sideOf=(id:string):Partial<Pick<PreparedCard,'side'>>=>sides[id]==='DARK'?{side:'DARK'}:{};
    for(const [i,id] of action.preparedCardIds.entries()) {
     if(id===null)continue;

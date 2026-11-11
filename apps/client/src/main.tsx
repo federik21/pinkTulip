@@ -88,7 +88,7 @@ function renderAlphaMarkdown(markdown:string) {
 function SpellCard({card,label,selected,disabled,onClick,used=false,side,chooseSide=false,onSideChange}:{card:Card;label?:string;selected?:boolean;disabled?:boolean;onClick?:()=>void;used?:boolean;side?:SpellSide;chooseSide?:boolean;onSideChange?:(side:SpellSide)=>void}) {
  const sideIsChosen=side!==undefined&&!chooseSide;
  const showLight=!sideIsChosen||side==='LIGHT';
- const showDark=!sideIsChosen||side==='DARK';
+ const showDark=!card.lightOnly&&(!sideIsChosen||side==='DARK');
  const lightType=getSpellType(card);
  const className=`spell ${card.powerful?'powerful':''} ${selected?'chosen':''} ${used?'used':''} ${disabled?'is-disabled':''} ${chooseSide?'side-choice':''}`;
  const instability=isUnstable(card)&&<span className="spell-instability-note">◆ 1 instability · caster’s room</span>;

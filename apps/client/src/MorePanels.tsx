@@ -51,6 +51,11 @@ function rewardMoment(moment:Moment):string {
   case 'BLACK_ROSE_ALTAR_TITHE':return 'Optional Altar damage for BR VP';
   case 'IGNORE_DAMAGE':return `Ignore ${moment.amount} damage`;
   case 'REDIRECT_DAMAGE':return 'Redirect the damage to an evocation';
+  case 'MOVE_ROOM_MAGE':return `Move a mage in the target room ${moment.distance}`;
+  case 'GAIN_VP_PER_TRAP':return 'Gain VP per Trap triggered';
+  case 'STEAL_CROWN_OR_VP':return `Steal the first player token or ${moment.amount} VP`;
+  case 'DEFEAT_TARGET':return 'Defeat the target';
+  case 'DRAW_QUESTS_PER_NIGHTMARE':return 'Draw quests per Nightmare, discard one';
   default:return `${{DAMAGE:'Damage',HEAL:'Heal',CONVERT:'Convert',BLACK_ROSE_CONVERT:'BR convert',INSTABILITY:'Instability',PAIN:'Pain'}[moment.effect]} ${moment.amount}`;
  }
 }

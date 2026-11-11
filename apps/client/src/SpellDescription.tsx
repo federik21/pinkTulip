@@ -11,6 +11,8 @@ function momentConditionText(when: Moment['when']) {
   case 'VP_LOST':return 'If VP lost · ';
   case 'UPGRADE_DISCARDED':return 'If upgrade discarded · ';
   case 'TARGET_UPGRADED':return 'If target has an upgrade · ';
+  case 'TARGET_HAS_3_NIGHTMARES':return 'If target has 3 Nightmares · ';
+  case 'PAIN_RESOLVED':return 'If you suffer the Pain · ';
   default:return '';
  }
 }
@@ -23,6 +25,7 @@ const SCALE_SOURCES: Record<AmountScale['from'], string> = {
  DAMAGED_BLACK_DAMAGE: 'BR damage on the models damaged',
  REVEALED_ELEMENT: 'symbol (or wild) on your other revealed spells',
  HEALED: 'damage healed by this effect',
+ TARGET_NIGHTMARES: 'Nightmare assigned to the target',
 };
 function scaleSource(scale: AmountScale) {
  return scale.from === 'REVEALED_ELEMENT' && scale.element ? `${scale.element} ${SCALE_SOURCES.REVEALED_ELEMENT}` : SCALE_SOURCES[scale.from];
@@ -43,7 +46,7 @@ function MomentChipBody({moment,target}:{moment:Moment;target:Card['target']}) {
  const prefix=momentConditionText(moment.when);
  switch(moment.effect) {
   case 'DAMAGE':return <span>⚔ {prefix}Inflict {amountText(moment)}{moment.area?moment.area.choose?` · a different model within range ${moment.area.range} of target`:` · each other mage within range ${moment.area.range} of target`:moment.scope==='TARGET_ROOM'?' · every model in target room':moment.scope==='CASTER_ROOM'?' · enemy models in your room':target==='ROOM'?' · enemy models in target room':''}</span>;
-  case 'PAIN':return <span>✦ {prefix}Pain {amountText(moment)}</span>;
+  case 'PAIN':return <span>✦ {prefix}{moment.optional?'May suffer ':''}Pain {amountText(moment)}</span>;
   case 'INSTABILITY':return <span>◆ {prefix}{amountText(moment)} instability{moment.scope==='CASTER_ROOM'?' · caster’s room':target==='ROOM'?' · target room':''}</span>;
   case 'HEAL':return <span className="heal-effect">♥ {prefix}{moment.amount} heal{moment.scope==='TARGET_ROOM'?' · all models in target room':''}</span>;
   case 'CONVERT':return <span className="convert-effect">↻ {prefix}{moment.amount} convert · {moment.scope==='TARGET_ROOM'?'damage on every model in target room':target==='ROOM'?'room cubes':'damage cubes'}</span>;

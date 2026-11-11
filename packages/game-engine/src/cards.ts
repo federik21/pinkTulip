@@ -205,6 +205,10 @@ export function upgradeLegacyCards(value: unknown): void {
   if (AGONY_DARK_SIDES[node.name] && isSchool('agony')) node.darkSide = structuredClone(AGONY_DARK_SIDES[node.name]);
   else if (ALCHEMY_DARK_SIDES[node.name] && isSchool('alchemy')) node.darkSide = structuredClone(ALCHEMY_DARK_SIDES[node.name]);
   else if (TECHNOMANCY_DARK_SIDES[node.name] && isSchool('technomancy')) node.darkSide = structuredClone(TECHNOMANCY_DARK_SIDES[node.name]);
+  else if (isSchool('nightmare')) {
+   if (NIGHTMARE_DARK_SIDES[node.name]) node.darkSide = structuredClone(NIGHTMARE_DARK_SIDES[node.name]);
+   else if (['Shifting Nightmare', 'Mental Chasm', 'Shadow Blast'].includes(node.name)) node.lightOnly = true;
+  }
  }
  if(node.kind==='SPELL'&&node.name==='Pain Mark'&&(node.schoolId==='agony'||String(node.id).startsWith('agony-'))) {
   const ongoing=node.ongoing as Card['ongoing'];
@@ -513,8 +517,39 @@ export function createNightmareDeck(prefix: string, schoolId?: string): Card[] {
   { name: 'Ephialtes', element: 'evil', spellType: 'CONTINGENCY', range: 0, target: 'SELF', effects: unstableEffects([{ effect: 'DRAW_EVENT' }, { effect: 'ASSIGN_PER_EVENT' }, { effect: 'GAIN_VP_PER_NIGHTMARE', max: 5 }]),
    rulesText: 'Draw an event. For each event on the event board, assign an Umbra to a mage. Gain 1 victory point for each Nightmare in the game, up to 5.' },
  ];
- return Array.from({ length: 36 }, (_, i) => ({ ...patterns[i % patterns.length], id: `${prefix}-${i + 1}`, kind: 'SPELL', ...(schoolId ? {schoolId} : {}) }));
+ return Array.from({ length: 36 }, (_, i) => {
+  const pattern = patterns[i % patterns.length];
+  const dark = NIGHTMARE_DARK_SIDES[pattern.name];
+  return { ...pattern, ...(dark ? { darkSide: structuredClone(dark) } : { lightOnly: true }), id: `${prefix}-${i + 1}`, kind: 'SPELL' as const, ...(schoolId ? {schoolId} : {}) };
+ });
 }
+
+// Dark sides of the Nightmare school, keyed by card name. Shifting Nightmare, Mental Chasm and Shadow Blast
+// have no dark side (`lightOnly`). "Mage N" targets use N as the range.
+const NIGHTMARE_DARK_SIDES: Record<string, DarkSide> = {
+ 'Hysterical Escape': { moments: [{ effect: 'MOVE_ROOM_MAGE', distance: 1 }, { effect: 'MOVE_ROOM_MAGE', distance: 1 }, { effect: 'GAIN_VP_PER_TRAP' }], range: 2, target: 'ROOM', element: 'air', spellType: 'CONTINGENCY',
+  rulesText: 'Move a mage in the target room up to 1, then again up to 1. Gain 1 VP for each Trap triggered during this effect.' },
+ 'Thorn of Thorns': { moments: [{ effect: 'DRAW_SPELLS', amount: 1 }, { effect: 'GAIN_VP', amount: 1 }, { effect: 'FIRST_PLAYER', scope: 'CASTER' }, { effect: 'PAIN', amount: 2 }], range: 0, target: 'SELF', element: 'stars', spellType: 'CONTINGENCY',
+  rulesText: 'Draw 1 spell, gain 1 VP and take the first player token. BR inflicts 2 damage on you.' },
+ 'Persecution': { moments: [], range: 0, target: 'SELF', element: 'evil', spellType: 'PROTECTION',
+  trigger: { event: 'SPELL_TARGETED', relation: 'SELF', relationTo: 'EVENT_MODEL', scope: 'ANY', modelKind: 'MAGE', spellTypes: ['TRAP'] },
+  triggerText: 'When a Trap targets you or you are about to suffer its effect',
+  triggerEffects: [{ effect: 'PREVENT_SPELL', target: 'EVENT_ACTOR' }, { effect: 'STEAL_CROWN_OR_VP', amount: 1, target: 'EVENT_ACTOR' }],
+  rulesText: 'Ignore that Trap\u2019s effect. Steal the first player token from its owner; if it does not hold it, steal 1 VP instead.' },
+ 'Humiliation': { moments: [{ effect: 'ASSIGN_NIGHTMARE', count: 1 }, { effect: 'DAMAGE', amount: 2, scale: { from: 'TARGET_NIGHTMARES', per: 1, each: 1 } }], range: 1, target: 'MAGE', element: 'wild', spellType: 'COMBAT',
+  rulesText: 'Assign an Umbra to the target. Inflict 2 damage, plus 1 for each Nightmare assigned to it.' },
+ 'Traitor Nightmare': { moments: [{ effect: 'ASSIGN_NIGHTMARE', count: 1 }, { effect: 'GAIN_VP', amount: 1, when: 'TARGET_HAS_3_NIGHTMARES' }, { effect: 'ACTIVATE_NIGHTMARES', of: 'TARGET' }], range: Number.POSITIVE_INFINITY, target: 'MAGE', element: 'wild', spellType: 'CONTINGENCY',
+  rulesText: 'Assign an Umbra to the target. If it has 3 Nightmares assigned, gain 1 VP. Each Nightmare assigned to it activates under your control.' },
+ 'Painful Loss': { moments: [{ effect: 'PAIN', amount: 2, optional: true }, { effect: 'DAMAGE', amount: 1, scope: 'ALL_MAGES', when: 'PAIN_RESOLVED' }, { effect: 'ACTIVATE_NIGHTMARES', of: 'ALL' }], range: 0, target: 'SELF', element: 'stars', spellType: 'COMBAT',
+  rulesText: 'You may suffer 2 Pain. If you do, inflict 1 damage on each other mage. Each Nightmare in the game activates under your control.' },
+ 'Anguish': { moments: [{ effect: 'DEFEAT_TARGET', when: 'TARGET_HAS_3_NIGHTMARES' }], range: 1, target: 'MAGE', element: 'stars', spellType: 'CONTINGENCY',
+  rulesText: 'If the target has 3 Nightmares assigned, defeat it.' },
+ 'Recurring Nightmare': { moments: [], range: 2, target: 'MAGE', element: 'air', spellType: 'CONTINGENCY',
+  ongoing: { trigger: { event: 'SPELL_CAST', relation: 'ANY', scope: 'BOUND_MODEL' }, effects: [{ effect: 'ACTIVATE_NIGHTMARES', of: 'TARGET', target: 'BOUND_MODEL' }] },
+  rulesText: 'Ongoing: each time the target reveals a spell, each Nightmare assigned to it activates under your control.' },
+ 'Ephialtes': { moments: [{ effect: 'DRAW_QUESTS_PER_NIGHTMARE' }], range: 0, target: 'SELF', element: 'evil', spellType: 'CONTINGENCY',
+  rulesText: 'Draw 1 quest for each Nightmare in the game, then discard one of those quests.' },
+};
 
 export function createShamanicDeck(prefix: string, schoolId?: string): Card[] {
  const m = moment;
