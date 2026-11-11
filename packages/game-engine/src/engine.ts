@@ -629,7 +629,7 @@ function drawQuest(s:GameState) {
 type ModelSnapshot = { id:string; playerId:string; kind:'MAGE'|'EVOCATION'; generation:number };
 // Local to a single effect, so a nested spell cannot replace its summoned model.
 type EffectResolution = { casterSeen?:{position:Hex}; choices?:Record<string,string>; assigned?:string[]; eventActor?:ModelSnapshot; summoned?:ModelSnapshot; activationIsExplicit:boolean; upgraded?:boolean; removed?:{position:Hex;attack:number;roomId?:string}; eventPosition?:Hex; eventKind?:EvocationKind; damaged?:ModelSnapshot[]; blackDamaged?:Record<string,number>; moved?:ModelSnapshot; spellEvent?:SpellEvent; unconverted?:number; instabilityPlaced?:number; protectedTargets?:Set<string>; vpLost?:number; healed?:number; upgradeDiscarded?:boolean; painResolved?:boolean; trapsAtStart?:number };
-type SpellEvent = { event:TriggerEvent; model?:ModelSnapshot; actor?:ModelSnapshot; roomId?:string; target?:FeedbackTarget; damageOrigin?:DamageOrigin; amount?:number; position?:Hex; kind?:EvocationKind; spellType?:Card['spellType']; sourceCard?:Card; moment?:string; prevented?:{value:boolean}; afterResolution?:()=>void };
+type SpellEvent = { event:TriggerEvent; model?:ModelSnapshot; actor?:ModelSnapshot; roomId?:string; target?:FeedbackTarget; damageOrigin?:DamageOrigin; amount?:number; sourceId?:string; onIgnored?:()=>void; position?:Hex; kind?:EvocationKind; spellType?:Card['spellType']; sourceCard?:Card; moment?:string; prevented?:{value:boolean}; afterResolution?:()=>void };
 type PendingMageDefeat = { ref:ModelSnapshot; roomId?:string; target:FeedbackTarget; source?:Player; liquefyThePain?:boolean };
 type ReplayEntropy={ids:string[];random:number[]};
 type InstructionContext = { generations:Map<string,number>; bindings:Map<string,ModelSnapshot>; defeats:Map<string,PendingMageDefeat>; resolutions:number; interruptId?:string; answers:DecisionAnswer[]; cursor:number; momentDepth:number; events:SpellEvent[]; entropy:ReplayEntropy; idCursor:number; randomCursor:number; suppress?:boolean; trapsTriggered?:number; resolving?:{sourceCard?:Card;moment?:string}; frames?:GameState[]; frameKey?:string };
@@ -902,12 +902,17 @@ function resolveInstructionBody(s:GameState,owner:Player,instruction:TriggeredIn
   // but the actor stays on the DAMAGE_TAKEN event for reactions to the evocation's wounds.
   damageEvocation(s,taker,taken,undefined,event.actor,event.damageOrigin??'NEUTRAL');
  } else if(instruction.effect==='IGNORE_DAMAGE') {
-  // Persecution: heal the wounds just suffered, then return each ignored point to the damage's source.
-  if(!target?.mage)return;
-  const before=target.model.damageCubes;
-  healModel(s,target.model,target.location,instruction.amount,owner.id,modelFeedbackTarget(s,ref)!);
-  const ignored=before-target.model.damageCubes,culprit=effect?.eventActor;
-  if(ignored>0&&culprit)resolveInstruction(s,owner,{effect:'DAMAGE',amount:ignored,target:'EVENT_ACTOR'},culprit,undefined,actor,effect,'SPELL');
+  // Persecution: the ignored wounds were never suffered. Take back exactly the wounds just inflicted (not a heal),
+  // shrink the event so later reactions and effects only see what remains, then return each ignored point to the source.
+  const event=effect?.spellEvent;
+  if(!target?.mage||!event?.amount)return;
+  const ignored=takeBackDamage(s,target.mage,Math.min(instruction.amount,event.amount),event.sourceId??BLACK_ROSE_ID);
+  if(ignored<=0)return;
+  event.amount-=ignored;
+  event.onIgnored?.();
+  s.log.push(`${target.mage.name} ignores ${ignored} damage.`);
+  const culprit=effect?.eventActor;
+  if(culprit)resolveInstruction(s,owner,{effect:'DAMAGE',amount:ignored,target:'EVENT_ACTOR'},culprit,undefined,actor,effect,'SPELL');
  } else if(room && (instruction.effect==='DAMAGE' || instruction.effect==='HEAL')) {
   const refs=[...s.players.filter(p=>inRoom(p,room)).map(p=>snapshot(s,p.id)!),...s.evocations.filter(e=>room.tiles.some(h=>hexKey(h)===hexKey(e.position))).map(e=>snapshot(s,e.id)!)];
   for(const model of refs)if(!effect?.protectedTargets?.has(model.id))resolveInstruction(s,owner,instruction,model,undefined,actor,effect,damageOrigin);
@@ -917,7 +922,7 @@ function resolveInstructionBody(s:GameState,owner:Player,instruction:TriggeredIn
    case 'DAMAGE':
     if(ref!.playerId===owner.id)break;
     {
-    const wounds=target.model.damageCubes;
+    const wounds=target.model.damageCubes,queued=context(s).events.length;
     if(target.mage) {
       const dealActor = ref && actor && ref.id === actor.id && instruction.target === 'EVENT_ACTOR' ? null : actor;
       damage(s,target.mage,instruction.amount,owner,dealActor,damageOrigin);
@@ -926,6 +931,17 @@ function resolveInstructionBody(s:GameState,owner:Player,instruction:TriggeredIn
     // Remember who suffered, for "each model that suffered damage from this effect".
     if(effect&&target.model.damageCubes>wounds&&!effect.damaged?.some(d=>d.id===ref!.id))(effect.damaged??=[]).push(ref!);
     if(effect&&target.model.damageCubes>wounds)(effect.blackDamaged??={})[ref!.id]=blackWounds(target.model);
+    // Wounds a reaction later ignores stop counting as damage from this effect.
+    if(effect)for(const queuedEvent of context(s).events.slice(queued)) {
+     if(queuedEvent.event!=='DAMAGE_TAKEN'||queuedEvent.model?.id!==ref!.id)continue;
+     queuedEvent.onIgnored=()=>{
+      const live=liveModel(s,ref)?.model;
+      if(!live)return;
+      if(live.damageCubes>wounds){(effect.blackDamaged??={})[ref!.id]=blackWounds(live);return;}
+      effect.damaged=effect.damaged?.filter(d=>d.id!==ref!.id);
+      if(effect.blackDamaged)delete effect.blackDamaged[ref!.id];
+     };
+    }
     }
     break;
   case 'HEAL': {
@@ -1022,6 +1038,8 @@ function resolveEvent(s:GameState,event:SpellEvent) {
  for(const owner of owners) {
  const remaining=eligible.filter(active=>active.playerId===owner.id);
  while(remaining.length) {
+  // Damage fully ignored by an earlier reaction (Persecution) no longer triggers anything.
+  if(event.event==='DAMAGE_TAKEN'&&event.amount!==undefined&&event.amount<=0)break;
   let active=remaining[0],selection:DecisionAnswer|undefined;
   if(s.readiedSpells!.some(a=>a.id===active.id)) {
    const choices=remaining.filter(a=>s.readiedSpells!.some(live=>live.id===a.id));
@@ -1330,7 +1348,7 @@ function damage(s: GameState, target: Player, amount: number, source?: Player, a
  appendFeedback(s,{kind:'DAMAGE',target:feedbackTarget,sourceId:source?.id??BLACK_ROSE_ID,amount:inflicted});
  if(source && eventActor)cerebralImplant(s,source,eventActor);
  if(source && eventActor)modelEvent(s,'DAMAGE_DEALT',eventActor,eventActor,undefined,damageOrigin,feedbackTarget);
- emitEvent(s,{event:'DAMAGE_TAKEN',model:ref,actor:eventActor,roomId,target:feedbackTarget,damageOrigin,amount:inflicted});
+ emitEvent(s,{event:'DAMAGE_TAKEN',model:ref,actor:eventActor,roomId,target:feedbackTarget,damageOrigin,amount:inflicted,sourceId:source?.id});
  if(target.wizard.damageCubes<target.wizard.health)return;
  const existing=context(s).defeats.get(ref.id);
  if(existing){existing.source=source;return;}

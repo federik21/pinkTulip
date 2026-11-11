@@ -168,7 +168,7 @@ describe('defeat reactions happen before scoring and respawn',()=>{
   const paused=applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid'}),d=paused.pendingDecision!;
   const result=applyAction(paused,{type:'RESPOND_REACTIVE_SPELL',playerId:'p1',key:d.key,activeSpellId:'neutral-rescue',targetId:'p1'});
   expect(result.players[0].wizard).toMatchObject({damageCubes:8,blackDamage:8,position:origin});
-  expect(result.players[0].victoryPoints).toBe(0);expect(result.blackRose).toEqual({victoryPoints:0,kills:0});
+  expect(result.players[0].victoryPoints).toBe(0);expect(result.blackRose).toEqual({victoryPoints:0,kills:0,trophies:[]});
  });
  it('settles each lethal room target independently, rescuing one without rescuing another',()=>{
   const s=lethalFixture();s.players[0].prepared.rapid!.card.target='ROOM';

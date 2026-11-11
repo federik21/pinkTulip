@@ -267,7 +267,7 @@ describe('Liquefy the Pain follows its own defeated mage and original room',()=>
   expect(targets(paused)).toEqual(['room-1,1']);
   const result=respond(paused,trap.id);
   expect(result.pendingDecision).toBeUndefined();expect(succubi(result,'p1')[0].position).toEqual(offAxis);
-  expect(result.blackRose).toEqual({victoryPoints:4,kills:1});expect(result.players[0].victoryPoints).toBe(2);
+  expect(result.blackRose).toMatchObject({victoryPoints:4,kills:1,trophies:['p1']});expect(result.players[0].victoryPoints).toBe(2);
   expect(result.feedbackEvents!.at(-1)).toMatchObject({kind:'MAGE_DEFEATED',sourceId:'black-rose',target:{roomId:'room-1,1'}});conserved(result);
  });
 

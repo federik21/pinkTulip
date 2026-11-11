@@ -71,6 +71,8 @@ describe('Nightmare school',()=>{
  });
  it('assigns multiple Umbras to distinct slots and wastes assignments after all slots are occupied',()=>{
   const s=fixture();
+  // Anguish draws an event; pin a no-op one so a random event cannot damage or defeat the mage.
+  s.eventDeck=[{id:'quiet-1',name:'Quiet',description:'No effect',kind:'INSTABILITY',amount:0,rooms:0}];
   s.players[0].prepared.rapid={used:false,card:card('Anguish')};
   let assigned=applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',targetPlayerId:'p2'});
   assigned=choose(assigned,'1');

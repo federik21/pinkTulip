@@ -239,7 +239,11 @@ describe('Shamanic school',()=>{
    .sort((a,b)=>Math.min(...a.tiles.map(tile=>Math.abs(tile.q)+Math.abs(tile.r)))-Math.min(...b.tiles.map(tile=>Math.abs(tile.q)+Math.abs(tile.r))))[0];
   expect(room).toBeDefined();
   p.prepared.rapid={card,used:false};
-  const result=applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:room.id});
+  let result=applyAction(s,{type:'CAST_SPELL',playerId:'p1',slot:'rapid',roomId:room.id});
+  // Room layout is random: rooms whose effect places instability pause the spell on an instability-target choice.
+  if(result.pendingDecision?.kind==='CHOICE')
+   result=applyAction(result,{type:'RESPOND_CHOICE',playerId:'p1',key:result.pendingDecision.key,choiceId:result.pendingDecision.options[0].id});
+  expect(result.pendingDecision).toBeFalsy();
   expect(result.players[0].quest||result.players[0].additionalQuests.length).toBeTruthy();
   expect(result.log.some(line=>line.includes(`activates ${room.name}`))).toBe(true);
  });
