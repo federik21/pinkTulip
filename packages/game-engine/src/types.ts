@@ -28,7 +28,7 @@ export type TriggerCondition = { event: TriggerEvent; relation: 'ENEMY' | 'SELF'
 // CASTER_* read the resolving mage (the owner for reactions); TARGET_DAMAGE the chosen model's wounds;
 // EVENT_AMOUNT the damage of the triggering event; DAMAGED_BLACK_DAMAGE the BR wounds on every model this effect damaged.
 // REVEALED_ELEMENT counts `element` and wild symbols on the caster's other revealed spells.
-export type AmountScale = { from: 'CASTER_BLACK_DAMAGE' | 'CASTER_DAMAGE' | 'TARGET_DAMAGE' | 'EVENT_AMOUNT' | 'DAMAGED_BLACK_DAMAGE' | 'REVEALED_ELEMENT'; per: number; each: number; max?: number; element?: Element };
+export type AmountScale = { from: 'CASTER_BLACK_DAMAGE' | 'CASTER_DAMAGE' | 'TARGET_DAMAGE' | 'EVENT_AMOUNT' | 'DAMAGED_BLACK_DAMAGE' | 'REVEALED_ELEMENT' | 'HEALED' | 'TARGET_NIGHTMARES'; per: number; each: number; max?: number; element?: Element };
 // One step of an effect. A Moment is a tagged union (the TypeScript equivalent of
 // a Swift enum with associated values): add a variant with its own payload to
 // teach the engine a new kind of step. A card resolves its moments in array
@@ -37,7 +37,7 @@ export type AmountScale = { from: 'CASTER_BLACK_DAMAGE' | 'CASTER_DAMAGE' | 'TAR
 // it resolves only if the card's chosen model has been defeated or destroyed by then
 // (a defeat rescued by a reaction does not count). `area` redirects the moment to
 // every other mage within `range` of where the chosen model was. Both compose.
-export type MomentCondition = 'TARGET_DEFEATED' | 'UPGRADE_ASSIGNED' | 'EVOCATION_REMOVED' | 'TARGET_JINXED';
+export type MomentCondition = 'TARGET_DEFEATED' | 'UPGRADE_ASSIGNED' | 'EVOCATION_REMOVED' | 'TARGET_JINXED' | 'VP_LOST' | 'UPGRADE_DISCARDED' | 'TARGET_UPGRADED' | 'TARGET_HAS_3_NIGHTMARES' | 'PAIN_RESOLVED';
 export type Moment = (
  | { effect: 'DAMAGE'; amount: number }
  | { effect: 'HEAL'; amount: number }
@@ -46,7 +46,8 @@ export type Moment = (
  // black damage; it does not enable normal conversion or friendly damage.
  | { effect: 'BLACK_ROSE_CONVERT'; amount: number }
  | { effect: 'INSTABILITY'; amount: number }
- | { effect: 'PAIN'; amount: number }
+ // `optional`: the caster may decline; PAIN_RESOLVED moments only follow a Pain that was suffered.
+ | { effect: 'PAIN'; amount: number; optional?: boolean }
  // CHOICE: the owner picks which evocation to summon among those with at most `maxHealth` health.
  | { effect: 'SUMMON'; kind: EvocationKind | 'EVENT_MODEL' | 'CHOICE'; position?: 'CASTER' | 'TARGET' | 'EVENT' | 'REMOVED' | 'CHOICE'; maxHealth?: number }
  // The target loses victory points (never below zero).
@@ -59,26 +60,42 @@ export type Moment = (
  | { effect: 'ACTIVATE_ROOM' }
  // The owner chooses one of their evocations to activate; optional bonus attack and damage inflicted by the Black Rose when it ends.
  // `movementBonus` adds movement for that activation only.
- | { effect: 'ACTIVATE_CHOICE'; archetype?: 'CONSTRUCT' | 'UNDEAD'; attackBonus?: number; movementBonus?: number; endDamage?: number }
+ // `near`: only evocations within that range of the targeted model can be chosen.
+ | { effect: 'ACTIVATE_CHOICE'; archetype?: 'CONSTRUCT' | 'UNDEAD'; attackBonus?: number; movementBonus?: number; endDamage?: number; near?: { range: number } }
  // EVENT_MODEL activates whatever the preceding EVENT_MODEL summon created.
  | { effect: 'ACTIVATE_EVOCATION'; kind: EvocationKind | 'EVENT_MODEL' }
  // Activates the chosen evocation under the caster's control (borrowed if it belongs to another mage).
  | { effect: 'ACTIVATE_TARGET' }
- | { effect: 'ASSIGN_UPGRADE'; upgrade: UpgradeName | 'RANDOM'; to?: 'SUMMONED' }
+ // CHOICE: the evocation's owner picks any upgrade still in the supply.
+ | { effect: 'ASSIGN_UPGRADE'; upgrade: UpgradeName | 'RANDOM' | 'CHOICE'; to?: 'SUMMONED' }
+ // The chosen evocation loses its upgrade (and the health it gave).
+ | { effect: 'DISCARD_UPGRADE' }
  // The caster may remove one of their evocations standing in the chosen model's room.
  | { effect: 'REMOVE_EVOCATION'; archetype?: 'UNDEAD' | 'CONSTRUCT'; chosen?: boolean }
  // Damage equal to the removed model's attack to every mage in its room and adjacent rooms.
  // Fixed `amount` and `models` (evocations too) override the removed model's attack / mages-only default.
  | { effect: 'REMOVED_BLAST'; amount?: number; models?: boolean }
  | { effect: 'LOOK_LIBRARY'; cards: number }
- | { effect: 'SEARCH_GRIMOIRE' }
+ // `keyword`: only grimoire cards (either face) that summon an evocation can be drawn.
+ | { effect: 'SEARCH_GRIMOIRE'; keyword?: 'SUMMON' }
  | { effect: 'DRAW_SCHOOL'; amount: number }
  | { effect: 'RETURN_REVEALED'; elements: Element[] }
  | { effect: 'IF_UNWOUNDED'; draw: number; otherwiseHeal: number }
  // Nightmares (Black Rose evocations attached to mages). The caster picks the slot of each assignment.
- | { effect: 'MOVE_TARGET'; distance: number }
+ // `models`: evocations may be moved as well as mages.
+ | { effect: 'MOVE_TARGET'; distance: number; models?: boolean }
  | { effect: 'ASSIGN_NIGHTMARE'; count?: number; others?: boolean }
  | { effect: 'ASSIGN_PER_EVENT' }
+ // The caster chooses a mage in the target room and moves it up to `distance`.
+ | { effect: 'MOVE_ROOM_MAGE'; distance: number }
+ // 1 VP for each Trap that triggered since this Effect began.
+ | { effect: 'GAIN_VP_PER_TRAP' }
+ // The owner takes the first player token from the target; a target without it loses `amount` VP to the owner instead.
+ | { effect: 'STEAL_CROWN_OR_VP'; amount: number }
+ // The target mage is defeated (lethal damage from the caster).
+ | { effect: 'DEFEAT_TARGET' }
+ // Draw 1 quest per Nightmare in the game, then discard one of the quests just drawn.
+ | { effect: 'DRAW_QUESTS_PER_NIGHTMARE' }
  | { effect: 'ACTIVATE_NIGHTMARES'; of: 'ASSIGNED' | 'TARGET' | 'ALL'; attackBonus?: number }
  | { effect: 'REASSIGN_NIGHTMARES' }
  | { effect: 'STEAL_VP'; amount: number }
@@ -137,7 +154,8 @@ export type TriggeredInstruction = Moment & { target: 'BOUND_MODEL' | 'BOUND_ROO
 // enhancement moments are added (before or after the printed ones) and may override the target.
 export type Enhancement = { requires: Element[]; moments?: Moment[]; position?: 'BEFORE' | 'AFTER'; target?: SpellTarget; range?: number; suppressReactions?: boolean; text: string };
 // Extra printed restrictions on the chosen model.
-export type TargetFilter = { own?: boolean; archetype?: 'CONSTRUCT' | 'DEMON'; maxHealth?: number; sameRoom?: boolean };
+// `includeSelf`: a Mage-target spell that may also choose the caster's own mage ("any mage").
+export type TargetFilter = { own?: boolean; archetype?: 'CONSTRUCT' | 'DEMON'; maxHealth?: number; sameRoom?: boolean; includeSelf?: boolean };
 // triggerText is optional display copy only; trigger conditions govern matching.
 // `effects` are resolved in order. An unstable card starts with a PLACE Effect ("place 1 instability in the
 // caster's current room") followed by its MAIN Effect, so quests and triggers that count Effects (not
@@ -147,7 +165,8 @@ export type TargetFilter = { own?: boolean; archetype?: 'CONSTRUCT' | 'DEMON'; m
 // A card without `darkSide` uses the placeholder dark side (see getDarkSide in cards.ts).
 // Reactive (Trap/Protection) and ongoing dark sides carry their own trigger data; `spellType` defaults to CONTINGENCY.
 export type DarkSide = { moments: Moment[]; range: number; target: SpellTarget; element?: Element; enhancement?: Enhancement; rulesText?: string; spellType?: SpellType; targetFilter?: TargetFilter; trigger?: TriggerCondition; triggerTarget?: Card['triggerTarget']; triggerText?: string; triggerEffects?: TriggeredInstruction[]; ongoing?: Card['ongoing'] };
-export type Card = { id: string; name: string; kind: 'SPELL'; effects: Effect[]; darkSide?: DarkSide; range: number; target: SpellTarget; element?: Element; enhancement?: Enhancement; targetFilter?: TargetFilter; suppressReactions?: boolean; schoolId?: string; powerful?: boolean; spellType?: SpellType; triggerText?: string; rulesText?: string; trigger?: TriggerCondition; triggerTarget?: 'EVENT_MODEL' | 'EVENT_ACTOR' | 'EVENT_ROOM'; triggerSight?: number; targetFrom?: 'EVENT_MODEL'; triggerEffects?: TriggeredInstruction[]; ongoing?: { trigger: TriggerCondition; effects: TriggeredInstruction[] } };
+// `lightOnly`: the card has no dark side; it can only be prepared and cast as its light side.
+export type Card = { id: string; name: string; kind: 'SPELL'; effects: Effect[]; darkSide?: DarkSide; lightOnly?: boolean; range: number; target: SpellTarget; element?: Element; enhancement?: Enhancement; targetFilter?: TargetFilter; suppressReactions?: boolean; schoolId?: string; powerful?: boolean; spellType?: SpellType; triggerText?: string; rulesText?: string; trigger?: TriggerCondition; triggerTarget?: 'EVENT_MODEL' | 'EVENT_ACTOR' | 'EVENT_ROOM'; triggerSight?: number; targetFrom?: 'EVENT_MODEL'; triggerEffects?: TriggeredInstruction[]; ongoing?: { trigger: TriggerCondition; effects: TriggeredInstruction[] } };
 // `card` is the face that resolves; for a dark side it is the dark-face card and `printed` is the physical card (discarded on retire).
 export type ActiveSpell = { id: string; playerId: string; card: Card; printed?: Card; side?: SpellSide; targetPlayerId?: string; targetEvocationId?: string; roomId?: string; cleanupDestination?: 'HAND' | 'MEMORIES' };
 export type RoomColor = 'crimson' | 'azure' | 'emerald' | 'amber' | 'violet' | 'grey';

@@ -104,7 +104,7 @@ export const moment = {
  pain: (amount: number): Moment => ({ effect: 'PAIN', amount }),
  summon: (kind: EvocationKind, position: 'CASTER' | 'TARGET' = 'CASTER'): Moment => ({ effect: 'SUMMON', kind, position }),
  activateEvocation: (kind: EvocationKind): Moment => ({ effect: 'ACTIVATE_EVOCATION', kind }),
- assignUpgrade: (upgrade: UpgradeName | 'RANDOM', to?: 'SUMMONED'): Moment => ({ effect: 'ASSIGN_UPGRADE', upgrade, ...(to ? { to } : {}) }),
+ assignUpgrade: (upgrade: UpgradeName | 'RANDOM' | 'CHOICE', to?: 'SUMMONED'): Moment => ({ effect: 'ASSIGN_UPGRADE', upgrade, ...(to ? { to } : {}) }),
  activateTarget: (): Moment => ({ effect: 'ACTIVATE_TARGET' }),
  // Modifiers: wrap any moment, e.g. `moment.ifTargetDefeated(moment.nearTarget(moment.damage(1), 1))`.
  ifTargetDefeated: (step: Moment): Moment => ({ ...step, when: 'TARGET_DEFEATED' }),
@@ -137,6 +137,12 @@ export const getPhysicalEffect = (kind: 'EXPLORE' | 'ATTACK', movement: number):
 export const momentTotal = (card: Pick<Card, 'effects'>, effect: MomentEffect): number =>
  getAllMoments(card).reduce((total, m) => (m.effect === effect && 'amount' in m) ? total + (m.amount ?? 0) : total, 0);
 export const hasMoment = (card: Pick<Card, 'effects'>, effect: MomentEffect): boolean => momentTotal(card, effect) > 0;
+// The Summon keyword: either face of the card summons an evocation.
+const summonsEvocation = (moments?: readonly { effect: string }[]): boolean => !!moments?.some(step => step.effect === 'SUMMON');
+export function hasSummonKeyword(card: Card): boolean {
+ const dark = getDarkSide(card);
+ return [getAllMoments(card), card.triggerEffects, card.ongoing?.effects, card.enhancement?.moments, dark.moments, dark.triggerEffects, dark.ongoing?.effects, dark.enhancement?.moments].some(summonsEvocation);
+}
 
 export function getSpellType(card:Card):SpellType {
  return card.spellType ?? (getAllMoments(card).some(m => m.effect !== 'HEAL' && 'amount' in m && (m.amount ?? 0) > 0) ? 'COMBAT' : 'CONTINGENCY');
@@ -198,6 +204,7 @@ export function upgradeLegacyCards(value: unknown): void {
   const isSchool = (id: string) => node.schoolId === id || String(node.id).startsWith(`${id}-`);
   if (AGONY_DARK_SIDES[node.name] && isSchool('agony')) node.darkSide = structuredClone(AGONY_DARK_SIDES[node.name]);
   else if (ALCHEMY_DARK_SIDES[node.name] && isSchool('alchemy')) node.darkSide = structuredClone(ALCHEMY_DARK_SIDES[node.name]);
+  else if (TECHNOMANCY_DARK_SIDES[node.name] && isSchool('technomancy')) node.darkSide = structuredClone(TECHNOMANCY_DARK_SIDES[node.name]);
  }
  if(node.kind==='SPELL'&&node.name==='Pain Mark'&&(node.schoolId==='agony'||String(node.id).startsWith('agony-'))) {
   const ongoing=node.ongoing as Card['ongoing'];
@@ -337,8 +344,42 @@ export function createTechnomancyDeck(prefix: string, schoolId?: string): Card[]
    rulesText: 'When another mage enters a room at range 2 and in line of sight, choose an evocation at range 2 from that mage. It activates under your control.',
    trigger: { event: 'ENTER_ROOM', relation: 'ENEMY', scope: 'ANY' } },
  ];
- return Array.from({ length: 36 }, (_, i) => ({ ...patterns[i % patterns.length], element: TECHNOMANCY_ELEMENTS[i % patterns.length], id: `${prefix}-${i + 1}`, kind: 'SPELL', ...(schoolId ? {schoolId} : {}) }));
+ return Array.from({ length: 36 }, (_, i) => { const pattern = patterns[i % patterns.length]; return { ...pattern, darkSide: structuredClone(TECHNOMANCY_DARK_SIDES[pattern.name]), element: TECHNOMANCY_ELEMENTS[i % patterns.length], id: `${prefix}-${i + 1}`, kind: 'SPELL' as const, ...(schoolId ? {schoolId} : {}) }; });
 }
+
+// Dark sides of the Technomancy school, keyed by card name. Health limits use full health, upgrades included.
+const TECHNOMANCY_DARK_SIDES: Record<string, DarkSide> = {
+ 'Protean Genesis': { moments: [{ effect: 'LOSE_VP', amount: 1, scope: 'CASTER' }, { effect: 'SUMMON', kind: 'COLOSSUS', position: 'TARGET', when: 'VP_LOST' }], range: 2, target: 'ROOM', element: 'earth', spellType: 'CONTINGENCY',
+  rulesText: 'Lose 1 VP. If you do, summon a Colossus in the target room.' },
+ 'Living Liquid': { moments: [{ effect: 'DISCARD_UPGRADE' }, { effect: 'INSTABILITY', amount: 3, when: 'UPGRADE_DISCARDED' }], range: 2, target: 'EVOCATION', element: 'stars', spellType: 'CONTINGENCY',
+  rulesText: 'Discard an upgrade from the target evocation. If you do, place 3 instability in the target\u2019s room.' },
+ 'Acid Blood': { moments: [{ effect: 'DAMAGE', amount: 3 }, { effect: 'INSTABILITY', amount: 1 }], range: 1, target: 'ROOM', element: 'fire', spellType: 'COMBAT',
+  rulesText: 'Inflict 3 damage on every enemy model in the target room, then place 1 instability there.' },
+ 'Kinetic Infusion': { moments: [{ effect: 'MOVE_TARGET', distance: 1 }, { effect: 'MOVE_TARGET', distance: 1 }, { effect: 'MOVE_TARGET', distance: 1 }, { effect: 'ACTIVATE_ROOM' }], range: 0, target: 'SELF', element: 'fire', spellType: 'CONTINGENCY',
+  rulesText: 'Move yourself up to 1, three times, then activate the room effect where you stand.' },
+ 'Vigorous Infusion': { moments: [{ effect: 'DAMAGE', amount: 1 }, { effect: 'MOVE_TARGET', distance: 1, models: true }, { effect: 'MOVE_TARGET', distance: 1, models: true }], range: 2, target: 'MODEL', element: 'stars', spellType: 'COMBAT',
+  rulesText: 'Inflict 1 damage on the target, then move it up to 1, then again up to 1.' },
+ 'Indoctrination': { moments: [{ effect: 'HEAL', amount: 2 }, { effect: 'INSTABILITY', amount: 0, scope: 'CASTER_ROOM', scale: { from: 'HEALED', per: 1, each: 1 } }], range: 0, target: 'SELF', element: 'evil', spellType: 'CONTINGENCY',
+  rulesText: 'Heal up to 2 damage on your mage, then place 1 instability in your room for each damage healed.' },
+ 'Nefarious Evolution': { moments: [{ effect: 'INSTABILITY', amount: 1 }, { effect: 'ACTIVATE_TARGET', when: 'TARGET_UPGRADED' }], range: Number.POSITIVE_INFINITY, target: 'EVOCATION', element: 'earth', spellType: 'CONTINGENCY',
+  rulesText: 'Place 1 instability in the target\u2019s room. If the target has an upgrade, it activates under your control.' },
+ 'Mutant Energies': { moments: [{ effect: 'REMOVE_EVOCATION', chosen: true }, { effect: 'SUMMON', kind: 'CADAVER', position: 'REMOVED', when: 'EVOCATION_REMOVED' }], range: 2, target: 'EVOCATION', element: 'fire', spellType: 'CONTINGENCY', targetFilter: { maxHealth: 3 },
+  rulesText: 'Remove the target evocation (health 3 or less, upgrades included). If you do, summon a Cadaver in the same room.' },
+ 'Craft': { moments: [{ effect: 'ASSIGN_UPGRADE', upgrade: 'CHOICE' }], range: Number.POSITIVE_INFINITY, target: 'EVOCATION', element: 'evil', spellType: 'CONTINGENCY',
+  rulesText: 'Assign an upgrade of your choice to the target evocation.' },
+ 'Mechanical Archive': { moments: [{ effect: 'GAIN_VP', amount: 1 }, { effect: 'SEARCH_GRIMOIRE', keyword: 'SUMMON' }], range: 0, target: 'SELF', element: 'earth', spellType: 'CONTINGENCY',
+  rulesText: 'Gain 1 VP, then choose and draw 1 card with the Summon keyword from your grimoire.' },
+ 'Draco\u2019s Skin': { moments: [], range: 0, target: 'MODEL', element: 'wild', spellType: 'TRAP', targetFilter: { sameRoom: true },
+  trigger: { event: 'ENTER_ROOM', relation: 'ENEMY', scope: 'ANY' }, triggerTarget: 'EVENT_MODEL',
+  triggerText: 'When an enemy model enters your room',
+  triggerEffects: [{ effect: 'DAMAGE', amount: 3, target: 'BOUND_MODEL' }, { effect: 'MOVE_TARGET', distance: 1, models: true, target: 'BOUND_MODEL' }],
+  rulesText: 'Target that model: inflict 3 damage, then move it up to 1.' },
+ 'Necrotic Pheromones': { moments: [], range: 2, target: 'MAGE', element: 'stars', spellType: 'TRAP',
+  trigger: { event: 'ROOM_ACTIVATED', relation: 'ENEMY', scope: 'ANY' }, triggerTarget: 'EVENT_ACTOR',
+  triggerText: 'After another mage within range 2 resolves the effect of a room',
+  triggerEffects: [{ effect: 'ACTIVATE_CHOICE', near: { range: 2 }, target: 'BOUND_MODEL' }, { effect: 'ACTIVATE_CHOICE', near: { range: 2 }, target: 'BOUND_MODEL' }],
+  rulesText: 'One of your evocations within range 2 of that mage activates, then one of your evocations within range 2 of that mage activates again.' },
+};
 
 // Dark sides of the Alchemy school, keyed by card name. Each side has its own element, enhancement and rules.
 const revealed = (element: Element): NonNullable<Moment['scale']> => ({ from: 'REVEALED_ELEMENT', per: 1, each: 1, element });

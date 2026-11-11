@@ -7,11 +7,12 @@ function rewardMoment(moment:Moment):string {
   case 'SUMMON':return `Summon ${moment.kind}`;
   case 'ACTIVATE_EVOCATION':return 'It activates';
   case 'ACTIVATE_TARGET':return 'Activate the target under your control';
-  case 'ASSIGN_UPGRADE':return 'Assign an upgrade';
+  case 'ASSIGN_UPGRADE':return moment.upgrade==='CHOICE'?'Assign an upgrade of your choice':'Assign an upgrade';
+  case 'DISCARD_UPGRADE':return 'Discard the target\u2019s upgrade';
   case 'REMOVE_EVOCATION':return 'Remove one of your evocations';
   case 'REMOVED_BLAST':return 'Blast nearby mages';
   case 'LOOK_LIBRARY':return `Look at ${moment.cards} library cards`;
-  case 'SEARCH_GRIMOIRE':return 'Search your grimoire, draw one card, then shuffle';
+  case 'SEARCH_GRIMOIRE':return moment.keyword==='SUMMON'?'Search your grimoire for a Summon card, draw it, then shuffle':'Search your grimoire, draw one card, then shuffle';
   case 'DRAW_SCHOOL':return `Draw ${moment.amount} from any shared school`;
   case 'RETURN_REVEALED':return `Return a revealed ${moment.elements.join(' or ')} spell to your hand`;
   case 'IF_UNWOUNDED':return `If you have no damage, draw ${moment.draw}; otherwise heal ${moment.otherwiseHeal}`;

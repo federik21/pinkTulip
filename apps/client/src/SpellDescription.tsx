@@ -8,6 +8,9 @@ function momentConditionText(when: Moment['when']) {
   case 'TARGET_DEFEATED':return 'If target defeated · ';
   case 'UPGRADE_ASSIGNED':return 'If upgrade assigned · ';
   case 'EVOCATION_REMOVED':return 'If evocation removed · ';
+  case 'VP_LOST':return 'If VP lost · ';
+  case 'UPGRADE_DISCARDED':return 'If upgrade discarded · ';
+  case 'TARGET_UPGRADED':return 'If target has an upgrade · ';
   default:return '';
  }
 }
@@ -19,6 +22,7 @@ const SCALE_SOURCES: Record<AmountScale['from'], string> = {
  EVENT_AMOUNT: 'damage suffered',
  DAMAGED_BLACK_DAMAGE: 'BR damage on the models damaged',
  REVEALED_ELEMENT: 'symbol (or wild) on your other revealed spells',
+ HEALED: 'damage healed by this effect',
 };
 function scaleSource(scale: AmountScale) {
  return scale.from === 'REVEALED_ELEMENT' && scale.element ? `${scale.element} ${SCALE_SOURCES.REVEALED_ELEMENT}` : SCALE_SOURCES[scale.from];
@@ -51,7 +55,12 @@ function MomentChipBody({moment,target}:{moment:Moment;target:Card['target']}) {
   case 'ATTACK_BONUS':return <span>⚔ {prefix}Next activation +{moment.amount} attack</span>;
   case 'MOVE_DAMAGED':return <span>→ {prefix}Move a damaged model up to {moment.distance}</span>;
   case 'ACTIVATE_ROOM':return <span>⌖ {prefix}Activate that room</span>;
-  case 'ACTIVATE_CHOICE':return <span className="summon-effect">↝ {prefix}Activate one of your {moment.archetype==='CONSTRUCT'?'constructs':'evocations'}{moment.attackBonus?` · +${moment.attackBonus} attack`:''}{moment.movementBonus?` · +${moment.movementBonus} movement`:''}</span>;
+  case 'ASSIGN_UPGRADE':return <span className="summon-effect">⚙ {prefix}Assign {moment.upgrade==='CHOICE'?'an upgrade of your choice':moment.upgrade==='RANDOM'?'a random upgrade':'an upgrade'}</span>;
+  case 'DISCARD_UPGRADE':return <span className="summon-effect">⚙ {prefix}Discard the target’s upgrade</span>;
+  case 'MOVE_TARGET':return <span>→ {prefix}{moment.scope==='CASTER'||target==='SELF'?'Move yourself':'Move the target'} up to {moment.distance}</span>;
+  case 'SEARCH_GRIMOIRE':return <span>☷ {prefix}Draw {moment.keyword==='SUMMON'?'a Summon card':'a card'} from your grimoire</span>;
+  case 'ACTIVATE_TARGET':return <span className="summon-effect">↝ {prefix}The target activates under your control</span>;
+  case 'ACTIVATE_CHOICE':return <span className="summon-effect">↝ {prefix}Activate one of your {moment.archetype==='CONSTRUCT'?'constructs':'evocations'}{moment.attackBonus?` · +${moment.attackBonus} attack`:''}{moment.movementBonus?` · +${moment.movementBonus} movement`:''}{moment.near?` · within range ${moment.near.range} of the target`:''}</span>;
   case 'GAIN_VP':return <span>★ {prefix}Gain {amountText(moment)} VP</span>;
   case 'GAIN_VP_PER_ALTAR':return <span>★ {prefix}Gain 1 VP per Altar · max {moment.max}</span>;
   case 'COMPLETE_QUEST':return <span>☾ {prefix}Pay moon level in VP to complete an active quest</span>;
