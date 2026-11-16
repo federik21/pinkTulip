@@ -335,6 +335,13 @@ export type GameState = {
  roseQuestDiscards?: PlayerId[];
  // Public ongoing-event board, slot 0 = newest. Optional for older snapshots.
  eventBoard?: (EventCard | null)[];
+ // Moon-specific deck copies: the currently active event/quest decks always sit on
+ // the top-level eventDeck/questDeck slots, while the keyed copies retain the
+ // distinct first/second/third moon stacks.
+ eventDecks?: Record<1 | 2 | 3, EventCard[]>;
+ eventDiscards?: Record<1 | 2 | 3, EventCard[]>;
+ questDecks?: Record<1 | 2 | 3, Quest[]>;
+ questDiscards?: Record<1 | 2 | 3, Quest[]>;
 };
 export type GameAction =
  // Transport commands: intercepted by the server, never resolved by the engine.

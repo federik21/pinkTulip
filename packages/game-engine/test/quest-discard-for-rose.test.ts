@@ -31,6 +31,23 @@ describe('discarding a quest for the Black Rose', () => {
   expect(resolved.players[0].quest).not.toBeNull();
  });
 
+ it('rewards the Black Rose by the current moon and swaps to the active moon deck', () => {
+  const g = withQuest(started());
+  g.moon = 2;
+  g.blackRose.victoryPoints = 14;
+  const quest = g.players[0].quest!;
+  const beforeDeck = g.questDeck.slice();
+  const beforeEventDeck = g.eventDeck.slice();
+  const next = applyAction(g, { type: 'DISCARD_QUEST_FOR_ROSE', playerId: g.players[0].id, questId: quest.id });
+
+  expect(next.blackRose.victoryPoints).toBe(16);
+  expect(next.moon).toBe(3);
+  expect(next.questDeck).not.toBe(beforeDeck);
+  expect(next.eventDeck).not.toBe(beforeEventDeck);
+  expect((next as any).questDecks[3]).toBe(next.questDeck);
+  expect((next as any).eventDecks[3]).toBe(next.eventDeck);
+ });
+
  it('is rejected once quests are drawn or for unknown quests', () => {
   const g = withQuest(started());
   expect(() => applyAction(g, { type: 'DISCARD_QUEST_FOR_ROSE', playerId: g.players[0].id, questId: 'nope' })).toThrow();

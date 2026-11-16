@@ -442,10 +442,15 @@ export function createGame(playerCount=2): GameState {
  assert(Number.isInteger(playerCount)&&playerCount>=1&&playerCount<=MAX_MAGES,'Choose between 1 and 4 mages');
  const board = createDemoBoard();
  const players=['p1','p2','p3','p4'].slice(0,playerCount).map(id=>createMage(board,id));
+ const firstMoonEventDeck = createEvents();
+ const firstMoonQuestDeck = createQuests();
+ const eventDecks = { 1: firstMoonEventDeck, 2: structuredClone(firstMoonEventDeck), 3: structuredClone(firstMoonEventDeck) } satisfies Record<1 | 2 | 3, EventCard[]>;
+ const questDecks = { 1: firstMoonQuestDeck, 2: structuredClone(firstMoonQuestDeck), 3: structuredClone(firstMoonQuestDeck) } satisfies Record<1 | 2 | 3, Quest[]>;
  return {
   gameId:crypto.randomUUID(), hostId:'p1', round:0, phase:'LOBBY', players, board, library:createLibrary(),
   blackRose:{victoryPoints:0,kills:0,trophies:[]}, firstPlayerId:null, endgameScored:false, moon:1, moonEvents:[],
-  eventDeck:createEvents(), eventDiscard:[], questDeck:createQuests(), questDiscard:[],
+  eventDeck:eventDecks[1], eventDiscard:[], eventDecks, eventDiscards:{1:[],2:[],3:[]},
+  questDeck:questDecks[1], questDiscard:[], questDecks, questDiscards:{1:[],2:[],3:[]},
   powerfulDeck:createPowerfulDeck(), removedCards:[], readiedSpells:[], ongoingSpells:[], activeSpellOrder:[],
   evocations:[], evocationActivation:null, feedbackEvents:[],
   currentPlayerId:null, activation:null, winner:null, log:['Room created. Join the room and mark yourself ready; the game begins with a school and mage draft.'], usedEvent:null, blackRoseResolved:false, eventBoard:Array.from({length:EVENT_BOARD_SIZE},()=>null),
@@ -515,6 +520,18 @@ function advanceMoon(s:GameState,previousLeader:number) {
  while(s.moon<3&&leader>=(s.moon===1?5:15)) {
   const nextMoon=(s.moon+1) as 2|3;
   s.moon=nextMoon;
+  s.eventDecks ??= {1: s.eventDeck ?? createEvents(), 2: structuredClone(createEvents()), 3: structuredClone(createEvents())};
+  s.eventDiscards ??= {1: s.eventDiscard ?? [], 2: [], 3: []};
+  s.questDecks ??= {1: s.questDeck ?? createQuests(), 2: structuredClone(createQuests()), 3: structuredClone(createQuests())};
+  s.questDiscards ??= {1: s.questDiscard ?? [], 2: [], 3: []};
+  s.eventDecks[nextMoon] ??= structuredClone(createEvents());
+  s.questDecks[nextMoon] ??= structuredClone(createQuests());
+  s.eventDiscards[nextMoon] ??= [];
+  s.questDiscards[nextMoon] ??= [];
+  s.eventDeck = s.eventDecks[nextMoon];
+  s.eventDiscard = s.eventDiscards[nextMoon];
+  s.questDeck = s.questDecks[nextMoon];
+  s.questDiscard = s.questDiscards[nextMoon];
   for(const player of s.players) {
    if(!player.mageId)continue;
    player.mageSpellSupply??=mageSpellCopies(player.mageId).slice(1);
@@ -3798,8 +3815,9 @@ function runAction(state: GameState, action: GameAction, answers: DecisionAnswer
    s.questDiscard.push(quest!);
    p.quest=remaining.shift()??null;p.additionalQuests=remaining;
    s.roseQuestDiscards=[...(s.roseQuestDiscards??[]),p.id];
-   s.log.push(`${p.name} discards the quest ${quest!.name}; the Black Rose gains 1 VP.`);
-   awardVictoryPoints(s,BLACK_ROSE_ID,1);break;
+   const reward = s.moon ?? 1;
+   s.log.push(`${p.name} discards the quest ${quest!.name}; the Black Rose gains ${reward} VP.`);
+   awardVictoryPoints(s,BLACK_ROSE_ID,reward);break;
   }
   case 'DISCARD_HAND_LIMIT': {
    requirePhase(s,'PREPARATION');assert(!p.preparationDone,'Already prepared');
