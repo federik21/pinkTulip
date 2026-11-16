@@ -214,6 +214,9 @@ export function upgradeLegacyCards(value: unknown): void {
    if (NIGHTMARE_DARK_SIDES[node.name]) node.darkSide = structuredClone(NIGHTMARE_DARK_SIDES[node.name]);
    else if (['Shifting Nightmare', 'Mental Chasm', 'Shadow Blast'].includes(node.name)) node.lightOnly = true;
   }
+  else if (isSchool('shamanic')) {
+   if (SHAMANIC_DARK_SIDES[node.name]) node.darkSide = structuredClone(SHAMANIC_DARK_SIDES[node.name]);
+  }
  }
  if(node.kind==='SPELL'&&node.name==='Pain Mark'&&(node.schoolId==='agony'||String(node.id).startsWith('agony-'))) {
   const ongoing=node.ongoing as Card['ongoing'];
@@ -556,6 +559,38 @@ const NIGHTMARE_DARK_SIDES: Record<string, DarkSide> = {
   rulesText: 'Draw 1 quest for each Nightmare in the game, then discard one of those quests.' },
 };
 
+const SHAMANIC_DARK_SIDES: Record<string, DarkSide> = {
+ 'Binding Totem': { moments: [{ effect: 'LOSE_VP', amount: 1 }, { effect: 'GAIN_VP', amount: 1 }, { effect: 'REMOVE_EVOCATION', chosen: true }], range: 1, target: 'EVOCATION', element: 'good', spellType: 'CONTINGENCY',
+  rulesText: 'all other mages within 1 of the totem lose 1 VP. gain 1 VP. remove the totem.' },
+ 'Astral Path': { moments: [{ effect: 'DRAW_QUEST' }, { effect: 'DRAW_QUEST' }, { effect: 'DRAW_QUEST' }], range: 0, target: 'SELF', element: 'wild', spellType: 'CONTINGENCY',
+  rulesText: 'draw 3 quests from the current moon or the next one; keep 1 and discard the rest.' },
+ 'Earth Totem': { moments: [], range: 0, target: 'SELF', element: 'earth', spellType: 'PROTECTION',
+  trigger: { event: 'SPELL_TARGETED', relation: 'SELF', relationTo: 'EVENT_MODEL', scope: 'ANY', modelKind: 'MAGE', spellTypes: ['COMBAT'] },
+  triggerText: 'When a combat spell targets you or you are about to suffer its effect',
+  triggerEffects: [{ effect: 'PREVENT_SPELL', target: 'EVENT_ACTOR' }, { effect: 'SUMMON', kind: 'TOTEM', position: 'CASTER', target: 'OWNER' }, { effect: 'GAIN_VP', amount: 1, target: 'OWNER' }],
+  rulesText: 'Ignore the effect. Summon a Totem in your room. Gain 1 VP.' },
+ 'Wind Spirit': { moments: [{ effect: 'DRAW_SPELLS', amount: 3 }], range: 0, target: 'SELF', element: 'air', spellType: 'CONTINGENCY',
+  rulesText: 'draw 3 cards from a school; keep 1 and discard the rest.' },
+ 'Valor Totem': { moments: [{ effect: 'DRAW_QUEST' }, { effect: 'GAIN_VP', amount: 4, when: 'EVOCATION_REMOVED' }], range: 1, target: 'ROOM', element: 'fire', spellType: 'CONTINGENCY',
+  rulesText: 'remove up to 3 totems. draw 1 quest. gain 4 VP if you removed 3.' },
+ 'River Spirit': { moments: [{ effect: 'DRAW_EVENT' }, { effect: 'DRAW_QUEST' }, { effect: 'GAIN_VP', amount: 2 }], range: 3, target: 'ROOM', element: 'water', spellType: 'CONTINGENCY',
+  rulesText: 'draw 1 event. draw 1 quest. gain 2 VP.' },
+ 'Dominion Token': { moments: [{ effect: 'ACTIVATE_TARGET' }, { effect: 'ACTIVATE_TARGET' }, { effect: 'REMOVE_EVOCATION', chosen: true }], range: 2, target: 'ROOM', element: 'good', spellType: 'CONTINGENCY',
+  rulesText: 'choose an evocation within 2 of the totem. then choose another evocation within 2 of the totem. the target activates under your control. remove the totem.' },
+ 'Channeling Energy': { moments: [], range: 0, target: 'SELF', element: 'wild', spellType: 'CONTINGENCY',
+  ongoing: { trigger: { event: 'SPELL_CAST', relation: 'ANY', scope: 'ANY', spellTypes: ['CONTINGENCY'] }, effects: [{ effect: 'BLACK_ROSE_ALTAR_TITHE', target: 'OWNER' }] },
+  rulesText: 'Ongoing: each time a mage reveals a contingency spell, choose whether BR may inflict 1 damage on one of your Altars to gain 1 VP.' },
+ 'Rain Totem': { moments: [{ effect: 'ACTIVATE_TARGET_ROOM' }, { effect: 'ACTIVATE_TARGET_ROOM' }, { effect: 'REMOVE_EVOCATION', chosen: true }], range: 2, target: 'ROOM', element: 'water', spellType: 'CONTINGENCY',
+  rulesText: 'activate a room within 2 if the target is a Totem. activate a room within 2 if the target is a Totem. remove the target if it is a Totem.' },
+ 'Steppe Spirit': { moments: [], range: 2, target: 'MAGE', element: 'earth', spellType: 'CONTINGENCY',
+  ongoing: { trigger: { event: 'ENTER_ROOM', relation: 'SELF', relationTo: 'EVENT_MODEL', scope: 'ANY', modelKind: 'MAGE' }, effects: [{ effect: 'INSTABILITY', amount: 1, target: 'EVENT_ROOM' }] },
+  rulesText: 'when the target enters a room, place 1 instability in that room.' },
+ 'Pyre Spirit': { moments: [{ effect: 'DISCARD_CARDS', amount: 1 }, { effect: 'GAIN_VP', amount: 1 }, { effect: 'MOVE_TARGET', distance: 1, models: true }, { effect: 'MOVE_TARGET', distance: 1, models: true }, { effect: 'MOVE_TARGET', distance: 1, models: true }], range: 2, target: 'MAGE', element: 'fire', spellType: 'CONTINGENCY',
+  rulesText: 'Discard 1 event. gain 1 VP. move an altar up to 1, three times (same or different).' },
+ 'Source of Life': { moments: [{ effect: 'HEAL', amount: 3 }, { effect: 'INSTABILITY', amount: 2 }], range: 2, target: 'ROOM', element: 'water', spellType: 'CONTINGENCY',
+  rulesText: 'Heal 3. Place 2 instability in the target room.' },
+};
+
 export function createShamanicDeck(prefix: string, schoolId?: string): Card[] {
  const m = moment;
  const patterns: Omit<Card, 'id' | 'kind'>[] = [
@@ -590,7 +625,11 @@ export function createShamanicDeck(prefix: string, schoolId?: string): Card[] {
    effects: mainEffects([{ effect: 'MOVE_MODEL', distance: 1 }, { effect: 'HEAL', amount: 2, scope: 'TARGET_ROOM' }, { effect: 'GAIN_VP', amount: 1 }]),
    rulesText: 'Move any model from anywhere on the board to a room within range 1 of the target room, heal 2 on every model in the target room, then gain 1 VP.' },
  ];
- return Array.from({ length: 36 }, (_, i) => ({ ...patterns[i % patterns.length], element: patterns[i % patterns.length].element ?? SHAMANIC_ELEMENTS[i % patterns.length], id: `${prefix}-${i + 1}`, kind: 'SPELL', ...(schoolId ? { schoolId } : {}) }));
+ return Array.from({ length: 36 }, (_, i) => {
+  const pattern = patterns[i % patterns.length];
+  const dark = SHAMANIC_DARK_SIDES[pattern.name];
+  return { ...pattern, ...(dark ? { darkSide: structuredClone(dark) } : { lightOnly: true }), element: pattern.element ?? SHAMANIC_ELEMENTS[i % patterns.length], id: `${prefix}-${i + 1}`, kind: 'SPELL' as const, ...(schoolId ? { schoolId } : {}) };
+ });
 }
 
 // Dark sides of the Hex school, keyed by card name. The shared PLACE (instability) Effect comes from the light side.
