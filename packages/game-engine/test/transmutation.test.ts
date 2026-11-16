@@ -214,7 +214,7 @@ describe('healing wounds and returning only actual physical cubes',()=>{
 });
 
 describe('conversion replaces ownership without creating wounds, instability or rewards',()=>{
- it('converts actual mage Pink Tulip ledger/blackDamage, but not unattributed wounds',()=>{
+ it('converts actual mage Black Rose ledger/blackDamage, but not unattributed wounds',()=>{
   const s=fixture();prepare(s,card('MAGE',{convert:20}));wound(s,'MAGE',1,{p3:1,[BLACK_ROSE_ID]:1},3,2);
   const result=cast(s,{targetPlayerId:'p2'});
   expect(result.players[1].wizard).toMatchObject({damageCubes:7,blackDamage:0,damageByPlayer:{p1:4}});

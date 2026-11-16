@@ -224,7 +224,7 @@ async function expectRoomContributions(page: Page, expected: Room) {
   await expect(tile.locator('.capacity-fill[data-owner-id]')).toHaveCount(contributions.length);
   for (const [id, cubes] of contributions) {
     await expect(tile.locator(`.capacity-fill[data-owner-id="${id}"]`)).toHaveAttribute('data-cubes', String(cubes));
-    await expect(page.locator('.room-detail .contributions')).toContainText(`${id === BLACK_ROSE_ID ? 'Pink Tulip' : id === 'p1' ? 'Rose Warden' : 'Blue Seer'}: ${cubes}`);
+    await expect(page.locator('.room-detail .contributions')).toContainText(`${id === BLACK_ROSE_ID ? 'Black Rose' : id === 'p1' ? 'Rose Warden' : 'Blue Seer'}: ${cubes}`);
   }
 }
 

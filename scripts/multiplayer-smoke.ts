@@ -179,7 +179,7 @@ function checkSettlement(before: GameState, after: GameState) {
  const cleanupIndex = appended.findIndex(line => line.startsWith('CLEANUP —'));
  assert.ok(cleanupIndex >= 0);
  for (const line of appended.slice(0, cleanupIndex)) {
-  for (const competitor of [...before.players, { id: 'black-rose', name: 'Pink Tulip' }]) {
+  for (const competitor of [...before.players, { id: 'black-rose', name: 'Black Rose' }]) {
    if (!line.startsWith(`${competitor.name}: +`) && !line.startsWith(`${competitor.name} completes `)) continue;
    const reward = line.match(/\+(\d+) VP/);
    if (reward) scores[competitor.id] += Number(reward[1]);
@@ -202,7 +202,7 @@ function checkSettlement(before: GameState, after: GameState) {
   ]) for (const { id, points } of awards(counts, [4, 2, 1])) scores[id] += points;
   assert.ok(before.firstPlayerId); scores[before.firstPlayerId]++;
   const winner = [...before.players.map(p => p.id), 'black-rose'].sort((a, b) => scores[b] - scores[a])[0];
-  assert.equal(after.winner, winner, 'Final standings include Pink Tulip and stable seating-order ties');
+  assert.equal(after.winner, winner, 'Final standings include Black Rose and stable seating-order ties');
  } else assert.equal(after.endgameScored, false);
  assert.deepEqual(Object.fromEntries([...after.players.map(p => [p.id, p.victoryPoints]), ['black-rose', after.blackRose.victoryPoints]]), scores);
 }
@@ -467,7 +467,7 @@ async function main() {
   async function studyAndPrepare() {
    assert.equal(epoch.phase, 'BLACK_ROSE'); assert.equal(epoch.blackRoseResolved, false);
    assert.ok(epoch.players.every(p => p.actionTokens === 2));
-  await act({ type: 'DISCARD_QUESTS', playerId: 'p1', questIds: [] }, /Resolve Pink Tulip/);
+  await act({ type: 'DISCARD_QUESTS', playerId: 'p1', questIds: [] }, /Resolve Black Rose/);
    const before = epoch;
    await advance(); assert.equal(epoch.blackRoseResolved, true);
    if (epoch.phase === 'BLACK_ROSE') {

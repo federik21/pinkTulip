@@ -41,6 +41,13 @@ function rewardMoment(moment:Moment):string {
   case 'ACTIVATE_TARGET_ROOM':return moment.used?'Activate that room, even if used':'Activate the target room';
   case 'ASSIGN_JINX':return moment.jinx==='CHOICE'?'Assign a jinx':`Assign ${JINX_LABELS[moment.jinx]}`;
   case 'DISCARD_QUEST_OR_JINX':return 'Discard a quest or jinx';
+  case 'DISCARD_TARGET_JINX':return 'The target discards a jinx';
+  case 'GAIN_VP_PER_CONVERTED_BR':return 'Gain VP per converted BR damage';
+  case 'GAIN_VP_PER_TARGET_JINX':return 'Gain VP per jinx on the target';
+  case 'MOVE_CASTER_TO_TARGET_ROOM':return 'Move to the target\u2019s room';
+  case 'PLACE_TARGET_IN_COLOR_ROOM':return 'Place the target in a chosen room';
+  case 'STEAL_TROPHY':return 'Steal a trophy';
+  case 'STEAL_SOLVED_QUEST':return 'Steal a solved quest';
   case 'DRAW_SPELLS':return `Draw ${moment.amount} spells`;
   case 'INSTABILITY_PER_UNCONVERTED':return 'Instability per unconverted cube';
   case 'INSTABILITY_PER_JINX':return 'Instability per jinx';

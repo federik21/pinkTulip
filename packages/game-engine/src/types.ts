@@ -6,7 +6,7 @@ export type Hex = { q: number; r: number };
 export type SpellTarget = 'SELF' | 'ROOM' | 'MAGE' | 'EVOCATION' | 'MODEL';
 export type SpellType = 'COMBAT' | 'CONTINGENCY' | 'TRAP' | 'PROTECTION';
 export type SpellSide = 'LIGHT' | 'DARK';
-export type TriggerEvent = 'ENTER_ROOM' | 'DAMAGE_TAKEN' | 'DAMAGE_DEALT' | 'SPELL_CAST' | 'SPELL_TARGETED' | 'ROOM_ACTIVATED' | 'EVOCATION_ACTIVATED' | 'MAGE_ATTACK' | 'EVOCATION_ATTACK' | 'QUEST_SOLVED' | 'MAGE_DEFEATED' | 'VP_CHANGED' | 'EVOCATION_LOST' | 'CUBE_PLACED';
+export type TriggerEvent = 'ENTER_ROOM' | 'DAMAGE_TAKEN' | 'DAMAGE_DEALT' | 'SPELL_CAST' | 'SPELL_TARGETED' | 'ROOM_ACTIVATED' | 'EVOCATION_ACTIVATED' | 'MAGE_ATTACK' | 'EVOCATION_ATTACK' | 'QUEST_SOLVED' | 'MAGE_DEFEATED' | 'VP_CHANGED' | 'EVOCATION_LOST' | 'CUBE_PLACED' | 'TROPHY_OBTAINED';
 // Jinx cards (Hex school): a negative effect attached to a mage. `cubes` is a plain progress counter.
 export type JinxName = 'OBLIVION' | 'SLOWNESS' | 'VULNERABILITY' | 'WEAKNESS';
 export type Jinx = { id: string; name: JinxName; cubes: number };
@@ -23,7 +23,9 @@ export type GameFeedbackEvent = { id: string; round: number; interruptId?: strin
 );
 export type TriggerCondition = { event: TriggerEvent; relation: 'ENEMY' | 'SELF' | 'ANY'; scope: 'BOUND_MODEL' | 'BOUND_ROOM' | 'BOUND_COLOR' | 'ANY'; relationTo?: 'EVENT_ACTOR' | 'EVENT_MODEL'; damageOrigins?: DamageOrigin[]; roomColors?: RoomColor[]; modelKind?: 'MAGE' | 'EVOCATION'; spellTypes?: SpellType[];
  // Independent checks on top of `relation`: whether the event model belongs to the owner, and what kind of model acted.
- modelRelation?: 'ENEMY' | 'SELF'; actorKind?: 'MAGE' | 'EVOCATION' };
+ modelRelation?: 'ENEMY' | 'SELF'; actorKind?: 'MAGE' | 'EVOCATION';
+ // The event model must be a mage carrying at least one jinx.
+ modelJinxed?: boolean };
 // Dynamic Moment amount: amount + each * floor(count / per), the dynamic part capped at `max`.
 // CASTER_* read the resolving mage (the owner for reactions); TARGET_DAMAGE the chosen model's wounds;
 // EVENT_AMOUNT the damage of the triggering event; DAMAGED_BLACK_DAMAGE the BR wounds on every model this effect damaged.
@@ -37,7 +39,7 @@ export type AmountScale = { from: 'CASTER_BLACK_DAMAGE' | 'CASTER_DAMAGE' | 'TAR
 // it resolves only if the card's chosen model has been defeated or destroyed by then
 // (a defeat rescued by a reaction does not count). `area` redirects the moment to
 // every other mage within `range` of where the chosen model was. Both compose.
-export type MomentCondition = 'TARGET_DEFEATED' | 'UPGRADE_ASSIGNED' | 'EVOCATION_REMOVED' | 'TARGET_JINXED' | 'VP_LOST' | 'UPGRADE_DISCARDED' | 'TARGET_UPGRADED' | 'TARGET_HAS_3_NIGHTMARES' | 'PAIN_RESOLVED';
+export type MomentCondition = 'TARGET_DEFEATED' | 'UPGRADE_ASSIGNED' | 'EVOCATION_REMOVED' | 'TARGET_JINXED' | 'VP_LOST' | 'UPGRADE_DISCARDED' | 'TARGET_UPGRADED' | 'TARGET_HAS_3_NIGHTMARES' | 'PAIN_RESOLVED' | 'JINX_DISCARDED';
 export type Moment = (
  | { effect: 'DAMAGE'; amount: number }
  | { effect: 'HEAL'; amount: number }
@@ -61,7 +63,8 @@ export type Moment = (
  // The owner chooses one of their evocations to activate; optional bonus attack and damage inflicted by the Black Rose when it ends.
  // `movementBonus` adds movement for that activation only.
  // `near`: only evocations within that range of the targeted model can be chosen.
- | { effect: 'ACTIVATE_CHOICE'; archetype?: 'CONSTRUCT' | 'UNDEAD'; attackBonus?: number; movementBonus?: number; endDamage?: number; near?: { range: number } }
+ // `byTarget`: the target mage (not the caster) activates one of its own evocations; `attackBonusIfJinxDiscarded` applies only if the target discarded a jinx earlier in this effect.
+ | { effect: 'ACTIVATE_CHOICE'; archetype?: 'CONSTRUCT' | 'UNDEAD'; attackBonus?: number; movementBonus?: number; endDamage?: number; near?: { range: number }; byTarget?: boolean; attackBonusIfJinxDiscarded?: number }
  // EVENT_MODEL activates whatever the preceding EVENT_MODEL summon created.
  | { effect: 'ACTIVATE_EVOCATION'; kind: EvocationKind | 'EVENT_MODEL' }
  // Activates the chosen evocation under the caster's control (borrowed if it belongs to another mage).
@@ -116,6 +119,18 @@ export type Moment = (
  | { effect: 'ASSIGN_JINX'; jinx: JinxName | 'CHOICE' }
  // The caster discards one of their active quests or jinxes.
  | { effect: 'DISCARD_QUEST_OR_JINX' }
+ // The target mage discards one jinx of its own choice (if it has any).
+ | { effect: 'DISCARD_TARGET_JINX' }
+ // The caster gains 1 VP for each Black Rose damage cube the preceding CONVERT converted / each jinx on the target.
+ | { effect: 'GAIN_VP_PER_CONVERTED_BR' }
+ | { effect: 'GAIN_VP_PER_TARGET_JINX' }
+ // The caster moves to the target's room.
+ | { effect: 'MOVE_CASTER_TO_TARGET_ROOM' }
+ // The caster places the target mage in a room of one of these colors.
+ | { effect: 'PLACE_TARGET_IN_COLOR_ROOM'; colors: RoomColor[] }
+ // The caster takes one trophy / one solved quest (for final scoring) from the target mage.
+ | { effect: 'STEAL_TROPHY' }
+ | { effect: 'STEAL_SOLVED_QUEST' }
  // The caster draws spells from their grimoire.
  | { effect: 'DRAW_SPELLS'; amount: number }
  // Cubes in the target's room for each damage the preceding CONVERT could not convert / each jinx on the target.
@@ -292,7 +307,7 @@ export type TurnRecap = { id: string; round: number; playerId: PlayerId; playerN
 export type GameState = {
  gameId: string; hostId: PlayerId; round: number; phase: Phase; players: Player[]; board: Board;
  // Undefined selects the roster-based default at START_GAME, not during play.
- roomsPerColor?: 1 | 2 | 3;
+ roomsPerColor?: 1 | 3;
  setupOrder?: PlayerId[];
  setupStage?: 'SCHOOL' | 'MAGE' | null;
  moon?: 1 | 2 | 3;
@@ -330,7 +345,7 @@ export type GameAction =
  | { type: 'DRAFT_SCHOOL'; playerId: PlayerId; schoolId: string }
  | { type: 'DRAFT_MAGE'; playerId: PlayerId; mageId: MageDraftId }
  | { type: 'SET_READY'; playerId: PlayerId; ready: boolean }
- | { type: 'SET_ROOM_COUNT'; playerId: PlayerId; roomsPerColor: 1 | 2 | 3 | null }
+ | { type: 'SET_ROOM_COUNT'; playerId: PlayerId; roomsPerColor: 1 | 3 | null }
  | { type: 'START_GAME'; playerId: PlayerId }
  | { type: 'ADVANCE_PHASE'; playerId: PlayerId; expectedPhase: Phase; expectedRound: number }
  | ({ type: 'DRAW_STUDY'; playerId: PlayerId } & ({ deckId: string; deckIds?: never } | { deckIds: string[]; deckId?: never }))

@@ -176,6 +176,7 @@ function describeTrigger(condition:TriggerCondition):string {
   case 'VP_CHANGED':return `When ${subject('model')} gains or loses victory points`;
   case 'EVOCATION_LOST':return `When ${subject('evocation')} is defeated or removed`;
   case 'CUBE_PLACED':return `When ${subject('mage')} places a cube in a room`;
+  case 'TROPHY_OBTAINED':return `When ${subject('mage')} obtains a trophy`;
  }
 }
 
@@ -205,6 +206,10 @@ export function upgradeLegacyCards(value: unknown): void {
   if (AGONY_DARK_SIDES[node.name] && isSchool('agony')) node.darkSide = structuredClone(AGONY_DARK_SIDES[node.name]);
   else if (ALCHEMY_DARK_SIDES[node.name] && isSchool('alchemy')) node.darkSide = structuredClone(ALCHEMY_DARK_SIDES[node.name]);
   else if (TECHNOMANCY_DARK_SIDES[node.name] && isSchool('technomancy')) node.darkSide = structuredClone(TECHNOMANCY_DARK_SIDES[node.name]);
+  else if (isSchool('hex')) {
+   if (HEX_DARK_SIDES[node.name]) node.darkSide = structuredClone(HEX_DARK_SIDES[node.name]);
+   else if (HEX_LIGHT_ONLY.includes(node.name)) node.lightOnly = true;
+  }
   else if (isSchool('nightmare')) {
    if (NIGHTMARE_DARK_SIDES[node.name]) node.darkSide = structuredClone(NIGHTMARE_DARK_SIDES[node.name]);
    else if (['Shifting Nightmare', 'Mental Chasm', 'Shadow Blast'].includes(node.name)) node.lightOnly = true;
@@ -588,6 +593,52 @@ export function createShamanicDeck(prefix: string, schoolId?: string): Card[] {
  return Array.from({ length: 36 }, (_, i) => ({ ...patterns[i % patterns.length], element: patterns[i % patterns.length].element ?? SHAMANIC_ELEMENTS[i % patterns.length], id: `${prefix}-${i + 1}`, kind: 'SPELL', ...(schoolId ? { schoolId } : {}) }));
 }
 
+// Dark sides of the Hex school, keyed by card name. The shared PLACE (instability) Effect comes from the light side.
+// Most dark sides hinge on the target discarding one of its jinxes (JINX_DISCARDED).
+const HEX_LIGHT_ONLY = ['ca\u2019Dario\u2019s amulet', 'Cerebral worm'];
+const discardTargetJinx: Moment = { effect: 'DISCARD_TARGET_JINX' };
+const HEX_DARK_SIDES: Record<string, DarkSide> = {
+ 'Litany': { moments: [discardTargetJinx, { effect: 'ACTIVATE_CHOICE', byTarget: true, attackBonusIfJinxDiscarded: 1 }], range: 2, target: 'MAGE', element: 'air', spellType: 'CONTINGENCY',
+  rulesText: 'The target discards 1 jinx. Then the target activates one of its own evocations; if it discarded a jinx, that evocation gets +1 attack.' },
+ 'Crypt fever': { moments: [moment.convert(4), discardTargetJinx, { effect: 'GAIN_VP_PER_CONVERTED_BR', when: 'JINX_DISCARDED' }, { effect: 'MOVE_TARGET', distance: 1 }, { effect: 'MOVE_TARGET', distance: 1 }],
+  range: Number.POSITIVE_INFINITY, target: 'MAGE', element: 'earth', spellType: 'CONTINGENCY',
+  rulesText: 'Convert 4 damage on the target. The target discards 1 jinx; if it does, gain 1 VP for each BR damage converted this way. Move the target up to 1, then again up to 1.' },
+ 'Black feather': { moments: [{ effect: 'MOVE_CASTER_TO_TARGET_ROOM' }, { effect: 'STEAL_VP', amount: 1, when: 'TARGET_JINXED' }, { effect: 'PLACE_TARGET_IN_COLOR_ROOM', colors: ['amber', 'azure'] }],
+  range: Number.POSITIVE_INFINITY, target: 'MAGE', element: 'air', spellType: 'CONTINGENCY',
+  rulesText: 'Place your mage in the target\u2019s room. If the target has a jinx assigned, steal 1 VP from it. Then place the target in a yellow or blue room of your choice.' },
+ 'Baleful curse': { moments: [moment.damage(2), discardTargetJinx, { effect: 'LOSE_VP', amount: 2, when: 'JINX_DISCARDED' }],
+  range: Number.POSITIVE_INFINITY, target: 'MAGE', element: 'earth', spellType: 'PROTECTION', triggerTarget: 'EVENT_ACTOR',
+  triggerText: 'When a mage inflicts damage to you',
+  rulesText: 'Target that mage: inflict 2 damage. It discards 1 jinx; if it does, it loses 2 VP.',
+  trigger: { event: 'DAMAGE_TAKEN', relation: 'SELF', relationTo: 'EVENT_MODEL', scope: 'ANY', modelKind: 'MAGE', damageOrigins: ['MAGE_PHYSICAL', 'SPELL'] } },
+ 'Feverish dream': { moments: [moment.damage(2), discardTargetJinx, { ...moment.damage(2), when: 'JINX_DISCARDED' }, { effect: 'LOSE_VP', amount: 1 }],
+  range: 2, target: 'MAGE', element: 'stars', spellType: 'COMBAT',
+  rulesText: 'Inflict 2 damage on the target. It discards 1 jinx; if it does, inflict 2 more damage. The target loses 1 VP.' },
+ 'An eye for an eye': { moments: [{ effect: 'LOSE_VP_OR_PREVENT', amount: 1 }, { effect: 'GAIN_VP_PER_TARGET_JINX' }],
+  range: Number.POSITIVE_INFINITY, target: 'MAGE', element: 'air', spellType: 'PROTECTION', triggerTarget: 'EVENT_ACTOR',
+  triggerText: 'When another mage targets you with a combat spell',
+  rulesText: 'Target that mage: it chooses to lose 1 VP or you ignore the effect. Gain 1 VP for each jinx assigned to it.',
+  trigger: { event: 'SPELL_TARGETED', relation: 'SELF', relationTo: 'EVENT_MODEL', scope: 'ANY', spellTypes: ['COMBAT'] } },
+ 'Suffocation': { moments: [{ effect: 'ACTIVATE_TARGET_ROOM', used: true }, moment.convert(3), { effect: 'GAIN_VP', amount: 1 }],
+  range: Number.POSITIVE_INFINITY, target: 'MAGE', element: 'stars', spellType: 'TRAP', triggerTarget: 'EVENT_MODEL',
+  triggerText: 'When another mage with a jinx resolves a room effect',
+  rulesText: 'Target that mage: activate that room, even if it was already used. Convert 3 damage on it. Gain 1 VP.',
+  trigger: { event: 'ROOM_ACTIVATED', relation: 'ENEMY', scope: 'ANY', modelKind: 'MAGE', modelJinxed: true } },
+ 'Curse': { moments: [moment.damage(1), { ...moment.damage(2), when: 'TARGET_JINXED' }, moment.convert(2)],
+  range: 3, target: 'MAGE', element: 'good', spellType: 'COMBAT',
+  rulesText: 'Inflict 1 damage on the target, or 3 damage in total if it has at least 1 jinx assigned. Then convert 2 damage on it.' },
+ 'Bad luck': { moments: [{ effect: 'STEAL_TROPHY' }, { effect: 'STEAL_VP', amount: 1 }],
+  range: Number.POSITIVE_INFINITY, target: 'MAGE', element: 'good', spellType: 'TRAP', triggerTarget: 'EVENT_MODEL',
+  triggerText: 'When another mage obtains a trophy',
+  rulesText: 'Target that mage: steal a trophy from it and steal 1 VP from it.',
+  trigger: { event: 'TROPHY_OBTAINED', relation: 'ENEMY', scope: 'ANY' } },
+ 'Cursed oracle': { moments: [moment.damage(3), discardTargetJinx, { effect: 'STEAL_SOLVED_QUEST', when: 'JINX_DISCARDED' }],
+  range: Number.POSITIVE_INFINITY, target: 'MAGE', element: 'good', spellType: 'TRAP', triggerTarget: 'EVENT_MODEL',
+  triggerText: 'When another mage with a jinx solves a quest',
+  rulesText: 'Target that mage: inflict 3 damage. It discards 1 jinx; if it does, steal one of its solved quests (for final scoring).',
+  trigger: { event: 'QUEST_SOLVED', relation: 'ENEMY', scope: 'ANY', modelJinxed: true } },
+};
+
 export function createHexDeck(prefix: string, schoolId?: string): Card[] {
  const m = moment;
  const assign = (jinx: JinxName | 'CHOICE'): Moment => ({ effect: 'ASSIGN_JINX', jinx });
@@ -598,7 +649,7 @@ export function createHexDeck(prefix: string, schoolId?: string): Card[] {
  const patterns: Omit<Card, 'id' | 'kind'>[] = [
   { name: 'Litany', element: 'air', spellType: 'CONTINGENCY', range: 0, target: 'SELF', effects: mainEffects([moveTarget, { effect: 'DISCARD_QUEST_OR_JINX' }, { effect: 'DRAW_SPELLS', amount: 2 }]),
    rulesText: 'Move up to 1. Discard one active quest or jinx assigned to you. Draw 2 spells.' },
-  { name: 'Crypt fever', element: 'earth', spellType: 'CONTINGENCY', range: 2, target: 'MAGE', effects: mainEffects([m.damage(2), assign('VULNERABILITY'), moveTarget, moveTarget, moveSelf]),
+  { name: 'Crypt fever', element: 'earth', spellType: 'CONTINGENCY', range: 2, target: 'MAGE', effects: unstableEffects([m.damage(2), assign('VULNERABILITY'), moveTarget, moveTarget, moveSelf]),
    rulesText: 'Inflict 2 damage and assign Vulnerability to the target. Move the target up to 1, then again up to 1. Move yourself up to 1.' },
   { name: 'Black feather', element: 'air', spellType: 'CONTINGENCY', range: 2, target: 'MAGE', effects: unstableEffects([steal, assign('WEAKNESS'), moveSelf]),
    rulesText: 'Steal 1 VP from the target and assign Weakness to it. Move yourself up to 1.' },
@@ -637,7 +688,7 @@ export function createHexDeck(prefix: string, schoolId?: string): Card[] {
    rulesText: 'Target that mage: steal 1 VP from it and assign Slowness to it.',
    trigger: { event: 'QUEST_SOLVED', relation: 'ENEMY', scope: 'ANY' } },
  ];
- return Array.from({ length: 36 }, (_, i) => ({ ...patterns[i % patterns.length], id: `${prefix}-${i + 1}`, kind: 'SPELL', ...(schoolId ? { schoolId } : {}) }));
+ return Array.from({ length: 36 }, (_, i) => { const pattern = patterns[i % patterns.length]; const dark = HEX_DARK_SIDES[pattern.name]; return { ...pattern, ...(dark ? { darkSide: structuredClone(dark) } : { lightOnly: true }), id: `${prefix}-${i + 1}`, kind: 'SPELL' as const, ...(schoolId ? { schoolId } : {}) }; });
 }
 
 export function createLibrary(): LibraryDeck[] {

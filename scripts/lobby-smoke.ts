@@ -353,7 +353,7 @@ async function main() {
    assert.equal(epoch.phase, 'BLACK_ROSE'); assert.equal(epoch.round, 1); autoStarts++;
    assert.ok(mages[0].messages.slice(from).filter(m => m.type === 'STATE').every(m => m.state!.phase === 'BLACK_ROSE'),
     'Final SET_READY must never expose an all-ready lobby before auto-start');
-  assert.equal(epoch.log.filter(line => line.startsWith('Round 1 · Pink Tulip —')).length, 1);
+  assert.equal(epoch.log.filter(line => line.startsWith('Round 1 · Black Rose —')).length, 1);
    await roster(name, epoch, mages);
    await visitor.join(name, false, count === 4 ? /^Room full \(4 mages\)$/ : /battle already in progress/, 'Visitor');
    await visitor.command({ type: 'ADVANCE_PHASE', playerId: 'p1', expectedPhase: epoch.phase, expectedRound: epoch.round }, /Join a room first/);

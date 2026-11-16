@@ -65,7 +65,7 @@ for(const viewport of [{width:1440,height:1000},{width:390,height:844}])test.des
   s.players[0].wizard.damageCubes=2;s.players[0].wizard.damageByPlayer={p2:2};s.players[0].wizard.damageOrder=['p2','p2'];s.players[1].cubes.available-=2;s.players[1].cubes.onWizard=2;
   const own=summonEvocation(s,s.players[0],'CADAVER',{q:2,r:0})!,enemy=summonEvocation(s,s.players[1],'CADAVER',{q:2,r:0})!;
   const wire=await mount(page,s);await selectSpells(page);const spell=page.locator('.prepared .spell').filter({has:page.locator('strong',{hasText:'Peak of Agony'})});
-  await expect(spell.locator('.spell-effects > span')).toHaveText([/Inflict 2 · enemy models in target room/,/Pink Tulip convert 2 · your mage · last damage from other mages/,/Pain 2/]);
+  await expect(spell.locator('.spell-effects > span')).toHaveText([/Inflict 2 · enemy models in target room/,/Black Rose convert 2 · your mage · last damage from other mages/,/Pain 2/]);
   await expect(spell).toContainText('Range 2');await spell.click();
   await page.locator('.hex[data-room-id="room-1,1"]').click();await expect(page.getByRole('button',{name:'Cast Peak of Agony here',exact:true})).toBeDisabled();
   await page.locator('.hex[data-room-id="room-2,0"]').click();await page.getByRole('button',{name:'Cast Peak of Agony here',exact:true}).click();
@@ -76,7 +76,7 @@ for(const viewport of [{width:1440,height:1000},{width:390,height:844}])test.des
   const chronicle=await openChronicle(page);await expect(chronicle.getByRole('log')).toContainText('Rose Warden casts Peak of Agony');
   await expect(chronicle.getByRole('log')).toContainText('Moment 1/3 · Peak of Agony: Deal 2 damage to enemy models in the selected room');
   await expect(chronicle.getByRole('log')).toContainText('Moment 2/3 · Peak of Agony: Convert the last 2 damage cubes received from other mages on the caster’s mage');
-  await expect(chronicle.getByRole('log')).toContainText('Moment 3/3 · Peak of Agony: The Pink Tulip inflicts 2 damage cubes');
+  await expect(chronicle.getByRole('log')).toContainText('Moment 3/3 · Peak of Agony: The Black Rose inflicts 2 damage cubes');
   expect(wire.errors).toEqual([]);await page.screenshot({path:test.info().outputPath('peak-chronicle.png')});
   const resolved=structuredClone(wire.state);await chronicle.getByRole('button',{name:'Close Chronicle',exact:true}).click();
   await page.getByRole('button',{name:'Undo action',exact:true}).click();await expect.poll(()=>wire.actions.length).toBe(2);expect(wire.state).toEqual(s);
@@ -96,8 +96,8 @@ for(const viewport of [{width:1440,height:1000},{width:390,height:844}])test.des
   const prompt=page.getByRole('dialog',{name:`Choose a color of cube in ${room.name} to convert.`});
   await expect(prompt).toBeVisible();
   await expect(prompt.getByRole('button',{name:'Blue (Blue Seer)',exact:true})).toBeVisible();
-  await expect(prompt.getByRole('button',{name:'Pink Tulip',exact:true})).toBeVisible();
-  await prompt.getByRole('button',{name:'Pink Tulip',exact:true}).click();await expect(prompt).toBeHidden();
+  await expect(prompt.getByRole('button',{name:'Black Rose',exact:true})).toBeVisible();
+  await prompt.getByRole('button',{name:'Black Rose',exact:true}).click();await expect(prompt).toBeHidden();
   await expect.poll(()=>wire.actions.length).toBe(2);
   expect(wire.state.board.rooms.find(r=>r.id===room.id)).toMatchObject({instability:2,cubesByPlayer:{p1:1,p2:1},instabilityOrder:['p2','p1']});
   expect(wire.state.players[0].cubes).toMatchObject({available:24,onBoard:1});
@@ -163,7 +163,7 @@ for(const viewport of [{width:1440,height:1000},{width:390,height:844}])test.des
   expect(wire.state.feedbackEvents!.filter(e=>e.kind==='SPELL_TRIGGERED'&&e.activeSpellId==='source-mark')).toHaveLength(eligible?1:0);
   expect(wire.errors).toEqual([]);
  });
- test('end of Pink Tulip replaces solved-only held quests but preserves completed unsolved rewards',async({page})=>{
+ test('end of Black Rose replaces solved-only held quests but preserves completed unsolved rewards',async({page})=>{
   const s=fixture();s.phase='BLACK_ROSE';s.activation=null;s.currentPlayerId=null;
   const solved=s.questDeck.shift()!;Object.assign(solved,{completed:true,claimed:true});s.players[0].quest=solved;
   const ready=s.questDeck.shift()!;Object.assign(ready,{completed:true,claimed:false});s.players[1].quest=ready;

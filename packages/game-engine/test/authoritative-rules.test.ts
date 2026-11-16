@@ -129,7 +129,7 @@ describe('capacity-dependent triple prizes and finite dense rankings',()=>{
   violet.rebuiltEffect='ROOM_DAMAGE';
   expect(getRoomEffect(violet)).toBe('ROOM_DAMAGE');
  });
- it('includes Pink Tulip in dense contribution ranks and returns no awards for zero or negative counts',()=>{
+ it('includes Black Rose in dense contribution ranks and returns no awards for zero or negative counts',()=>{
   expect(getContributionAwards({p1:4,p2:4,[BLACK_ROSE_ID]:1,p3:0,p4:-1},ENDGAME_REWARDS)).toEqual([
    {playerId:'p1',cubes:4,rank:1,tied:true,points:3},
    {playerId:'p2',cubes:4,rank:1,tied:true,points:3},
@@ -150,7 +150,7 @@ describe('capacity-dependent triple prizes and finite dense rankings',()=>{
   expect(getContributionAwards(roomCounts,[6,3,1]).find(a=>a.playerId==='p3')?.points).toBe(1);
   expect(getContributionAwards(endgameCounts,ENDGAME_REWARDS).find(a=>a.playerId==='p3')?.points).toBe(1);
  });
- it('reports Pink Tulip room majorities alone or tied, never zero-count winners',()=>{
+ it('reports Black Rose room majorities alone or tied, never zero-count winners',()=>{
   expect(getRoomMajorityWinners({cubesByPlayer:{p1:1,[BLACK_ROSE_ID]:3}})).toEqual([BLACK_ROSE_ID]);
   expect(getRoomMajorityWinners({cubesByPlayer:{p1:3,[BLACK_ROSE_ID]:3,p2:0}})).toEqual(['p1',BLACK_ROSE_ID]);
   expect(getRoomMajorityWinners({cubesByPlayer:{p1:0,[BLACK_ROSE_ID]:0}})).toEqual([]);
@@ -168,7 +168,7 @@ describe('endgame timing, majorities and deterministic victory',()=>{
   expect(n.players.map(p=>p.victoryPoints)).toEqual([0,1,0,0]);expect(n.blackRose).toMatchObject({victoryPoints:0,kills:0,trophies:[]});
   expect(n.log.filter(l=>l.includes('endgame')&&l.includes('majority'))).toEqual([]);
  });
- it('breaks equal final scores by solved quests, then trophies, then the crown before Pink Tulip',()=>{
+ it('breaks equal final scores by solved quests, then trophies, then the crown before Black Rose',()=>{
   const players=[
    {id:'p1',victoryPoints:30,questsCompleted:1,trophies:['p4'],firstPlayer:false},
    {id:'p2',victoryPoints:30,questsCompleted:2,trophies:[],firstPlayer:false},

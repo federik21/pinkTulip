@@ -160,7 +160,7 @@ describe('defeat reactions happen before scoring and respawn',()=>{
   const result=respond(strike(lethalFixture([moment.damage(1),moment.ifTargetDefeated(moment.nearTarget(moment.damage(2),1))])));
   expect(result.players[2].wizard.damageCubes).toBe(0);expect(result.players[1].wizard.damageCubes).toBe(8);
  });
- it('also cancels Pink Tulip defeat credit and the defeated-mage reward when Pain is healed',()=>{
+ it('also cancels Black Rose defeat credit and the defeated-mage reward when Pain is healed',()=>{
   const s=fixture();s.players[0].wizard.damageCubes=9;s.players[0].wizard.blackDamage=9;
   s.players[0].prepared.rapid={used:false,card:{id:'pain',name:'Pain',kind:'SPELL',target:'SELF',range:0,effects:mainEffects([moment.pain(1)])}};
   s.readiedSpells=[{id:'neutral-rescue',playerId:'p1',card:{id:'neutral-card',name:'Neutral rescue',kind:'SPELL',spellType:'PROTECTION',target:'SELF',range:0,

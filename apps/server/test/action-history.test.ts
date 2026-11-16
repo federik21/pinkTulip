@@ -272,7 +272,7 @@ describe('turn ownership, branching, validation and phase barriers', () => {
      game.phase = 'SETUP'; game.setupStage = 'MAGE'; game.setupOrder = ['p2','p1'];
      action = { type, playerId:'p1', mageId:'tizio' }; break;
     case 'SET_ROOM_COUNT':
-     game.phase = 'LOBBY'; action = { type, playerId:'p1', roomsPerColor:2 }; break;
+     game.phase = 'LOBBY'; action = { type, playerId:'p1', roomsPerColor:3 }; break;
     case 'SET_READY':
      game.phase = 'LOBBY';
      action = { type, playerId:'p1', ready:true }; break;

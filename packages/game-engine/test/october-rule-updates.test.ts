@@ -137,7 +137,7 @@ describe('Chronicle records public cards and their ordered moments, not face-dow
  });
 });
 
-describe('Pink Tulip only counts unsolved quests when issuing replacements',()=>{
+describe('Black Rose only counts unsolved quests when issuing replacements',()=>{
  it.each(['none','solved-only','completed-unsolved','incomplete','solved-and-additional'] as const)('handles %s without duplicating cards or losing a free reward',mode=>{
   const s=fixture();s.phase='BLACK_ROSE';s.activation=null;s.currentPlayerId=null;const p=s.players[0],quest=s.questDeck.shift()!;
   if(mode!=='none')p.quest=quest;else s.questDeck.push(quest);

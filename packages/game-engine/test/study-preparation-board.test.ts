@@ -61,6 +61,6 @@ describe('two to four unique prepared spells with optional flexible slot',()=>{
 });
 
 describe('host room-count configuration and atomic roster-scaled startup',()=>{
- it.each([[1,1],[2,1],[3,2],[4,3]])('exports the %i-player default/preview of %i rooms per color',(count,expected)=>expect(getDefaultRoomsPerColor(count)).toBe(expected));
+ it.each([[1,1],[2,1],[3,1],[4,3]])('exports the %i-player default/preview of %i rooms per color',(count,expected)=>expect(getDefaultRoomsPerColor(count)).toBe(expected));
  it.each([0,5,-1,2.5,NaN,Infinity])('rejects unsupported default roster %s',count=>expect(()=>getDefaultRoomsPerColor(count)).toThrow(/1 and 4/));
 });

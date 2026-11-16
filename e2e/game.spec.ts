@@ -831,7 +831,7 @@ test('two browsers exhaust two round tokens, spend turn actions on spells, and r
       const availableBefore = await player(b, moon.name).locator('[title="Available cubes"]').innerText();
       await expect(attackModel).toBeEnabled();
       await expect(attackModel.locator('small')).toHaveText('2 damage');
-      const scoreNames = [ember.name, moon.name, 'Pink Tulip'];
+      const scoreNames = [ember.name, moon.name, 'Black Rose'];
       const scoresBefore = (await b.locator('.player-heading > b').allTextContents()).map(text => Number(text.match(/\d+/)![0]));
       const questProgressBefore = await Promise.all(pages.map(async page => {
         await selectControlTab(page, 'Quests');
@@ -1017,7 +1017,7 @@ test('four real browsers wait for every joined mage, auto-start, show named room
         await expect(tile).toHaveAttribute('aria-label', new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')},`));
         await expect(tile.locator(':scope > title')).toContainText(name);
       }
-      await expect(hex(page, '0,0').locator('.room-name')).toHaveText('Pink Tulip Chamber');
+      await expect(hex(page, '0,0').locator('.room-name')).toHaveText('Black Rose Chamber');
       for (const [index, color] of ['Rose', 'Blue', 'Amber', 'Green'].entries()) {
         await expect(hex(page, mages[index].coordinates).locator('.room-name')).toHaveText(`${color} Mage cell`);
       }
@@ -1074,7 +1074,7 @@ test('four real browsers wait for every joined mage, auto-start, show named room
       await expect(hex(page, '1,1').locator('.cube-owner circle').last()).toHaveCSS('fill', mageColors[3]);
       await closeControls(page);
       await hex(page, '0,0').click();
-      await expect(page.locator('.room-detail > strong')).toHaveText('Pink Tulip Chamber');
+      await expect(page.locator('.room-detail > strong')).toHaveText('Black Rose Chamber');
       // Geometry and contrast are read from the rendered SVG, never injected state.
       const readability = await page.locator('g.hex:not(.start-room)').evaluateAll(tiles => tiles.map(tile => {
         const count = tile.querySelector<SVGTextElement>('.cube-count')!;
@@ -1116,7 +1116,7 @@ test('four real browsers wait for every joined mage, auto-start, show named room
 async function receiveQuests(mages: Mage[], info: TestInfo) {
   const pages = mages.map(mage => mage.page);
   await pages[0].getByRole('button', { name: /^Receive quests & begin Study/ }).click();
-  // A resolved Pink Tulip is observable as the quest gate, not a second Continue click.
+  // A resolved Black Rose is observable as the quest gate, not a second Continue click.
   await expect.poll(async () => {
     const phases = await Promise.all(pages.map(page => page.locator('.phase-track .current span').textContent()));
     return phases.every(phase => phase === 'Study') ||
@@ -1593,7 +1593,7 @@ test('three real rounds retain finite personal draws without initial overflow an
         questDiscards, spentAmberSpecialSkips };
       await testInfo.attach('limits-coverage', { body: JSON.stringify(coverage, null, 2), contentType: 'application/json' });
       testInfo.annotations.push({ type: 'coverage', description: JSON.stringify(coverage) });
-      if (!questDiscards) testInfo.annotations.push({ type: 'gap', description: 'Amber quests completed before Pink Tulip; no random quest overflow occurred. No state was injected.' });
+      if (!questDiscards) testInfo.annotations.push({ type: 'gap', description: 'Amber quests completed before Black Rose; no random quest overflow occurred. No state was injected.' });
     });
 
     await test.step('Finish the third real round and show final scores, never a fourth round', async () => {
@@ -1609,12 +1609,12 @@ test('three real rounds retain finite personal draws without initial overflow an
       const standings = await a.locator('.player-heading > b').allTextContents();
       expect(standings).toHaveLength(3);
       const scores = standings.map(score => Number(score.match(/\d+/)![0]));
-      const names = [ember.name, moon.name, 'Pink Tulip'];
+      const names = [ember.name, moon.name, 'Black Rose'];
       const winner = names[scores.indexOf(Math.max(...scores))];
       for (const page of pages) {
         await expect(page.locator('.header-meta')).toContainText('Round 3');
         await expect(page.locator('.victory h2')).toHaveText(`♛ ${winner} wins`);
-        await expect(page.locator('.victory')).toContainText('Pink Tulip:');
+        await expect(page.locator('.victory')).toContainText('Black Rose:');
         await expect(page.locator('.victory')).toContainText('Final majorities and first-player bonus included.');
         await expect(page.locator('.player-heading > b')).toHaveText(standings);
         await expect(page.getByRole('button', { name: /^Begin round 4/ })).toHaveCount(0);

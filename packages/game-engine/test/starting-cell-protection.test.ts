@@ -21,7 +21,7 @@ function fixture(position:'START'|'ROOM'):GameState {
 }
 const solve=(s:GameState)=>applyAction(s,{type:'USE_QUEST_REWARD',playerId:'p1',questId:'vp-quest'});
 
-describe('mages in a starting cell only suffer Pink Tulip damage',()=>{
+describe('mages in a starting cell only suffer Black Rose damage',()=>{
  it('takes damage from another player’s ongoing effect outside the cell (control)',()=>{
   const after=solve(fixture('ROOM'));
   expect(after.players[0].victoryPoints).toBe(1);

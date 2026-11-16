@@ -62,6 +62,7 @@ export function getUpgradeSupply(s:Pick<GameState,'evocations'>):Record<UpgradeN
 export const JINX_NAMES:readonly JinxName[]=['OBLIVION','SLOWNESS','VULNERABILITY','WEAKNESS'];
 export const JINX_COPIES=3;
 export const JINX_TARGET=3;
+const ROOM_COLOR_NAMES:Readonly<Record<RoomColor,string>>={crimson:'red',azure:'blue',emerald:'green',amber:'yellow',violet:'purple',grey:'grey'};
 export const JINX_LABELS:Readonly<Record<JinxName,string>>={OBLIVION:'Oblivion',SLOWNESS:'Slowness',VULNERABILITY:'Vulnerability',WEAKNESS:'Weakness'};
 export const JINX_RULES:Readonly<Record<JinxName,{effect:string;progress:string}>>={
  OBLIVION:{effect:'Whenever you place cubes in a room, place 1 cube less.',progress:'Place 1 cube here whenever you place any number of cubes in a room.'},
@@ -228,13 +229,12 @@ const requireActivation = (s: GameState, id: string): Activation => {
  return s.activation!;
 };
 
-export function getDefaultRoomsPerColor(playerCount:number):1|2|3 {
+export function getDefaultRoomsPerColor(playerCount:number):1|3 {
  assert(Number.isInteger(playerCount)&&playerCount>=1&&playerCount<=MAX_MAGES,'Choose between 1 and 4 mages');
- // A host-only Lobby may preview the two-mage minimum before another seat joins.
- return Math.max(1,playerCount-1) as 1|2|3;
+ return playerCount>=4 ? 3 : 1;
 }
 
-function assignRoomColors(positions:Hex[],startingPositions:Hex[],roomsPerColor:1|2|3,random:()=>number):Map<string,RoomColor> {
+function assignRoomColors(positions:Hex[],startingPositions:Hex[],roomsPerColor:1|3,random:()=>number):Map<string,RoomColor> {
  const remaining=new Map<RoomColor,number>(ROOM_COLORS.map(color=>[color,roomsPerColor]));
  const assigned=new Map<string,RoomColor>();
  const centerRing=positions.filter(position=>hexDistance(position,{q:0,r:0})===1);
@@ -291,8 +291,8 @@ function assignRoomColors(positions:Hex[],startingPositions:Hex[],roomsPerColor:
  return assigned;
 }
 
-export function createDemoBoard(roomsPerColor:1|2|3=3,random:()=>number=Math.random): Board {
- assert([1,2,3].includes(roomsPerColor),'Choose 1, 2 or 3 rooms per color');
+export function createDemoBoard(roomsPerColor:1|3=3,random:()=>number=Math.random): Board {
+ assert([1,3].includes(roomsPerColor),'Choose 1 or 3 rooms per color');
  const startingPositions=[
   roomsPerColor===1?{q:2,r:-1}:{q:3,r:-2},
   roomsPerColor===1?{q:-2,r:1}:{q:-3,r:2},
@@ -303,8 +303,8 @@ export function createDemoBoard(roomsPerColor:1|2|3=3,random:()=>number=Math.ran
  const tiles: Hex[] = [];
  for (let r=-2;r<=2;r++) for(let q=-2;q<=2;q++) {
   const distance=hexDistance({q,r},{q:0,r:0});
-  // Ring 1 is connected on its own; six ring-2 corners add one of each color.
-  if(distance<=1 || (distance===2 && (roomsPerColor===3 || (roomsPerColor===2 && (q===0 || r===0 || q+r===0)))))tiles.push({q,r});
+  // Ring 1 is connected on its own; the 3-room preset adds the six ring-2 corners for full color coverage.
+  if(distance<=1 || (distance===2 && roomsPerColor===3))tiles.push({q,r});
  }
  tiles.push(...startingRooms.map(start=>start.position));
  const coloredPositions=tiles.filter(position=>
@@ -628,7 +628,7 @@ function drawQuest(s:GameState) {
 // stored in GameState; a root action remains a single clone/commit boundary.
 type ModelSnapshot = { id:string; playerId:string; kind:'MAGE'|'EVOCATION'; generation:number };
 // Local to a single effect, so a nested spell cannot replace its summoned model.
-type EffectResolution = { casterSeen?:{position:Hex}; choices?:Record<string,string>; assigned?:string[]; eventActor?:ModelSnapshot; summoned?:ModelSnapshot; activationIsExplicit:boolean; upgraded?:boolean; removed?:{position:Hex;attack:number;roomId?:string}; eventPosition?:Hex; eventKind?:EvocationKind; damaged?:ModelSnapshot[]; blackDamaged?:Record<string,number>; moved?:ModelSnapshot; spellEvent?:SpellEvent; unconverted?:number; instabilityPlaced?:number; protectedTargets?:Set<string>; vpLost?:number; healed?:number; upgradeDiscarded?:boolean; painResolved?:boolean; trapsAtStart?:number };
+type EffectResolution = { casterSeen?:{position:Hex}; choices?:Record<string,string>; assigned?:string[]; eventActor?:ModelSnapshot; summoned?:ModelSnapshot; activationIsExplicit:boolean; upgraded?:boolean; removed?:{position:Hex;attack:number;roomId?:string}; eventPosition?:Hex; eventKind?:EvocationKind; damaged?:ModelSnapshot[]; blackDamaged?:Record<string,number>; moved?:ModelSnapshot; spellEvent?:SpellEvent; unconverted?:number; instabilityPlaced?:number; protectedTargets?:Set<string>; vpLost?:number; healed?:number; upgradeDiscarded?:boolean; painResolved?:boolean; trapsAtStart?:number; jinxDiscarded?:boolean; convertedBr?:number };
 type SpellEvent = { event:TriggerEvent; model?:ModelSnapshot; actor?:ModelSnapshot; roomId?:string; target?:FeedbackTarget; damageOrigin?:DamageOrigin; amount?:number; sourceId?:string; onIgnored?:()=>void; position?:Hex; kind?:EvocationKind; spellType?:Card['spellType']; sourceCard?:Card; moment?:string; prevented?:{value:boolean}; afterResolution?:()=>void };
 type PendingMageDefeat = { ref:ModelSnapshot; roomId?:string; target:FeedbackTarget; source?:Player; liquefyThePain?:boolean };
 type ReplayEntropy={ids:string[];random:number[]};
@@ -767,6 +767,10 @@ function matchesTrigger(s:GameState,active:ActiveSpell,condition:TriggerConditio
  if(damageOrigins&&(!event.damageOrigin||!damageOrigins.includes(event.damageOrigin)))return false;
  if(condition.modelKind&&event.model?.kind!==condition.modelKind)return false;
  if(condition.actorKind&&event.actor?.kind!==condition.actorKind)return false;
+ if(condition.modelJinxed) {
+  const mage=liveModel(s,event.model)?.mage;
+  if(!mage||!getMageJinxes(mage).length)return false;
+ }
  if(condition.modelRelation&&(!event.model||(condition.modelRelation==='SELF')!==(event.model.playerId===active.playerId)))return false;
  if(condition.roomColors) {
   const color=event.roomId?s.board.rooms.find(r=>r.id===event.roomId)?.color:undefined;
@@ -954,8 +958,9 @@ function resolveInstructionBody(s:GameState,owner:Player,instruction:TriggeredIn
     // Damage can be converted on the caster's own mage, but not on friendly evocations.
     if(ref!.playerId===owner.id&&!target.mage)break;
    {
-   const converted=convertDamageWithChoice(s,owner,target.model,target.location,instruction.amount,modelFeedbackTarget(s,ref)!);
-   if(effect)effect.unconverted=Math.max(0,instruction.amount-converted);
+   const stats={black:0};
+   const converted=convertDamageWithChoice(s,owner,target.model,target.location,instruction.amount,modelFeedbackTarget(s,ref)!,stats);
+   if(effect){effect.unconverted=Math.max(0,instruction.amount-converted);effect.convertedBr=(effect.convertedBr??0)+stats.black;}
    }
    break;
   }
@@ -1192,7 +1197,7 @@ function describeInstructionBody(instruction:TriggeredInstruction):string {
   case 'ATTACK_BONUS':return `The chosen evocation gets +${instruction.amount} attack on its next activation.`;
   case 'MOVE_DAMAGED':return `Move one model damaged by this effect up to ${instruction.distance} ${instruction.distance===1?'space':'spaces'}.`;
   case 'ACTIVATE_ROOM':return 'Activate the room effect where the chosen evocation stands.';
-  case 'ACTIVATE_CHOICE':return `Activate one of your ${instruction.archetype==='CONSTRUCT'?'constructs':instruction.archetype==='UNDEAD'?'undead evocations':'evocations'}${instruction.attackBonus?` with +${instruction.attackBonus} attack`:''}${instruction.movementBonus?`${instruction.attackBonus?' and':' with'} +${instruction.movementBonus} movement`:''}${instruction.endDamage?`; when it ends BR inflicts ${instruction.endDamage} damage on it`:''}${instruction.near?` (only one within range ${instruction.near.range} of ${target})`:''}.`;
+  case 'ACTIVATE_CHOICE':return `${instruction.byTarget?`${target} activates one of their own`:'Activate one of your'} ${instruction.archetype==='CONSTRUCT'?'constructs':instruction.archetype==='UNDEAD'?'undead evocations':'evocations'}${instruction.attackBonusIfJinxDiscarded?`; it gets +${instruction.attackBonusIfJinxDiscarded} attack this activation if a jinx was discarded`:''}${instruction.attackBonus?` with +${instruction.attackBonus} attack`:''}${instruction.movementBonus?`${instruction.attackBonus?' and':' with'} +${instruction.movementBonus} movement`:''}${instruction.endDamage?`; when it ends BR inflicts ${instruction.endDamage} damage on it`:''}${instruction.near?` (only one within range ${instruction.near.range} of ${target})`:''}.`;
   case 'LOOK_LIBRARY':return `Look at ${instruction.cards} cards of one school, take 1 and discard the rest.`;
   case 'SEARCH_GRIMOIRE':return instruction.keyword==='SUMMON'?'Search your grimoire for a card with the Summon keyword, draw it, then shuffle it.':'Search your grimoire, draw one card, then shuffle it.';
   case 'DRAW_SCHOOL':return `Draw ${instruction.amount} card${instruction.amount===1?'':'s'} from any shared school.`;
@@ -1224,6 +1229,13 @@ function describeInstructionBody(instruction:TriggeredInstruction):string {
   case 'ACTIVATE_TARGET_ROOM':return instruction.used?'Activate that room, even if it was already used.':'Activate the target room.';
   case 'ASSIGN_JINX':return instruction.jinx==='CHOICE'?`Assign a jinx of your choice to ${target}.`:`Assign ${JINX_LABELS[instruction.jinx]} to ${target}.`;
   case 'DISCARD_QUEST_OR_JINX':return 'Discard one active quest or one jinx of yours.';
+  case 'DISCARD_TARGET_JINX':return `${target} discards 1 jinx of theirs.`;
+  case 'GAIN_VP_PER_CONVERTED_BR':return 'Gain 1 victory point for each BR damage cube converted by this effect.';
+  case 'GAIN_VP_PER_TARGET_JINX':return `Gain 1 victory point for each jinx on ${target}.`;
+  case 'MOVE_CASTER_TO_TARGET_ROOM':return 'Place your mage in the target\u2019s room.';
+  case 'PLACE_TARGET_IN_COLOR_ROOM':return `Place ${target} in a ${instruction.colors.map(c=>ROOM_COLOR_NAMES[c]).join(' or ')} room of your choice.`;
+  case 'STEAL_TROPHY':return `Steal a trophy from ${target}.`;
+  case 'STEAL_SOLVED_QUEST':return `Steal a solved quest from ${target} (for final scoring).`;
   case 'DRAW_SPELLS':return `Draw ${instruction.amount} spells.`;
   case 'INSTABILITY_PER_UNCONVERTED':return 'Place 1 instability in the target\u2019s room for each damage cube you could not convert.';
   case 'INSTABILITY_PER_JINX':return 'Place 1 instability in the target\u2019s room for each jinx it carries.';
@@ -1307,7 +1319,7 @@ function damage(s: GameState, target: Player, amount: number, source?: Player, a
  if(context(s).momentDepth===0){atMomentEnd(s,()=>damage(s,target,amount,source,actor,damageOrigin));return;}
  if(amount<=0) return;
  // Mages inside a starting cell are untouchable by other players, including
- // ongoing, reactive, room and splash effects; only Pink Tulip damage reaches them.
+ // ongoing, reactive, room and splash effects; only Black Rose damage reaches them.
  if(source&&isInStartingRoom(s,target)) {
   s.log.push(`${target.name} is protected from ${source.name}'s damage in the starting cell.`);
   return;
@@ -1380,7 +1392,7 @@ function settleMageDefeat(s:GameState,pending:PendingMageDefeat) {
   const name=awardVictoryPoints(s,playerId,points);
   s.log.push(`${name}: +${points} VP for ${cubes} ${playerId===BLACK_ROSE_ID?'black damage':'damage cubes'} on ${target.name} (rank ${rank}${tied&&points>0?', tied −1 VP':''}).`);
  }
-  // Only actual player-owned cubes return; Pink Tulip damage has no physical supply.
+  // Only actual player-owned cubes return; Black Rose damage has no physical supply.
  const returnedCubes:Record<string,number>={};
  for(const owner of s.players) {
   const cubes=target.wizard.damageByPlayer[owner.id]??0;
@@ -1402,6 +1414,8 @@ function settleMageDefeat(s:GameState,pending:PendingMageDefeat) {
   source.trophies=[...source.trophies,target.id];
   source.kills=source.trophies.length;
   completeQuest(s,source,'KILL');
+  const obtainer=snapshot(s,source.id);
+  if(obtainer)modelEvent(s,'TROPHY_OBTAINED',obtainer);
  } else if(!source) {
   s.blackRose.trophies=[...s.blackRose.trophies,target.id];
   s.blackRose.kills=s.blackRose.trophies.length;
@@ -1425,7 +1439,7 @@ function settleMageDefeat(s:GameState,pending:PendingMageDefeat) {
  }
 }
 
-// `source` is absent for Pink Tulip damage redirected onto an evocation: no physical cubes move.
+// `source` is absent for Black Rose damage redirected onto an evocation: no physical cubes move.
 function damageEvocation(s:GameState,e:Evocation,amount:number,source?:Player,actor=source?snapshot(s,source.id):undefined,damageOrigin:DamageOrigin='NEUTRAL') {
  if(e.playerId===source?.id || !s.evocations.includes(e))return;
  if(context(s).momentDepth===0){atMomentEnd(s,()=>damageEvocation(s,e,amount,source,actor,damageOrigin));return;}
@@ -1696,7 +1710,7 @@ function convertRecentDamageToBlackRose(s:GameState,caster:Player,target:Player,
  return converted;
 }
 
-function convertDamageWithChoice(s:GameState,p:Player,model:WoundedModel,location:Exclude<CubeLocation,'onBoard'>,amount:number,target:FeedbackTarget) {
+function convertDamageWithChoice(s:GameState,p:Player,model:WoundedModel,location:Exclude<CubeLocation,'onBoard'>,amount:number,target:FeedbackTarget,stats?:{black:number}) {
  const selected:DamageCubeOption[]=[];
  const limit=Math.min(amount,p.cubes.available,model.damageCubes);
  while(selected.length<limit) {
@@ -1709,6 +1723,7 @@ function convertDamageWithChoice(s:GameState,p:Player,model:WoundedModel,locatio
   if(!option)break;
   selected.push(option);
   const sourceId=option.sourceId!;
+  if(stats&&sourceId===BLACK_ROSE_ID)stats.black++;
   const cubeToken=option.cubeToken??option.token;
   if(cubeToken.startsWith('history:'))model.damageOrder?.splice(Number(cubeToken.slice(8)),1,p.id);
   else (model.damageOrder??=[]).push(p.id);
@@ -1861,7 +1876,7 @@ function convertRoomCubes(s:GameState,p:Player,room:Room,amount:number) {
   const sourceId=sourceIds.length===1?sourceIds[0]:askChoice(s,p.id,`convert-room|${room.id}|${converted}`,
    `Choose a color of cube in ${room.name} to convert.`,sourceIds.map(id=>{
     const source=s.players.find(owner=>owner.id===id);
-    const label=id===BLACK_ROSE_ID?'Pink Tulip':`${MAGE_COLOR_NAMES[id]??'Mage'} (${source?.name??id})`;
+    const label=id===BLACK_ROSE_ID?'Black Rose':`${MAGE_COLOR_NAMES[id]??'Mage'} (${source?.name??id})`;
     return {id,label};
    }))!;
   const index=room.instabilityOrder.lastIndexOf(sourceId);
@@ -2989,6 +3004,7 @@ function resolveEffectMoments(s:GameState,caster:Player,spell:Card,room:Room|und
      if(step.when==='TARGET_UPGRADED'&&!live?.evocation?.upgrade)return 'the target has no upgrade';
      if(step.when==='TARGET_HAS_3_NIGHTMARES'&&!(live?.mage&&nightmaresOf(s,live.mage.id).length>=3))return 'the target does not carry 3 Nightmares';
      if(step.when==='PAIN_RESOLVED'&&!effect.painResolved)return 'no Pain was suffered';
+     if(step.when==='JINX_DISCARDED'&&!effect.jinxDiscarded)return 'no jinx was discarded';
      return undefined;
     },
     run:()=>{
@@ -3097,7 +3113,75 @@ function resolveMomentBody(s:GameState,caster:Player,spell:Card,step:Moment,room
   return;
  }
  if(step.effect==='ACTIVATE_CHOICE') {
+  if(step.byTarget) {
+   const mage=liveModel(s,refs[0])?.mage;
+   if(!mage){s.log.push(`${spell.name}: there is no mage to activate an evocation.`);return;}
+   const attackBonus=(step.attackBonus??0)+(effect.jinxDiscarded?step.attackBonusIfJinxDiscarded??0:0);
+   activateChoice(s,mage,{...step,attackBonus:attackBonus||undefined},spell.name);
+   return;
+  }
   activateChoice(s,caster,step,spell.name);
+  return;
+ }
+ if(step.effect==='DISCARD_TARGET_JINX') {
+  const mage=liveModel(s,refs[0])?.mage;
+  const jinxes=mage?getMageJinxes(mage):[];
+  if(!mage||!jinxes.length){s.log.push(`${spell.name}: the target has no jinx to discard.`);return;}
+  const id=jinxes.length===1?jinxes[0].id:askChoice(s,mage.id,`discard-target-jinx|${mage.id}|${spell.id}`,`${spell.name}: discard one of your jinxes.`,
+   jinxes.map(j=>({id:j.id,label:JINX_LABELS[j.name]})))!;
+  const jinx=jinxes.find(j=>j.id===id)??jinxes[0];
+  discardJinx(s,mage,jinx,spell.name);
+  effect.jinxDiscarded=true;
+  return;
+ }
+ if(step.effect==='GAIN_VP_PER_CONVERTED_BR') {
+  const gained=effect.convertedBr??0;
+  if(gained>0){awardVictoryPoints(s,caster.id,gained);s.log.push(`${caster.name} gains ${gained} VP from converted BR damage.`);}
+  else s.log.push(`${spell.name}: no BR damage was converted.`);
+  return;
+ }
+ if(step.effect==='GAIN_VP_PER_TARGET_JINX') {
+  const mage=liveModel(s,refs[0])?.mage;
+  const gained=mage?getMageJinxes(mage).length:0;
+  if(gained>0){awardVictoryPoints(s,caster.id,gained);s.log.push(`${caster.name} gains ${gained} VP from ${mage!.name}'s jinxes.`);}
+  return;
+ }
+ if(step.effect==='MOVE_CASTER_TO_TARGET_ROOM') {
+  const target=liveModel(s,refs[0]);
+  const self=snapshot(s,caster.id);
+  if(!target||!self||!liveModel(s,self))return;
+  moveModel(s,self,target.model.position);
+  s.log.push(`${caster.name} moves to ${roomAt(s,target.model.position)?.name??'the target room'}.`);
+  return;
+ }
+ if(step.effect==='PLACE_TARGET_IN_COLOR_ROOM') {
+  const ref=refs[0];
+  if(!ref||ref.kind!=='MAGE'||!liveModel(s,ref))return;
+  const rooms=s.board.rooms.filter(r=>!r.startingFor&&!!r.color&&step.colors.includes(r.color));
+  if(!rooms.length){s.log.push(`${spell.name}: no ${step.colors.map(c=>ROOM_COLOR_NAMES[c]).join(' or ')} room exists.`);return;}
+  const id=rooms.length===1?rooms[0].id:askChoice(s,caster.id,`place-target|${caster.id}|${spell.id}`,`${spell.name}: choose a ${step.colors.map(c=>ROOM_COLOR_NAMES[c]).join(' or ')} room to place the target in.`,
+   rooms.map(r=>({id:r.id,label:r.name,roomId:r.id})))!;
+  const room=rooms.find(r=>r.id===id)??rooms[0];
+  moveModel(s,ref,room.tiles[0]);
+  s.log.push(`${caster.name} places ${modelFeedbackTarget(s,ref)?.name??'the target'} in ${room.name}.`);
+  return;
+ }
+ if(step.effect==='STEAL_TROPHY') {
+  const mage=liveModel(s,refs[0])?.mage;
+  if(!mage||mage.id===caster.id)return;
+  if(!mage.trophies.length){s.log.push(`${mage.name} has no trophy to steal.`);return;}
+  const trophy=mage.trophies[mage.trophies.length-1];
+  mage.trophies=mage.trophies.slice(0,-1);mage.kills=mage.trophies.length;
+  caster.trophies=[...caster.trophies,trophy];caster.kills=caster.trophies.length;
+  s.log.push(`${caster.name} steals a trophy from ${mage.name}.`);
+  return;
+ }
+ if(step.effect==='STEAL_SOLVED_QUEST') {
+  const mage=liveModel(s,refs[0])?.mage;
+  if(!mage||mage.id===caster.id)return;
+  if(mage.questsCompleted<=0){s.log.push(`${mage.name} has no solved quest to steal.`);return;}
+  mage.questsCompleted--;caster.questsCompleted++;
+  s.log.push(`${caster.name} steals a solved quest from ${mage.name} (for final scoring).`);
   return;
  }
  if(step.effect==='LOSE_VP') {
@@ -3637,7 +3721,7 @@ function runAction(state: GameState, action: GameAction, answers: DecisionAnswer
    p.ready=action.ready;break;
   case 'SET_ROOM_COUNT': {
    requirePhase(s,'LOBBY');assert(p.id===s.hostId,'Only the creator can configure rooms');assert(p.connected,'Join the room first');
-   assert(action.roomsPerColor===null || (Number.isInteger(action.roomsPerColor)&&[1,2,3].includes(action.roomsPerColor)),'Choose 1, 2 or 3 rooms per color, or null for automatic');
+   assert(action.roomsPerColor===null || (Number.isInteger(action.roomsPerColor)&&[1,3].includes(action.roomsPerColor)),'Choose 1 or 3 rooms per color, or null for automatic');
    const value=action.roomsPerColor===null?undefined:action.roomsPerColor;
    if(s.roomsPerColor!==value) {
     if(value===undefined)delete s.roomsPerColor;else s.roomsPerColor=value;

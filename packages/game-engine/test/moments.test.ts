@@ -95,7 +95,7 @@ describe('moments are an ordered, repeatable list of effect steps', () => {
   expect(after.players[0].wizard.damageByPlayer.p2).toBe(2);
  });
 
- it('converts the most recently taken damage cubes to Pink Tulip color', () => {
+ it('converts the most recently taken damage cubes to Black Rose color', () => {
   const s = fixture();
   wound(s,1,{p3:2,p4:1});s.players[1].wizard.damageOrder=['p3','p4','p3'];
   const after = cast(s, spell([moment.blackRoseConvert(2)], 'MAGE'), {targetPlayerId:'p2'});
@@ -131,7 +131,7 @@ describe('moments are an ordered, repeatable list of effect steps', () => {
   const paused=cast(s,spell([moment.convert(2)],'ROOM'),{roomId:room.id});
   expect(paused.pendingDecision).toMatchObject({kind:'CHOICE',prompt:`Choose a color of cube in ${room.name} to convert.`});
   expect(paused.pendingDecision?.kind==='CHOICE'&&paused.pendingDecision.options.map(option=>option.label)).toEqual([
-    'Amber (Amber Mage)','Green (Emerald Mage)','Pink Tulip',
+    'Amber (Amber Mage)','Green (Emerald Mage)','Black Rose',
   ]);
   const second=choose(paused,'p4');
   expect(second.pendingDecision?.kind).toBe('CHOICE');

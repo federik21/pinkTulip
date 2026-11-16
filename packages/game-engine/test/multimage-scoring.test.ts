@@ -29,7 +29,7 @@ function defeat(contributions:Record<string,number>,black=0) {
 }
 
 describe('dense contribution ranks and tie reduction',()=>{
- it('applies dense ties and the room minimum including Pink Tulip in ranking',()=>{
+ it('applies dense ties and the room minimum including Black Rose in ranking',()=>{
   const {g}=settleRoom({p1:2,p2:2,p3:1});
   expect(g.players.map(p=>p.victoryPoints)).toEqual([2,2,1,0]);
   expect(g.players.every(p=>p.cubes.onBoard===0&&p.cubes.available===25)).toBe(true);

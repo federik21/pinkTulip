@@ -169,7 +169,7 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
             for (const p of game.players) {
               await expect(dialog.locator(`.mage-legend [data-player-id="${p.id}"]`)).toContainText(p.name);
             }
-            await expect(dialog.locator('.mage-legend')).toContainText('Pink Tulip · neutral');
+            await expect(dialog.locator('.mage-legend')).toContainText('Black Rose · neutral');
             // Neither legend is duplicated elsewhere while the popup is open.
             await expect(page.locator('.room-legend')).toHaveCount(1);
             await expect(page.locator('.mage-legend')).toHaveCount(1);
@@ -499,8 +499,8 @@ for (const viewport of [{ width: 1440, height: 1200 }, { width: 390, height: 844
 }
 
 // Genuine sockets and server START_GAME: no injected board, actions or state.
-const realBoards: { count: number; override?: '1' | '2' }[] = [
-  { count: 2 }, { count: 3 }, { count: 4 }, { count: 2, override: '2' }, { count: 4, override: '1' },
+const realBoards: { count: number; override?: '1' | '3' }[] = [
+  { count: 2 }, { count: 3 }, { count: 4 }, { count: 4, override: '1' },
 ];
 for (const { count, override } of realBoards) {
   const roomsPerColor = override ? Number(override) : count - 1;
