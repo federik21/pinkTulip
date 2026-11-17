@@ -15,6 +15,8 @@ import { QuestsPanel, QuickReference } from './MorePanels';
 import { SpellTypeIcon } from './SpellTypeIcon';
 import { SpellDescription, DarkSideDescription } from './SpellDescription';
 import { SchoolIcon } from './SchoolIcon';
+import { CardImage } from './CardImage';
+import { getCardImage } from './cardImages';
 import { LobbyPanel } from './LobbyPanel';
 import { SetupPanel } from './SetupPanel';
 import { InfoPopup } from './InfoPopup';
@@ -31,6 +33,7 @@ import './quick-access.css';
 import './preparation.css';
 import './soul-tithe.css';
 import './event-board.css';
+import './card-images.css';
 
 const WS_URL=import.meta.env.VITE_WS_URL??`${location.protocol==='https:'?'wss':'ws'}://${location.hostname}:8080`;
 const phaseInfo={
@@ -85,12 +88,28 @@ function renderAlphaMarkdown(markdown:string) {
  });
 }
 
-function SpellCard({card,label,selected,disabled,onClick,used=false,side,chooseSide=false,onSideChange}:{card:Card;label?:string;selected?:boolean;disabled?:boolean;onClick?:()=>void;used?:boolean;side?:SpellSide;chooseSide?:boolean;onSideChange?:(side:SpellSide)=>void}) {
+function SpellCard({card,label,selected,disabled,onClick,used=false,side,chooseSide=false,onSideChange,half=false}:{card:Card;label?:string;selected?:boolean;disabled?:boolean;onClick?:()=>void;used?:boolean;side?:SpellSide;chooseSide?:boolean;onSideChange?:(side:SpellSide)=>void;half?:boolean}) {
+ const hasImage=!!getCardImage(card);
  const sideIsChosen=side!==undefined&&!chooseSide;
  const showLight=!sideIsChosen||side==='LIGHT';
  const showDark=!card.lightOnly&&(!sideIsChosen||side==='DARK');
  const lightType=getSpellType(card);
- const className=`spell ${card.powerful?'powerful':''} ${selected?'chosen':''} ${used?'used':''} ${disabled?'is-disabled':''} ${chooseSide?'side-choice':''}`;
+ const className=`spell ${card.powerful?'powerful':''} ${selected?'chosen':''} ${used?'used':''} ${disabled?'is-disabled':''} ${chooseSide?'side-choice':''} ${hasImage?'spell-image':''}`;
+ if(hasImage) {
+  const dark=side==='DARK'&&!card.lightOnly;
+  const labelNode=label&&<span className="spell-card-label">{label}</span>;
+  const picture=<CardImage card={card} side={dark?'DARK':'LIGHT'} half={half}/>;
+  const status=used&&<span className="spell-status" data-spell-status="SPENT">Spent</span>;
+  const rotateButton=(!card.lightOnly && side!==undefined && onSideChange && chooseSide) ? <button type="button" className="spell-rotate" data-rotate-card={card.id} aria-label={`Rotate ${card.name} to its ${dark?'light':'dark'} side`} title={dark?'Showing dark side · rotate to light':'Rotate to dark side'} aria-pressed={dark} disabled={disabled} onClick={event=>{event.stopPropagation(); event.preventDefault(); onSideChange(dark?'LIGHT':'DARK');}}>↻</button> : null;
+  if(chooseSide)return <article className={className} data-chosen-side={side}>
+   {labelNode}
+   <div className="spell-image-frame">
+    <button type="button" className="spell-image-select" aria-pressed={!!selected} disabled={disabled} onClick={onClick}>{picture}</button>
+    {rotateButton}
+   </div>
+  </article>;
+  return <button type="button" className={className} data-chosen-side={side} aria-pressed={onClick?!!selected:undefined} disabled={disabled} onClick={onClick}>{labelNode}{picture}{status}</button>;
+ }
  const instability=isUnstable(card)&&<span className="spell-instability-note">◆ 1 instability · caster’s room</span>;
  const lightContent=<>
   <span className="spell-meta-line"><span className="spell-type" data-spell-type={lightType}><SpellTypeIcon type={lightType}/><span>{SPELL_TYPE_LABELS[lightType]}{card.ongoing?' · Ongoing':''}</span></span><span>Range {card.range===Number.POSITIVE_INFINITY?'∞':card.range}</span><span>Target: {SPELL_TARGET_DESCRIPTIONS[card.target]}</span>{card.element&&<span className="spell-element" data-element={card.element} title={`${card.element} symbol`}>{ELEMENT_GLYPHS[card.element]} {card.element}</span>}{card.powerful&&<span>Remove after use</span>}</span>
@@ -113,12 +132,15 @@ function SpellCard({card,label,selected,disabled,onClick,used=false,side,chooseS
 function StudyPanel({game,me,send}:{game:GameState;me:Player;send:Send}) {
  const [selected,setSelected]=useState<string[]>([]);
  const [schools,setSchools]=useState<string[]>([]);
+ const [darkIds,setDarkIds]=useState<string[]>([]);
  const eligible=new Set(me.studyCardIds??[]);
  const validSelection=schools.length===4&&game.library.every(deck=>schools.filter(id=>id===deck.id).length<=deck.cards.length+deck.discard.length);
+ const sideOf=(id:string):SpellSide=>darkIds.includes(id)?'DARK':'LIGHT';
+ const setSide=(id:string,side:SpellSide)=>setDarkIds(old=>side==='DARK'?old.includes(id)?old:[...old,id]:old.filter(x=>x!==id));
  if(me.studyDone)return <div className="notice">✓ Study complete. Waiting for the other mages.</div>;
  return <section className="phase-panel"><div className="section-heading"><div><span className="eyebrow">The shared library</span><h2>Schools of magic</h2></div><span className="badge">Grimoire +2 ✓</span></div>
   {!me.studyDrawn?<><p>Choose 4 blind draws in any school combination. Tap a school once per card. Each school has 12 spells with 3 copies each.</p><div className="schools">{game.library.map(deck=>{const count=schools.filter(id=>id===deck.id).length;return <div className="school-choice" key={deck.id}><button data-school-id={deck.id} disabled={schools.length>=4||count>=deck.cards.length+deck.discard.length} onClick={()=>setSchools(old=>[...old,deck.id])}><span className="school-rune"><SchoolIcon schoolId={deck.id}/></span><strong>{deck.name}</strong><span className="hint">Damage · Instability</span><small>{deck.cards.length} draw · {deck.discard.length} discard</small><span className="school-selected">Selected: {count}</span></button>{count>0&&<button className="remove-school" aria-label={`Remove 1 ${deck.name} card`} onClick={()=>setSchools(old=>old.filter((_,index)=>index!==old.lastIndexOf(deck.id)))}>− Remove one</button>}</div>;})}</div><div className="button-row"><button disabled={!schools.length} onClick={()=>setSchools([])}>Reset selection</button><button className="primary" disabled={!validSelection} onClick={()=>send({type:'DRAW_STUDY',playerId:me.id,deckIds:schools})}>Draw selected cards ({schools.length}/4)</button></div></>:
-  <><p>Discard exactly 2 of the 4 new library cards. Older hand cards and your 2 personal draws are protected and cannot be selected.</p><div className="cards">{me.hand.map(card=><SpellCard key={card.id} card={card} disabled={!!card.powerful||!eligible.has(card.id)} selected={selected.includes(card.id)} onClick={()=>{if(eligible.has(card.id))setSelected(old=>old.includes(card.id)?old.filter(id=>id!==card.id):old.length<2?[...old,card.id]:old);}}/>)}</div><button className="primary" disabled={selected.length!==2||selected.some(id=>!eligible.has(id))} onClick={()=>send({type:'DISCARD_STUDY',playerId:me.id,cardIds:selected})}>Discard selected ({selected.length}/2)</button></>}
+  <><p>Discard exactly 2 of the 4 new library cards. Older hand cards and your 2 personal draws are protected and cannot be selected.</p><div className="cards">{me.hand.map(card=><SpellCard key={card.id} card={card} disabled={!!card.powerful||!eligible.has(card.id)} selected={selected.includes(card.id)} side={sideOf(card.id)} chooseSide onSideChange={side=>setSide(card.id,side)} onClick={()=>{if(eligible.has(card.id))setSelected(old=>old.includes(card.id)?old.filter(id=>id!==card.id):old.length<2?[...old,card.id]:old);}}/>)}</div><button className="primary" disabled={selected.length!==2||selected.some(id=>!eligible.has(id))} onClick={()=>send({type:'DISCARD_STUDY',playerId:me.id,cardIds:selected})}>Discard selected ({selected.length}/2)</button></>}
  </section>;
 }
 
@@ -156,7 +178,7 @@ function PreparationPanel({me,send}:{me:Player;send:Send}) {
    <div className="preparation-order" role="group" aria-label="Prepared spell slots">{slotKeys.map((slot,index)=>{
     const card=me.hand.find(card=>card.id===placed[slot]);
     return <div key={slot} className={`preparation-slot${card?' is-filled':''}`} data-preparation-slot={slot}>
-    <button type="button" className="preparation-destination" aria-label={`Place in ${destination(slot)}`} disabled={!selectedCard} onClick={()=>place(slot)}><b>{slot==='rapid'?'✧ Quick':`Slot ${index+1}`}</b><span>{card?card.name:'Empty slot'}</span></button>
+    <button type="button" className="preparation-destination" aria-label={`Place in ${destination(slot)}`} disabled={!selectedCard} onClick={()=>place(slot)}><b>{slot==='rapid'?'✧ Quick':`Slot ${index+1}`}</b>{card&&getCardImage(card)?<CardImage card={card} side={sideOf(card.id)} half/>:<span>{card?card.name:'Empty slot'}</span>}</button>
      {card&&<button type="button" className="preparation-remove" aria-label={`Remove from ${destination(slot)}`} onClick={()=>setPlaced(old=>({...old,[slot]:null}))}>✕</button>}
     </div>;
    })}</div>
@@ -493,7 +515,7 @@ function App() {
     {game.phase==='ACTION'&&<section className="phase-panel"><div className="section-heading"><div><span className="eyebrow">Your prepared grimoire · 1 action per cast</span><h2>{game.evocationActivation?.playerId===me.id?'Finish your evocation activation':myTurn?'Choose your next action':'Watch the other mage’s turn'}</h2></div><span className="badge">{myTurn?`${turnActionsRemaining} turn actions left`:me.passed?'Passed':'Waiting'}</span></div>
     {inStart&&<div className="notice">Leave your starting room with Explore or discard-to-move using any unused prepared spell before casting or attacking.</div>}
     {myTurn&&active?.physicalAction&&<div className="notice">Finish or skip your {active.physicalAction.kind==='EXPLORE'?'Explore':'Attack'} effects before casting spells.</div>}
-      <div className="cards prepared">{slotKeys.map((key,i)=>{const c=me.prepared[key];return c&&<SpellCard key={key} card={c.card} side={c.side??'LIGHT'} used={c.used} label={key==='rapid'?'✧ Quick':`Spell ${i+1}`} selected={key===selectedSlot} disabled={pending||!myTurn||turnActionsRemaining===0||inStart||!!active?.physicalAction||!!active?.exploring||c.used||(key!=='rapid'&&(key!==nextSlot||!!active?.sequencedSpellUsed))} onClick={()=>{const face=getSpellForSide(game,me,c.card,c.side);const hidden=['TRAP','PROTECTION'].includes(getSpellType(face));setSelectedSlot(old=>old===key?null:key);setSelectedRoom(!hidden&&selectedSlot!==key&&face.target==='SELF'?game.board.rooms.find(r=>r.tiles.some(h=>hexKey(h)===hexKey(me.wizard.position)))?.id??null:null);setSelectedModelId('');setDummy(false);setExitCardId('');if(quickControls)closeQuickControls();setToast(hidden?'Confirm activation. No room or target is chosen.':face.target==='SELF'?'Your mage is selected. Confirm the spell to cast on yourself.':'Choose a highlighted room, then an eligible target.');}}/>;})}</div>
+      <div className="cards prepared">{slotKeys.map((key,i)=>{const c=me.prepared[key];return c&&<SpellCard key={key} card={c.card} half side={c.side??'LIGHT'} used={c.used} label={key==='rapid'?'✧ Quick':`Spell ${i+1}`} selected={key===selectedSlot} disabled={pending||!myTurn||turnActionsRemaining===0||inStart||!!active?.physicalAction||!!active?.exploring||c.used||(key!=='rapid'&&(key!==nextSlot||!!active?.sequencedSpellUsed))} onClick={()=>{const face=getSpellForSide(game,me,c.card,c.side);const hidden=['TRAP','PROTECTION'].includes(getSpellType(face));setSelectedSlot(old=>old===key?null:key);setSelectedRoom(!hidden&&selectedSlot!==key&&face.target==='SELF'?game.board.rooms.find(r=>r.tiles.some(h=>hexKey(h)===hexKey(me.wizard.position)))?.id??null:null);setSelectedModelId('');setDummy(false);setExitCardId('');if(quickControls)closeQuickControls();setToast(hidden?'Confirm activation. No room or target is chosen.':face.target==='SELF'?'Your mage is selected. Confirm the spell to cast on yourself.':'Choose a highlighted room, then an eligible target.');}}/>;})}</div>
     {spell&&<>
     <p className="hint">1 turn action per spell; no physical token. One numbered spell per turn. Finite range follows a straight hex line; infinite range ignores line of sight.</p>
     {activatingSpell&&<p className="notice">Activate face down without choosing a room or target. Only the spell type is public. You may reveal when its condition occurs, or keep it hidden. Unrevealed cards return to hand at Cleanup.</p>}
@@ -556,7 +578,7 @@ function App() {
       {game.phase!=='LOBBY'&&<ol className="map-player-order" aria-label={`Turn order, ${mapPlayerOrder[0]?.name} first`}>
        {mapPlayerOrder.map((player,index)=><li className={player.id===actingPlayer?.id?'map-player-active':''} data-player-id={player.id} aria-label={`${player.name}${index===0?', first in turn order':''}${player.id===actingPlayer?.id?', acting now':''}`} title={player.name} style={mageStyle(player.id)} key={player.id}><span className="map-player-icon" aria-hidden="true">{index===0&&<span className="map-first-crown">♛</span>}{emoji[player.id]}</span></li>)}
       </ol>}
-      {playedCards[0]&&<aside className="map-played-card" role="status" aria-label={`Card played by ${ownerName(game,playedCards[0].entry.ownerId)}`}><span className="eyebrow">Played by {ownerName(game,playedCards[0].entry.ownerId)}</span><SpellCard card={playedCards[0].entry.card} side={playedCards[0].entry.side??'LIGHT'} label={playedCards[0].entry.role==='TRIGGERED'?'Revealed card':'Card played'} disabled/></aside>}
+      {playedCards[0]&&<aside className="map-played-card" role="status" aria-label={`Card played by ${ownerName(game,playedCards[0].entry.ownerId)}`}><span className="eyebrow">Played by {ownerName(game,playedCards[0].entry.ownerId)}</span><SpellCard card={playedCards[0].entry.card} half side={playedCards[0].entry.side??'LIGHT'} label={playedCards[0].entry.role==='TRIGGERED'?'Revealed card':'Card played'} disabled/></aside>}
       <div className="board-viewport" ref={boardZoom.setViewport} style={boardZoom.viewportStyle} tabIndex={0} role="region" aria-label="Scrollable lodge board"><svg className="board" style={boardZoom.boardStyle} viewBox="-210 -165 420 330" role="group" aria-label="Hexagonal lodge board">{game.board.rooms.map(r=>{
       const h=r.tiles[0],x=(h.q+h.r/2)*62,y=h.r*54;
       const occupants=game.players.filter(p=>r.tiles.some(tile=>hexKey(p.wizard.position)===hexKey(tile)));

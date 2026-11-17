@@ -1,0 +1,28 @@
+/* Card scans replace the text rendering of a spell (see CardImage.tsx / SpellCard). */
+.card-image{position:relative;display:block;width:100%;overflow:hidden;border-radius:6px;background:#0d0b10;aspect-ratio:744/1040;line-height:0}
+.card-image.is-half{aspect-ratio:744/516}
+.card-image img{display:block;width:100%;height:auto;user-select:none;transition:transform .25s ease}
+.card-image.is-dark img{transform:rotate(180deg)}
+
+.spell.spell-image{width:100%;max-width:316px;min-height:0;justify-self:center;align-items:stretch;gap:3px;padding:4px;background:#16121b}
+.spell.spell-image.chosen{padding:3px;background:#2a2118}
+.spell.spell-image.side-choice.chosen{background:#193426}
+.spell.spell-image.used{text-decoration:none}
+.spell.spell-image>.spell-card-label{margin:1px 3px 0}
+.spell.spell-image>.spell-status{margin:2px 3px 3px}
+.spell-image-frame{position:relative}
+.spell .spell-image-select{display:block;width:100%;padding:0;border:0;border-radius:6px;background:none;line-height:0;appearance:none}
+.spell .spell-image-select:hover:not(:disabled){background:none}
+.spell .spell-rotate{position:absolute;top:6px;right:6px;z-index:3;display:grid;place-items:center;width:32px;height:32px;min-height:0;padding:0;border:1px solid var(--gold);border-radius:50%;background:#16121be6;color:var(--gold);font-size:19px;line-height:1;box-shadow:0 2px 6px #0009}
+.spell .spell-rotate:hover:not(:disabled){background:var(--gold);color:#211a16}
+.spell .spell-rotate[aria-pressed="true"]{background:var(--gold);color:#211a16}
+
+.is-floating .prepared .spell.spell-image{min-height:0;padding:4px}
+.map-played-card .spell.spell-image{max-height:none;overflow:visible;padding:4px}
+.preparation-destination .card-image{width:min(100%,150px)}
+
+.card-zoom{position:fixed;z-index:2000;overflow:hidden;border:1px solid var(--gold);border-radius:12px;background:#0d0b10;box-shadow:0 14px 40px #000c;pointer-events:none;line-height:0}
+.card-zoom img{display:block;width:100%;height:auto}
+.card-zoom img.is-dark{transform:rotate(180deg)}
+
+@media (prefers-reduced-motion:reduce){.card-image img{transition:none}}

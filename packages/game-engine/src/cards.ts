@@ -197,6 +197,7 @@ export function upgradeLegacyCards(value: unknown): void {
  if (Array.isArray(value)) { value.forEach(upgradeLegacyCards); return; }
  const node = value as Record<string, unknown>;
  if (node.kind === 'SPELL' && node.range === null) node.range = Number.POSITIVE_INFINITY;
+ if (node.kind === 'SPELL' && node.name === 'Dominion Token' && (node.schoolId === 'shamanic' || String(node.id).startsWith('shamanic-'))) node.name = 'Dominion Totem';
  const dark = node.kind === 'SPELL' ? node.darkSide as { range: number | null } | undefined : undefined;
  if (dark && dark.range === null) dark.range = Number.POSITIVE_INFINITY;
  // Saved Agony cards predate their dark sides.
@@ -560,33 +561,33 @@ const NIGHTMARE_DARK_SIDES: Record<string, DarkSide> = {
 };
 
 const SHAMANIC_DARK_SIDES: Record<string, DarkSide> = {
- 'Binding Totem': { moments: [{ effect: 'LOSE_VP', amount: 1 }, { effect: 'GAIN_VP', amount: 1 }, { effect: 'REMOVE_EVOCATION', chosen: true }], range: 1, target: 'EVOCATION', element: 'good', spellType: 'CONTINGENCY',
-  rulesText: 'all other mages within 1 of the totem lose 1 VP. gain 1 VP. remove the totem.' },
- 'Astral Path': { moments: [{ effect: 'DRAW_QUEST' }, { effect: 'DRAW_QUEST' }, { effect: 'DRAW_QUEST' }], range: 0, target: 'SELF', element: 'wild', spellType: 'CONTINGENCY',
-  rulesText: 'draw 3 quests from the current moon or the next one; keep 1 and discard the rest.' },
+ 'Binding Totem': { moments: [{ effect: 'LOSE_VP', amount: 1, area: { range: 1 } }, { effect: 'GAIN_VP', amount: 1 }, { effect: 'REMOVE_EVOCATION', chosen: true }], range: Number.POSITIVE_INFINITY, target: 'EVOCATION', targetFilter: { kind: 'TOTEM' }, element: 'good', spellType: 'CONTINGENCY',
+  rulesText: 'All other mages within range 1 of the target Totem lose 1 VP. Gain 1 VP. Remove the Totem.' },
+ 'Astral Path': { moments: [{ effect: 'DRAW_QUESTS_KEEP', draw: 3, keep: 1 }], range: 0, target: 'SELF', element: 'wild', spellType: 'CONTINGENCY',
+  rulesText: 'Draw 3 quests from the current moon or the next one. Keep 1 and discard the rest.' },
  'Earth Totem': { moments: [], range: 0, target: 'SELF', element: 'earth', spellType: 'PROTECTION',
-  trigger: { event: 'SPELL_TARGETED', relation: 'SELF', relationTo: 'EVENT_MODEL', scope: 'ANY', modelKind: 'MAGE', spellTypes: ['COMBAT'] },
-  triggerText: 'When a combat spell targets you or you are about to suffer its effect',
+  trigger: { event: 'SPELL_TARGETED', relation: 'SELF', relationTo: 'EVENT_MODEL', scope: 'ANY', modelKind: 'MAGE', spellTypes: ['TRAP'] },
+  triggerText: 'When a Trap spell targets you or you are about to suffer its effect',
   triggerEffects: [{ effect: 'PREVENT_SPELL', target: 'EVENT_ACTOR' }, { effect: 'SUMMON', kind: 'TOTEM', position: 'CASTER', target: 'OWNER' }, { effect: 'GAIN_VP', amount: 1, target: 'OWNER' }],
   rulesText: 'Ignore the effect. Summon a Totem in your room. Gain 1 VP.' },
- 'Wind Spirit': { moments: [{ effect: 'DRAW_SPELLS', amount: 3 }], range: 0, target: 'SELF', element: 'air', spellType: 'CONTINGENCY',
-  rulesText: 'draw 3 cards from a school; keep 1 and discard the rest.' },
- 'Valor Totem': { moments: [{ effect: 'DRAW_QUEST' }, { effect: 'GAIN_VP', amount: 4, when: 'EVOCATION_REMOVED' }], range: 1, target: 'ROOM', element: 'fire', spellType: 'CONTINGENCY',
-  rulesText: 'remove up to 3 totems. draw 1 quest. gain 4 VP if you removed 3.' },
- 'River Spirit': { moments: [{ effect: 'DRAW_EVENT' }, { effect: 'DRAW_QUEST' }, { effect: 'GAIN_VP', amount: 2 }], range: 3, target: 'ROOM', element: 'water', spellType: 'CONTINGENCY',
-  rulesText: 'draw 1 event. draw 1 quest. gain 2 VP.' },
- 'Dominion Token': { moments: [{ effect: 'ACTIVATE_TARGET' }, { effect: 'ACTIVATE_TARGET' }, { effect: 'REMOVE_EVOCATION', chosen: true }], range: 2, target: 'ROOM', element: 'good', spellType: 'CONTINGENCY',
-  rulesText: 'choose an evocation within 2 of the totem. then choose another evocation within 2 of the totem. the target activates under your control. remove the totem.' },
+ 'Wind Spirit': { moments: [{ effect: 'LOOK_LIBRARY', cards: 3 }], range: 0, target: 'SELF', element: 'air', spellType: 'CONTINGENCY',
+  rulesText: 'Draw 3 cards from a school. Keep 1 and discard the rest.' },
+ 'Valor Totem': { moments: [{ effect: 'DRAW_QUEST' }, { effect: 'REMOVE_TOTEMS', max: 3, vpIfAll: 4 }], range: 0, target: 'SELF', element: 'fire', spellType: 'CONTINGENCY',
+  rulesText: 'Draw 1 quest. Remove up to 3 Totems. Gain 4 VP if you removed 3.' },
+ 'River Spirit': { moments: [{ effect: 'DRAW_EVENT' }, { effect: 'DRAW_QUEST' }, { effect: 'GAIN_VP', amount: 2 }], range: 0, target: 'SELF', element: 'water', spellType: 'CONTINGENCY',
+  rulesText: 'Draw 1 event. Draw 1 quest. Gain 2 VP.' },
+ 'Dominion Totem': { moments: [{ effect: 'ACTIVATE_CHOICE', near: { range: 2 }, anyOwner: true }, { effect: 'ACTIVATE_CHOICE', near: { range: 2 }, anyOwner: true }, { effect: 'REMOVE_EVOCATION', chosen: true }], range: Number.POSITIVE_INFINITY, target: 'EVOCATION', targetFilter: { kind: 'TOTEM' }, element: 'good', spellType: 'CONTINGENCY',
+  rulesText: 'Choose an evocation within range 2 of the target Totem; it activates under your control. Then choose another evocation within range 2; it activates under your control. Remove the Totem.' },
  'Channeling Energy': { moments: [], range: 0, target: 'SELF', element: 'wild', spellType: 'CONTINGENCY',
-  ongoing: { trigger: { event: 'SPELL_CAST', relation: 'ANY', scope: 'ANY', spellTypes: ['CONTINGENCY'] }, effects: [{ effect: 'BLACK_ROSE_ALTAR_TITHE', target: 'OWNER' }] },
-  rulesText: 'Ongoing: each time a mage reveals a contingency spell, choose whether BR may inflict 1 damage on one of your Altars to gain 1 VP.' },
- 'Rain Totem': { moments: [{ effect: 'ACTIVATE_TARGET_ROOM' }, { effect: 'ACTIVATE_TARGET_ROOM' }, { effect: 'REMOVE_EVOCATION', chosen: true }], range: 2, target: 'ROOM', element: 'water', spellType: 'CONTINGENCY',
-  rulesText: 'activate a room within 2 if the target is a Totem. activate a room within 2 if the target is a Totem. remove the target if it is a Totem.' },
+  ongoing: { trigger: { event: 'SPELL_CAST', relation: 'ANY', scope: 'ANY', spellTypes: ['CONTINGENCY'] }, effects: [{ effect: 'BLACK_ROSE_ALTAR_TITHE', placeCube: { range: 1 }, target: 'OWNER' }] },
+  rulesText: 'Ongoing: each time a mage reveals a Contingency spell, choose whether BR may inflict 1 damage on one of your Altars and place 1 instability in a room within range 1 of it.' },
+ 'Rain Totem': { moments: [{ effect: 'ACTIVATE_ROOM_NEAR_TARGET', range: 2, when: 'TARGET_IS_TOTEM' }, { effect: 'ACTIVATE_ROOM_NEAR_TARGET', range: 2, when: 'TARGET_IS_TOTEM' }, { effect: 'REMOVE_EVOCATION', chosen: true, when: 'TARGET_IS_TOTEM' }], range: Number.POSITIVE_INFINITY, target: 'EVOCATION', element: 'water', spellType: 'CONTINGENCY',
+  rulesText: 'If the target is a Totem, activate a room within range 2 of it, then activate a room within range 2 of it again. If the target is a Totem, remove it.' },
  'Steppe Spirit': { moments: [], range: 2, target: 'MAGE', element: 'earth', spellType: 'CONTINGENCY',
-  ongoing: { trigger: { event: 'ENTER_ROOM', relation: 'SELF', relationTo: 'EVENT_MODEL', scope: 'ANY', modelKind: 'MAGE' }, effects: [{ effect: 'INSTABILITY', amount: 1, target: 'EVENT_ROOM' }] },
-  rulesText: 'when the target enters a room, place 1 instability in that room.' },
- 'Pyre Spirit': { moments: [{ effect: 'DISCARD_CARDS', amount: 1 }, { effect: 'GAIN_VP', amount: 1 }, { effect: 'MOVE_TARGET', distance: 1, models: true }, { effect: 'MOVE_TARGET', distance: 1, models: true }, { effect: 'MOVE_TARGET', distance: 1, models: true }], range: 2, target: 'MAGE', element: 'fire', spellType: 'CONTINGENCY',
-  rulesText: 'Discard 1 event. gain 1 VP. move an altar up to 1, three times (same or different).' },
+  ongoing: { trigger: { event: 'ENTER_ROOM', relation: 'ANY', scope: 'BOUND_MODEL', modelKind: 'MAGE' }, effects: [{ effect: 'INSTABILITY', amount: 1, target: 'EVENT_ROOM' }] },
+  rulesText: 'Ongoing: each time the target enters a room, place 1 instability in that room.' },
+ 'Pyre Spirit': { moments: [{ effect: 'DISCARD_EVENT' }, { effect: 'GAIN_VP', amount: 1 }, { effect: 'MOVE_ALTAR', distance: 1 }, { effect: 'MOVE_ALTAR', distance: 1 }, { effect: 'MOVE_ALTAR', distance: 1 }], range: 0, target: 'SELF', element: 'fire', spellType: 'CONTINGENCY',
+  rulesText: 'Discard 1 event. Gain 1 VP. Move an Altar up to 1, three times (the same Altar or different ones).' },
  'Source of Life': { moments: [{ effect: 'HEAL', amount: 3 }, { effect: 'INSTABILITY', amount: 2 }], range: 2, target: 'ROOM', element: 'water', spellType: 'CONTINGENCY',
   rulesText: 'Heal 3. Place 2 instability in the target room.' },
 };
@@ -609,7 +610,7 @@ export function createShamanicDeck(prefix: string, schoolId?: string): Card[] {
    rulesText: 'Summon a Totem in the target room, then gain 1 VP for each Altar in play (maximum 5).' },
   { name: 'River Spirit', spellType: 'CONTINGENCY', range: 3, target: 'ROOM', element: 'water', effects: mainEffects([{ effect: 'DRAW_QUEST' }, { effect: 'ACTIVATE_TARGET_ROOM' }]),
    rulesText: 'Draw 1 quest, then activate the target room.' },
-  { name: 'Dominion Token', spellType: 'CONTINGENCY', range: 2, target: 'ROOM', element: 'good', effects: mainEffects([m.summon('TOTEM', 'TARGET'), m.instability(2)]),
+  { name: 'Dominion Totem', spellType: 'CONTINGENCY', range: 2, target: 'ROOM', element: 'good', effects: mainEffects([m.summon('TOTEM', 'TARGET'), m.instability(2)]),
    rulesText: 'Summon a Totem in the target room, then place 2 cubes in that room.' },
   { name: 'Channeling Energy', spellType: 'CONTINGENCY', range: 0, target: 'SELF', element: 'wild', effects: mainEffects([]),
    rulesText: 'Ongoing: Each time a mage reveals a combat spell, choose whether BR may inflict 1 damage on one of your Altars to gain 1 VP.',

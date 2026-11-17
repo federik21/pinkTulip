@@ -55,7 +55,12 @@ function rewardMoment(moment:Moment):string {
   case 'MOVE_MODEL':return `Move any model ${moment.distance}`;
   case 'PLACE_ALTAR_CUBES':return 'Place cubes per Altar';
   case 'PREVENT_SPELL':return 'Ignore that spell effect';
-  case 'BLACK_ROSE_ALTAR_TITHE':return 'Optional Altar damage for BR VP';
+  case 'BLACK_ROSE_ALTAR_TITHE':return moment.placeCube?'Optional Altar damage to place an instability':'Optional Altar damage for BR VP';
+  case 'DRAW_QUESTS_KEEP':return `Draw ${moment.draw} quests, keep ${moment.keep}`;
+  case 'REMOVE_TOTEMS':return `Remove up to ${moment.max} Totems`;
+  case 'ACTIVATE_ROOM_NEAR_TARGET':return `Activate a room within ${moment.range} of the target`;
+  case 'DISCARD_EVENT':return 'Discard an event';
+  case 'MOVE_ALTAR':return `Move an Altar ${moment.distance}`;
   case 'IGNORE_DAMAGE':return `Ignore ${moment.amount} damage`;
   case 'REDIRECT_DAMAGE':return 'Redirect the damage to an evocation';
   case 'MOVE_ROOM_MAGE':return `Move a mage in the target room ${moment.distance}`;

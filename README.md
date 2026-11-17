@@ -252,7 +252,7 @@ Room activation is unavailable in starting rooms and for a reconstructed special
 
 ### Shamanic school
 
-- The 36-card shared Shamanic library adds Binding Totem, Astral Path, Earth Totem, Wind Spirit, Valor Totem, River Spirit, Dominion Token, Channeling Energy, Rain Totem, Steppe Spirit, Pyre Spirit, and Source of Life.
+- The 36-card shared Shamanic library adds Binding Totem, Astral Path, Earth Totem, Wind Spirit, Valor Totem, River Spirit, Dominion Totem, Channeling Energy, Rain Totem, Steppe Spirit, Pyre Spirit, and Source of Life.
 - Totems are Altar evocations (movement 0, attack 0, health 3) with a shared supply of five. When activated, a Totem can heal 1 damage or convert 1 damage on another model within range 1.
 - Earth Totem can prevent an incoming combat spell's effect on its owner, including a combat effect from an ongoing spell, and summons a Totem in the owner's room. Channeling Energy lets its owner optionally allow BR to damage one of their Altars when a mage casts a combat spell, in exchange for 1 BR VP.
 - The other Shamanic effects include quest completion at the moon-level VP cost, reshuffling and drawing from the grimoire, room activation, moving a model, placing instability cubes, and removing low-health evocations. The game log reveals cards drawn by Wind Spirit.

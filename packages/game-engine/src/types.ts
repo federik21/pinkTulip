@@ -39,7 +39,7 @@ export type AmountScale = { from: 'CASTER_BLACK_DAMAGE' | 'CASTER_DAMAGE' | 'TAR
 // it resolves only if the card's chosen model has been defeated or destroyed by then
 // (a defeat rescued by a reaction does not count). `area` redirects the moment to
 // every other mage within `range` of where the chosen model was. Both compose.
-export type MomentCondition = 'TARGET_DEFEATED' | 'UPGRADE_ASSIGNED' | 'EVOCATION_REMOVED' | 'TARGET_JINXED' | 'VP_LOST' | 'UPGRADE_DISCARDED' | 'TARGET_UPGRADED' | 'TARGET_HAS_3_NIGHTMARES' | 'PAIN_RESOLVED' | 'JINX_DISCARDED';
+export type MomentCondition = 'TARGET_DEFEATED' | 'UPGRADE_ASSIGNED' | 'EVOCATION_REMOVED' | 'TARGET_JINXED' | 'VP_LOST' | 'UPGRADE_DISCARDED' | 'TARGET_UPGRADED' | 'TARGET_HAS_3_NIGHTMARES' | 'PAIN_RESOLVED' | 'JINX_DISCARDED' | 'TARGET_IS_TOTEM';
 export type Moment = (
  | { effect: 'DAMAGE'; amount: number }
  | { effect: 'HEAL'; amount: number }
@@ -64,7 +64,18 @@ export type Moment = (
  // `movementBonus` adds movement for that activation only.
  // `near`: only evocations within that range of the targeted model can be chosen.
  // `byTarget`: the target mage (not the caster) activates one of its own evocations; `attackBonusIfJinxDiscarded` applies only if the target discarded a jinx earlier in this effect.
- | { effect: 'ACTIVATE_CHOICE'; archetype?: 'CONSTRUCT' | 'UNDEAD'; attackBonus?: number; movementBonus?: number; endDamage?: number; near?: { range: number }; byTarget?: boolean; attackBonusIfJinxDiscarded?: number }
+ | { effect: 'ACTIVATE_CHOICE'; archetype?: 'CONSTRUCT' | 'UNDEAD'; attackBonus?: number; movementBonus?: number; endDamage?: number; near?: { range: number }; byTarget?: boolean; attackBonusIfJinxDiscarded?: number; anyOwner?: boolean }
+ // `anyOwner`: any mage's evocation can be chosen; it activates under the caster's control (never twice in the same effect).
+ // The caster draws `draw` quests from the current or the next moon's quest deck, keeps `keep` and discards the rest.
+ | { effect: 'DRAW_QUESTS_KEEP'; draw: number; keep: number }
+ // The caster may remove up to `max` Totems from the board; `vpIfAll` VP if the maximum was removed.
+ | { effect: 'REMOVE_TOTEMS'; max: number; vpIfAll?: number }
+ // The caster chooses a room within `range` of the chosen evocation and activates it.
+ | { effect: 'ACTIVATE_ROOM_NEAR_TARGET'; range: number }
+ // The caster discards one event from the event board.
+ | { effect: 'DISCARD_EVENT' }
+ // The caster moves any Altar up to `distance` spaces.
+ | { effect: 'MOVE_ALTAR'; distance: number }
  // EVENT_MODEL activates whatever the preceding EVENT_MODEL summon created.
  | { effect: 'ACTIVATE_EVOCATION'; kind: EvocationKind | 'EVENT_MODEL' }
  // Activates the chosen evocation under the caster's control (borrowed if it belongs to another mage).
@@ -141,7 +152,8 @@ export type Moment = (
  | { effect: 'MOVE_MODEL'; distance: number }
  | { effect: 'PLACE_ALTAR_CUBES' }
  | { effect: 'PREVENT_SPELL' }
- | { effect: 'BLACK_ROSE_ALTAR_TITHE' }
+ // `placeCube`: instead of 1 BR VP, the owner places 1 instability in a room within that range of the damaged Altar.
+ | { effect: 'BLACK_ROSE_ALTAR_TITHE'; placeCube?: { range: number } }
  // Ignore up to `amount` of the damage just suffered; each ignored point is inflicted on the damage's source.
  | { effect: 'IGNORE_DAMAGE'; amount: number }
  // The owner may let one of their evocations suffer the damage just suffered instead (the wounds move over).
@@ -169,7 +181,7 @@ export type TriggeredInstruction = Moment & { target: 'BOUND_MODEL' | 'BOUND_ROO
 // enhancement moments are added (before or after the printed ones) and may override the target.
 export type Enhancement = { requires: Element[]; moments?: Moment[]; position?: 'BEFORE' | 'AFTER'; target?: SpellTarget; range?: number; suppressReactions?: boolean; text: string };
 // Extra printed restrictions on the chosen model.
-export type TargetFilter = { own?: boolean; archetype?: 'CONSTRUCT' | 'DEMON'; maxHealth?: number; sameRoom?: boolean };
+export type TargetFilter = { own?: boolean; kind?: EvocationKind; archetype?: 'CONSTRUCT' | 'DEMON'; maxHealth?: number; sameRoom?: boolean };
 // triggerText is optional display copy only; trigger conditions govern matching.
 // `effects` are resolved in order. An unstable card starts with a PLACE Effect ("place 1 instability in the
 // caster's current room") followed by its MAIN Effect, so quests and triggers that count Effects (not

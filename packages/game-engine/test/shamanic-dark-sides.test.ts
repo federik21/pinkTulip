@@ -3,7 +3,7 @@ import { createGame, createShamanicDeck, getDarkSide, getSpellForSide, upgradeLe
 import type { Card, GameState } from '../src';
 
 const NAMES = ['Binding Totem', 'Astral Path', 'Earth Totem', 'Wind Spirit', 'Valor Totem', 'River Spirit',
- 'Dominion Token', 'Channeling Energy', 'Rain Totem', 'Steppe Spirit', 'Pyre Spirit', 'Source of Life'];
+ 'Dominion Totem', 'Channeling Energy', 'Rain Totem', 'Steppe Spirit', 'Pyre Spirit', 'Source of Life'];
 
 function fixture(): GameState {
  const s = createGame(2); s.round = 1; s.phase = 'ACTION'; s.currentPlayerId = 'p1'; s.firstPlayerId = 'p1';
@@ -44,19 +44,20 @@ describe('Shamanic dark sides', () => {
   expect(cards.map(c => c.name)).toHaveLength(36);
   expect(new Set(cards.map(c => c.name))).toEqual(new Set([
    'Binding Totem','Astral Path','Earth Totem','Wind Spirit','Valor Totem','River Spirit',
-   'Dominion Token','Channeling Energy','Rain Totem','Steppe Spirit','Pyre Spirit','Source of Life',
+   'Dominion Totem','Channeling Energy','Rain Totem','Steppe Spirit','Pyre Spirit','Source of Life',
   ]));
-  expect(cards.find(c => c.name === 'Binding Totem')?.darkSide?.rulesText).toContain('lose 1 VP');
-  expect(cards.find(c => c.name === 'Astral Path')?.darkSide?.rulesText).toContain('draw 3');
-  expect(cards.find(c => c.name === 'Earth Totem')?.darkSide?.rulesText).toContain('Ignore');
-  expect(cards.find(c => c.name === 'Wind Spirit')?.darkSide?.rulesText).toContain('draw 3');
-  expect(cards.find(c => c.name === 'Valor Totem')?.darkSide?.rulesText).toContain('remove up to 3');
-  expect(cards.find(c => c.name === 'River Spirit')?.darkSide?.rulesText).toContain('draw 1 event');
-  expect(cards.find(c => c.name === 'Dominion Token')?.darkSide?.rulesText).toContain('within 2');
-  expect(cards.find(c => c.name === 'Channeling Energy')?.darkSide?.rulesText).toContain('Ongoing');
-  expect(cards.find(c => c.name === 'Rain Totem')?.darkSide?.rulesText).toContain('activate');
-  expect(cards.find(c => c.name === 'Steppe Spirit')?.darkSide?.rulesText).toContain('when the target enters');
-  expect(cards.find(c => c.name === 'Pyre Spirit')?.darkSide?.rulesText).toContain('Discard 1 event');
-  expect(cards.find(c => c.name === 'Source of Life')?.darkSide?.rulesText).toContain('Heal 3');
+  const dark = (name: string) => cards.find(c => c.name === name)!.darkSide!;
+  expect(dark('Binding Totem')).toMatchObject({ target: 'EVOCATION', targetFilter: { kind: 'TOTEM' }, moments: [{ effect: 'LOSE_VP', area: { range: 1 } }, { effect: 'GAIN_VP' }, { effect: 'REMOVE_EVOCATION' }] });
+  expect(dark('Astral Path').moments).toEqual([{ effect: 'DRAW_QUESTS_KEEP', draw: 3, keep: 1 }]);
+  expect(dark('Earth Totem')).toMatchObject({ spellType: 'PROTECTION', trigger: { spellTypes: ['TRAP'] } });
+  expect(dark('Wind Spirit').moments).toEqual([{ effect: 'LOOK_LIBRARY', cards: 3 }]);
+  expect(dark('Valor Totem').moments).toEqual([{ effect: 'DRAW_QUEST' }, { effect: 'REMOVE_TOTEMS', max: 3, vpIfAll: 4 }]);
+  expect(dark('River Spirit').moments).toEqual([{ effect: 'DRAW_EVENT' }, { effect: 'DRAW_QUEST' }, { effect: 'GAIN_VP', amount: 2 }]);
+  expect(dark('Dominion Totem').moments.filter(m => m.effect === 'ACTIVATE_CHOICE')).toHaveLength(2);
+  expect(dark('Channeling Energy').ongoing?.effects[0]).toMatchObject({ effect: 'BLACK_ROSE_ALTAR_TITHE', placeCube: { range: 1 } });
+  expect(dark('Rain Totem').moments.every(m => m.when === 'TARGET_IS_TOTEM')).toBe(true);
+  expect(dark('Steppe Spirit').ongoing?.trigger).toMatchObject({ event: 'ENTER_ROOM', scope: 'BOUND_MODEL' });
+  expect(dark('Pyre Spirit').moments.filter(m => m.effect === 'MOVE_ALTAR')).toHaveLength(3);
+  expect(dark('Source of Life').moments).toEqual([{ effect: 'HEAL', amount: 3 }, { effect: 'INSTABILITY', amount: 2 }]);
  });
 });

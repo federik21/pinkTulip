@@ -20,7 +20,7 @@ describe('Shamanic school',()=>{
   expect(cards).toHaveLength(36);
   expect(new Set(cards.map(card=>card.name))).toEqual(new Set([
    'Binding Totem','Astral Path','Earth Totem','Wind Spirit','Valor Totem','River Spirit',
-   'Dominion Token','Channeling Energy','Rain Totem','Steppe Spirit','Pyre Spirit','Source of Life',
+   'Dominion Totem','Channeling Energy','Rain Totem','Steppe Spirit','Pyre Spirit','Source of Life',
   ]));
   expect(cards.find(card=>card.name==='Earth Totem')).toMatchObject({spellType:'PROTECTION',trigger:{event:'SPELL_TARGETED',spellTypes:['COMBAT']}});
   expect(cards.find(card=>card.name==='Channeling Energy')?.ongoing?.trigger).toMatchObject({event:'SPELL_CAST',spellTypes:['COMBAT']});

@@ -145,10 +145,11 @@ export const isWithinSpellRange = (a: Hex, b: Hex, range: number): boolean => {
 export const spellReaches = (game:Pick<GameState,'board'>,card:Card,from:Hex,to:Hex): boolean =>
  card.targetFilter?.sameRoom ? areInSameRoom(game,from,to) : isWithinSpellRange(from,to,card.range);
 // Printed restrictions on the chosen model (own, construct, low health).
-export function spellFilterAllows(card:Card,casterId:string,model:{playerId:string;evocation?:Pick<Evocation,'archetype'|'health'>}):boolean {
+export function spellFilterAllows(card:Card,casterId:string,model:{playerId:string;evocation?:Pick<Evocation,'archetype'|'health'|'kind'>}):boolean {
  const f=card.targetFilter;
  if(!f)return true;
  if(f.own&&model.playerId!==casterId)return false;
+ if(f.kind&&(model.evocation?.kind??(model.evocation?.archetype==='ALTAR'?'TOTEM':undefined))!==f.kind)return false;
  if(f.archetype&&model.evocation?.archetype!==f.archetype)return false;
  if(f.maxHealth!==undefined&&(!model.evocation||model.evocation.health>f.maxHealth))return false;
  return true;
@@ -645,7 +646,7 @@ function drawQuest(s:GameState) {
 // stored in GameState; a root action remains a single clone/commit boundary.
 type ModelSnapshot = { id:string; playerId:string; kind:'MAGE'|'EVOCATION'; generation:number };
 // Local to a single effect, so a nested spell cannot replace its summoned model.
-type EffectResolution = { casterSeen?:{position:Hex}; choices?:Record<string,string>; assigned?:string[]; eventActor?:ModelSnapshot; summoned?:ModelSnapshot; activationIsExplicit:boolean; upgraded?:boolean; removed?:{position:Hex;attack:number;roomId?:string}; eventPosition?:Hex; eventKind?:EvocationKind; damaged?:ModelSnapshot[]; blackDamaged?:Record<string,number>; moved?:ModelSnapshot; spellEvent?:SpellEvent; unconverted?:number; instabilityPlaced?:number; protectedTargets?:Set<string>; vpLost?:number; healed?:number; upgradeDiscarded?:boolean; painResolved?:boolean; trapsAtStart?:number; jinxDiscarded?:boolean; convertedBr?:number };
+type EffectResolution = { casterSeen?:{position:Hex}; choices?:Record<string,string>; assigned?:string[]; eventActor?:ModelSnapshot; summoned?:ModelSnapshot; activationIsExplicit:boolean; upgraded?:boolean; removed?:{position:Hex;attack:number;roomId?:string}; eventPosition?:Hex; eventKind?:EvocationKind; damaged?:ModelSnapshot[]; blackDamaged?:Record<string,number>; moved?:ModelSnapshot; spellEvent?:SpellEvent; unconverted?:number; instabilityPlaced?:number; protectedTargets?:Set<string>; vpLost?:number; healed?:number; upgradeDiscarded?:boolean; painResolved?:boolean; trapsAtStart?:number; jinxDiscarded?:boolean; convertedBr?:number; activatedChoices?:string[] };
 type SpellEvent = { event:TriggerEvent; model?:ModelSnapshot; actor?:ModelSnapshot; roomId?:string; target?:FeedbackTarget; damageOrigin?:DamageOrigin; amount?:number; sourceId?:string; onIgnored?:()=>void; position?:Hex; kind?:EvocationKind; spellType?:Card['spellType']; sourceCard?:Card; moment?:string; prevented?:{value:boolean}; afterResolution?:()=>void };
 type PendingMageDefeat = { ref:ModelSnapshot; roomId?:string; target:FeedbackTarget; source?:Player; liquefyThePain?:boolean };
 type ReplayEntropy={ids:string[];random:number[]};
@@ -885,20 +886,30 @@ function resolveInstructionBody(s:GameState,owner:Player,instruction:TriggeredIn
   if(!mage||mage.id===owner.id)return;
   if(s.firstPlayerId===mage.id){s.firstPlayerId=owner.id;s.log.push(`${owner.name} steals the first player token from ${mage.name}.`);}
   else stealVictoryPoints(s,owner,mage,instruction.amount);
- } else if(instruction.effect==='ACTIVATE_TARGET'||instruction.effect==='REMOVE_EVOCATION'||instruction.effect==='REMOVED_BLAST'||instruction.effect==='LOOK_LIBRARY'||instruction.effect==='ACTIVATE_ROOM'||instruction.effect==='ATTACK_BONUS'||instruction.effect==='MOVE_DAMAGED'||instruction.effect==='LOSE_VP'||instruction.effect==='ASSIGN_NIGHTMARE'||instruction.effect==='ASSIGN_PER_EVENT'||instruction.effect==='ACTIVATE_NIGHTMARES'||instruction.effect==='REASSIGN_NIGHTMARES'||instruction.effect==='STEAL_VP'||instruction.effect==='FIRST_PLAYER'||instruction.effect==='DISCARD_CARDS'||instruction.effect==='ACTIVATE_ROOM_IF_NIGHTMARE'||instruction.effect==='INSTABILITY_PER_NIGHTMARE'||instruction.effect==='DRAW_EVENT'||instruction.effect==='GAIN_VP_PER_NIGHTMARE'||instruction.effect==='MOVE_ROOM_MAGE'||instruction.effect==='GAIN_VP_PER_TRAP'||instruction.effect==='DEFEAT_TARGET'||instruction.effect==='DRAW_QUESTS_PER_NIGHTMARE') {
+ } else if(instruction.effect==='ACTIVATE_TARGET'||instruction.effect==='REMOVE_EVOCATION'||instruction.effect==='REMOVED_BLAST'||instruction.effect==='LOOK_LIBRARY'||instruction.effect==='ACTIVATE_ROOM'||instruction.effect==='ATTACK_BONUS'||instruction.effect==='MOVE_DAMAGED'||instruction.effect==='LOSE_VP'||instruction.effect==='ASSIGN_NIGHTMARE'||instruction.effect==='ASSIGN_PER_EVENT'||instruction.effect==='ACTIVATE_NIGHTMARES'||instruction.effect==='REASSIGN_NIGHTMARES'||instruction.effect==='STEAL_VP'||instruction.effect==='FIRST_PLAYER'||instruction.effect==='DISCARD_CARDS'||instruction.effect==='ACTIVATE_ROOM_IF_NIGHTMARE'||instruction.effect==='INSTABILITY_PER_NIGHTMARE'||instruction.effect==='DRAW_EVENT'||instruction.effect==='GAIN_VP_PER_NIGHTMARE'||instruction.effect==='MOVE_ROOM_MAGE'||instruction.effect==='GAIN_VP_PER_TRAP'||instruction.effect==='DEFEAT_TARGET'||instruction.effect==='DRAW_QUESTS_PER_NIGHTMARE'||instruction.effect==='DRAW_QUESTS_KEEP'||instruction.effect==='REMOVE_TOTEMS'||instruction.effect==='ACTIVATE_ROOM_NEAR_TARGET'||instruction.effect==='DISCARD_EVENT'||instruction.effect==='MOVE_ALTAR') {
   // Spell moments only; triggered instructions never use these.
  } else if(instruction.effect==='PREVENT_SPELL') {
   if(effect?.spellEvent?.prevented)effect.spellEvent.prevented.value=true;
  } else if(instruction.effect==='BLACK_ROSE_ALTAR_TITHE') {
   const altars=s.evocations.filter(e=>e.playerId===owner.id&&e.archetype==='ALTAR'&&e.damageCubes<e.health);
   if(!altars.length)return;
+  const placeCube=instruction.placeCube;
   const selected=askChoice(s,owner.id,`channeling-energy|${owner.id}|${effect?.spellEvent?.event??''}`,
-   'Channeling Energy: allow the Black Rose to damage one of your Altars for 1 VP?',altars.map(e=>({id:e.id,label:`${e.name} #${e.number??1}`})),true);
+   placeCube?`Channeling Energy: allow the Black Rose to damage one of your Altars and place 1 instability within range ${placeCube.range} of it?`:'Channeling Energy: allow the Black Rose to damage one of your Altars for 1 VP?',altars.map(e=>({id:e.id,label:`${e.name} #${e.number??1}`})),true);
   const altar=altars.find(e=>e.id===selected);
   if(altar) {
-   const before=altar.damageCubes;
+   const before=altar.damageCubes,position={...altar.position};
    damageEvocation(s,altar,1);
-   if(altar.damageCubes>before)awardVictoryPoints(s,BLACK_ROSE_ID,1);
+   if(altar.damageCubes>before) {
+    if(!placeCube)awardVictoryPoints(s,BLACK_ROSE_ID,1);
+    else {
+     const rooms=s.board.rooms.filter(r=>!r.startingFor&&r.tiles.some(h=>hexDistance(h,position)<=placeCube.range));
+     if(rooms.length) {
+      const roomId=rooms.length===1?rooms[0].id:askChoice(s,owner.id,`channeling-room|${owner.id}|${effect?.spellEvent?.event??''}`,`Channeling Energy: choose a room within range ${placeCube.range} of the Altar for 1 instability.`,rooms.map(r=>({id:r.id,label:r.name,roomId:r.id})))!;
+      placeInstability(s,rooms.find(r=>r.id===roomId)??rooms[0],1,owner);
+     }
+    }
+   }
   }
  } else if(instruction.effect==='GAIN_VP') {
   if(instruction.amount<=0)return;
@@ -1210,11 +1221,11 @@ function describeInstructionBody(instruction:TriggeredInstruction):string {
   case 'DISCARD_UPGRADE':return 'The chosen evocation discards its upgrade and loses the health it gave.';
   case 'REMOVE_EVOCATION':return instruction.chosen?'Remove the chosen evocation.':`You may remove one of your ${instruction.archetype==='UNDEAD'?'undead ':instruction.archetype==='CONSTRUCT'?'construct ':''}evocations in the target’s room.`;
   case 'REMOVED_BLAST':return instruction.amount!==undefined?`Inflict ${instruction.amount} damage on every ${instruction.models?'model':'mage'} in the removed model’s room and up to 1 room away.`:'Inflict damage equal to the removed model’s attack on every mage in its room and up to 1 room away.';
-  case 'LOSE_VP':return `${targets[instruction.target]} loses ${instruction.amount} victory ${instruction.amount===1?'point':'points'} (never below zero).`;
+  case 'LOSE_VP':return `${instruction.area?`Each other mage within range ${instruction.area.range} of the target’s position`:targets[instruction.target]} loses ${instruction.amount} victory ${instruction.amount===1?'point':'points'} (never below zero).`;
   case 'ATTACK_BONUS':return `The chosen evocation gets +${instruction.amount} attack on its next activation.`;
   case 'MOVE_DAMAGED':return `Move one model damaged by this effect up to ${instruction.distance} ${instruction.distance===1?'space':'spaces'}.`;
   case 'ACTIVATE_ROOM':return 'Activate the room effect where the chosen evocation stands.';
-  case 'ACTIVATE_CHOICE':return `${instruction.byTarget?`${target} activates one of their own`:'Activate one of your'} ${instruction.archetype==='CONSTRUCT'?'constructs':instruction.archetype==='UNDEAD'?'undead evocations':'evocations'}${instruction.attackBonusIfJinxDiscarded?`; it gets +${instruction.attackBonusIfJinxDiscarded} attack this activation if a jinx was discarded`:''}${instruction.attackBonus?` with +${instruction.attackBonus} attack`:''}${instruction.movementBonus?`${instruction.attackBonus?' and':' with'} +${instruction.movementBonus} movement`:''}${instruction.endDamage?`; when it ends BR inflicts ${instruction.endDamage} damage on it`:''}${instruction.near?` (only one within range ${instruction.near.range} of ${target})`:''}.`;
+  case 'ACTIVATE_CHOICE':return `${instruction.byTarget?`${target} activates one of their own`:instruction.anyOwner?'Activate, under your control, any mage’s':'Activate one of your'} ${instruction.archetype==='CONSTRUCT'?'constructs':instruction.archetype==='UNDEAD'?'undead evocations':'evocations'}${instruction.attackBonusIfJinxDiscarded?`; it gets +${instruction.attackBonusIfJinxDiscarded} attack this activation if a jinx was discarded`:''}${instruction.attackBonus?` with +${instruction.attackBonus} attack`:''}${instruction.movementBonus?`${instruction.attackBonus?' and':' with'} +${instruction.movementBonus} movement`:''}${instruction.endDamage?`; when it ends BR inflicts ${instruction.endDamage} damage on it`:''}${instruction.near?` (only one within range ${instruction.near.range} of ${target})`:''}.`;
   case 'LOOK_LIBRARY':return `Look at ${instruction.cards} cards of one school, take 1 and discard the rest.`;
   case 'SEARCH_GRIMOIRE':return instruction.keyword==='SUMMON'?'Search your grimoire for a card with the Summon keyword, draw it, then shuffle it.':'Search your grimoire, draw one card, then shuffle it.';
   case 'DRAW_SCHOOL':return `Draw ${instruction.amount} card${instruction.amount===1?'':'s'} from any shared school.`;
@@ -1260,7 +1271,12 @@ function describeInstructionBody(instruction:TriggeredInstruction):string {
   case 'MOVE_MODEL':return `Move any model to a room within range ${instruction.distance} of the target room.`;
   case 'PLACE_ALTAR_CUBES':return 'Place cubes in the target room equal to the number of Altars in play.';
   case 'PREVENT_SPELL':return 'Ignore that spell effect.';
-  case 'BLACK_ROSE_ALTAR_TITHE':return 'You may let the Black Rose inflict 1 damage on one of your Altars to gain 1 VP.';
+  case 'BLACK_ROSE_ALTAR_TITHE':return instruction.placeCube?`You may let the Black Rose inflict 1 damage on one of your Altars and place 1 instability in a room within range ${instruction.placeCube.range} of it.`:'You may let the Black Rose inflict 1 damage on one of your Altars to gain 1 VP.';
+  case 'DRAW_QUESTS_KEEP':return `Draw ${instruction.draw} quests from the current moon or the next one, keep ${instruction.keep} and discard the rest.`;
+  case 'REMOVE_TOTEMS':return `Remove up to ${instruction.max} Totems${instruction.vpIfAll?`; gain ${instruction.vpIfAll} VP if you removed ${instruction.max}`:''}.`;
+  case 'ACTIVATE_ROOM_NEAR_TARGET':return `Choose a room within range ${instruction.range} of the target and activate it.`;
+  case 'DISCARD_EVENT':return 'Discard 1 event from the event board.';
+  case 'MOVE_ALTAR':return `Move an Altar up to ${instruction.distance} ${instruction.distance===1?'space':'spaces'}.`;
   case 'IGNORE_DAMAGE':return `Ignore up to ${instruction.amount} of that damage; inflict 1 damage on the source for each point ignored.`;
  }
 }
@@ -2918,17 +2934,59 @@ function chooseMove(s:GameState,caster:Player,spell:Card,ref:ModelSnapshot,dista
  if(dest){s.log.push(`${caster.name} moves ${name(ref)} to ${roomAt(s,dest)?.name??hexKey(dest)}.`);moveModel(s,ref,dest);}
 }
 // Silver of the Sages, Fountain of the Three: activate one of your own evocations from an effect.
-function activateChoice(s:GameState,owner:Player,step:{archetype?:'CONSTRUCT'|'UNDEAD';attackBonus?:number;movementBonus?:number;endDamage?:number;near?:{range:number}},label:string,origin?:Hex) {
+function activateChoice(s:GameState,owner:Player,step:{archetype?:'CONSTRUCT'|'UNDEAD';attackBonus?:number;movementBonus?:number;endDamage?:number;near?:{range:number};anyOwner?:boolean},label:string,origin?:Hex,exclude:string[]=[]):string|undefined {
  if(s.phase!=='ACTION'&&s.phase!=='EVOCATION'){s.log.push(`${label}: evocations can only be activated in the Action or Evocation phase.`);return;}
- const options=s.evocations.filter(e=>e.playerId===owner.id&&!isControlledByOther(s,e)&&(!step.archetype||e.archetype===step.archetype)
+ const options=s.evocations.filter(e=>(step.anyOwner?!isNightmare(e)&&!exclude.includes(e.id):e.playerId===owner.id)&&!isControlledByOther(s,e)&&(!step.archetype||e.archetype===step.archetype)
   &&(!step.near||(!!origin&&isWithinSpellRange(origin,e.position,step.near.range))));
  if(!options.length){s.log.push(`${owner.name} has no eligible evocation to activate.`);return;}
- const id=options.length===1?options[0].id:askChoice(s,owner.id,`activate|${owner.id}|${label}`,`${label}: choose an evocation to activate.`,options.map(e=>({id:e.id,label:`${e.name} #${e.number??1}`})),true);
+ const id=options.length===1?options[0].id:askChoice(s,owner.id,`activate|${owner.id}|${label}`,`${label}: choose an evocation to activate.`,options.map(e=>({id:e.id,label:`${e.name} #${e.number??1}${step.anyOwner?` · ${getPlayer(s,e.playerId).name}`:''}`})),true);
  const e=options.find(model=>model.id===id);
  if(!e)return;
  if(step.attackBonus)e.bonusAttack=(e.bonusAttack??0)+step.attackBonus;
  if(step.movementBonus)e.bonusMovement=(e.bonusMovement??0)+step.movementBonus;
  beginSpellActivation(s,owner,e,{endDamage:step.endDamage});
+ return e.id;
+}
+// Draw from the current or the next moon's quest deck, keep some, discard the rest to that deck's discard.
+function drawQuestsKeep(s:GameState,p:Player,spell:Card,draw:number,keep:number) {
+ const moon=(s.moon??1) as 1|2|3,next=moon<3?(moon+1) as 2|3:undefined;
+ type Source={moon:1|2|3;deck:Quest[];discard:Quest[]};
+ const sources=([{moon,deck:s.questDeck,discard:s.questDiscard},...(next?[{moon:next,deck:s.questDecks?.[next],discard:s.questDiscards?.[next]}]:[])] as Array<{moon:1|2|3;deck?:Quest[];discard?:Quest[]}>)
+  .filter((source):source is Source=>!!source.deck&&!!source.discard&&source.deck.length+source.discard.length>0);
+ if(!sources.length){s.log.push(`${spell.name}: no quest cards are available.`);return;}
+ const moonId=sources.length===1?String(sources[0].moon):askChoice(s,p.id,`astral-moon|${p.id}|${spell.id}`,`${spell.name}: draw quests from the current moon or the next one?`,
+  sources.map(source=>({id:String(source.moon),label:`${source.moon===moon?'Current':'Next'} moon quests (${source.deck.length+source.discard.length} available)`})))!;
+ const source=sources.find(candidate=>String(candidate.moon)===moonId)??sources[0];
+ const drawn:Quest[]=[];
+ for(let i=0;i<draw;i++) {
+  const quest=drawFromDiscard(s,source.deck,source.discard);
+  if(!quest)break;
+  quest.progress=0;quest.completed=false;quest.claimed=false;
+  drawn.push(quest);
+ }
+ if(!drawn.length){s.log.push(`${spell.name}: no quest cards are available.`);return;}
+ s.log.push(`${p.name} draws ${drawn.length} quest${drawn.length===1?'':'s'}: ${drawn.map(q=>q.name).join(', ')}.`);
+ const kept:Quest[]=[];
+ for(let i=0;i<Math.min(keep,drawn.length);i++) {
+  const options=drawn.filter(q=>!kept.includes(q));
+  const id=options.length===1?options[0].id:askChoice(s,p.id,`astral-keep|${p.id}|${spell.id}|${i}`,`${spell.name}: keep a quest; the others are discarded.`,options.map(q=>({id:q.id,label:q.name})))!;
+  kept.push(options.find(q=>q.id===id)??options[0]);
+ }
+ for(const quest of drawn) {
+  if(kept.includes(quest)){if(p.quest)p.additionalQuests.push(quest);else p.quest=quest;}
+  else source.discard.push(quest);
+ }
+ s.log.push(`${p.name} keeps ${kept.map(q=>`\u201c${q.name}\u201d`).join(', ')} and discards ${drawn.length-kept.length}.`);
+}
+// Activate a room (free) from a spell; rooms that need a target room ask for one within range 1.
+function activateSpellRoom(s:GameState,caster:Player,spell:Card,target:Room|undefined,used?:boolean) {
+ if(!target||!getRoomEffect(target)||target.startingFor){s.log.push(`${spell.name}: the target room has no activatable effect.`);return;}
+ const targetRoomId=roomEffectNeedsTarget(getRoomEffect(target))
+  ?askChoice(s,caster.id,`activate-room|${caster.id}|${spell.id}`,`${spell.name}: choose a room within range 1 of ${target.name} to receive instability.`,
+   s.board.rooms.filter(candidate=>!candidate.startingFor&&Math.min(...candidate.tiles.flatMap(h=>target.tiles.map(origin=>hexLineDistance(origin,h))))<=1)
+    .map(candidate=>({id:candidate.id,label:candidate.name,roomId:candidate.id})))!
+  :undefined;
+ activateRoomBody(s,caster,targetRoomId,{room:target,position:{...target.tiles[0]},...(used?{allowUsedSpecial:true}:{})});
 }
 function roomOccupants(s:GameState,room:Room) {
  return [...s.players.filter(p=>p.wizard.alive&&inRoomPosition(room,p.wizard.position)).map(p=>snapshot(s,p.id)!),...s.evocations.filter(e=>inRoomPosition(room,e.position)).map(e=>snapshot(s,e.id)!)];
@@ -3022,6 +3080,7 @@ function resolveEffectMoments(s:GameState,caster:Player,spell:Card,room:Room|und
      if(step.when==='TARGET_HAS_3_NIGHTMARES'&&!(live?.mage&&nightmaresOf(s,live.mage.id).length>=3))return 'the target does not carry 3 Nightmares';
      if(step.when==='PAIN_RESOLVED'&&!effect.painResolved)return 'no Pain was suffered';
      if(step.when==='JINX_DISCARDED'&&!effect.jinxDiscarded)return 'no jinx was discarded';
+     if(step.when==='TARGET_IS_TOTEM'&&!(live?.evocation&&getEvocationKind(live.evocation)==='TOTEM'))return 'the target is not a Totem';
      return undefined;
     },
     run:()=>{
@@ -3040,7 +3099,7 @@ function resolveEffectMoments(s:GameState,caster:Player,spell:Card,room:Room|und
       stepRefs=picked?[picked]:[];
      } else if(area) {
       // Every other mage near the chosen model's last position; evocations are not mages.
-      stepRefs=origin?s.players.filter(p=>p.wizard.alive&&p.wizard.id!==chosen?.id&&hexDistance(origin!,p.wizard.position)<=area.range).map(p=>snapshot(s,p.id)!):[];
+      stepRefs=origin?s.players.filter(p=>p.wizard.alive&&p.wizard.id!==chosen?.id&&!isInStartingRoom(s,p)&&hexDistance(origin!,p.wizard.position)<=area.range).map(p=>snapshot(s,p.id)!):[];
      }
      resolveMomentBody(s,caster,spell,step,room,stepRefs,actor,effect,damageOrigin);
     }};
@@ -3137,7 +3196,58 @@ function resolveMomentBody(s:GameState,caster:Player,spell:Card,step:Moment,room
    activateChoice(s,mage,{...step,attackBonus:attackBonus||undefined},spell.name);
    return;
   }
-  activateChoice(s,caster,step,spell.name);
+  const picked=activateChoice(s,caster,step,spell.name,liveModel(s,refs[0])?.model.position??room?.tiles[0],effect.activatedChoices);
+  if(picked)(effect.activatedChoices??=[]).push(picked);
+  return;
+ }
+ if(step.effect==='DRAW_QUESTS_KEEP') {
+  drawQuestsKeep(s,caster,spell,step.draw,step.keep);
+  return;
+ }
+ if(step.effect==='REMOVE_TOTEMS') {
+  let removed=0;
+  for(let i=0;i<step.max;i++) {
+   const totems=s.evocations.filter(e=>getEvocationKind(e)==='TOTEM');
+   if(!totems.length)break;
+   const id=askChoice(s,caster.id,`remove-totem|${caster.id}|${spell.id}|${i}`,`${spell.name}: remove a Totem (${removed}/${step.max} removed)?`,
+    totems.map(e=>({id:e.id,label:`${getPlayer(s,e.playerId).name}\u2019s ${e.name} #${e.number??1} · ${roomAt(s,e.position)?.name??'corridor'}`})),true);
+   const totem=totems.find(e=>e.id===id);
+   if(!totem)break;
+   removeEvocation(s,totem,'removed');
+   removed++;
+  }
+  if(step.vpIfAll&&removed===step.max){awardVictoryPoints(s,caster.id,step.vpIfAll);s.log.push(`${caster.name} gains ${step.vpIfAll} VP.`);}
+  return;
+ }
+ if(step.effect==='ACTIVATE_ROOM_NEAR_TARGET') {
+  const totem=liveModel(s,refs[0])?.evocation;
+  if(!totem){s.log.push(`${spell.name}: there is no target.`);return;}
+  const rooms=s.board.rooms.filter(r=>!r.startingFor&&!!getRoomEffect(r)&&r.tiles.some(h=>hexDistance(h,totem.position)<=step.range));
+  if(!rooms.length){s.log.push(`${spell.name}: no room within range ${step.range} can be activated.`);return;}
+  const id=rooms.length===1?rooms[0].id:askChoice(s,caster.id,`rain-room|${caster.id}|${spell.id}`,`${spell.name}: choose a room within range ${step.range} of the target to activate.`,
+   rooms.map(r=>({id:r.id,label:r.name,roomId:r.id})))!;
+  activateSpellRoom(s,caster,spell,rooms.find(r=>r.id===id)??rooms[0]);
+  return;
+ }
+ if(step.effect==='DISCARD_EVENT') {
+  const board=eventBoardOf(s);
+  const options=board.flatMap((event,index)=>event?[{id:String(index),label:event.name}]:[]);
+  if(!options.length){s.log.push(`${spell.name}: there is no event to discard.`);return;}
+  const id=options.length===1?options[0].id:askChoice(s,caster.id,`discard-event|${caster.id}|${spell.id}`,`${spell.name}: choose an event to discard.`,options)!;
+  const index=Number(id),event=board[index];
+  if(!event)return;
+  board[index]=null;
+  s.eventDiscard.push(event);
+  s.log.push(`${caster.name} discards the event ${event.name}.`);
+  return;
+ }
+ if(step.effect==='MOVE_ALTAR') {
+  const altars=s.evocations.filter(e=>e.archetype==='ALTAR');
+  if(!altars.length){s.log.push(`${spell.name}: there is no Altar to move.`);return;}
+  const id=askChoice(s,caster.id,`move-altar|${caster.id}|${spell.id}`,`${spell.name}: move an Altar up to ${step.distance}?`,
+   altars.map(e=>({id:e.id,label:`${getPlayer(s,e.playerId).name}\u2019s ${e.name} #${e.number??1} · ${roomAt(s,e.position)?.name??'corridor'}`})),true);
+  const altar=altars.find(e=>e.id===id);
+  if(altar)chooseMove(s,caster,spell,snapshot(s,altar.id)!,step.distance);
   return;
  }
  if(step.effect==='DISCARD_TARGET_JINX') {
@@ -3435,13 +3545,7 @@ function resolveMomentBody(s:GameState,caster:Player,spell:Card,step:Moment,room
  }
  if(step.effect==='ACTIVATE_TARGET_ROOM') {
   const target=step.used&&effect.spellEvent?.roomId?s.board.rooms.find(r=>r.id===effect.spellEvent!.roomId)??room:room;
-  if(!target||!getRoomEffect(target)||target.startingFor){s.log.push(`${spell.name}: the target room has no activatable effect.`);return;}
-  const targetRoomId=roomEffectNeedsTarget(getRoomEffect(target))
-   ?askChoice(s,caster.id,`activate-room|${caster.id}|${spell.id}`,`${spell.name}: choose a room within range 1 of ${target.name} to receive instability.`,
-    s.board.rooms.filter(candidate=>!candidate.startingFor&&Math.min(...candidate.tiles.flatMap(h=>target.tiles.map(origin=>hexLineDistance(origin,h))))<=1)
-     .map(candidate=>({id:candidate.id,label:candidate.name,roomId:candidate.id})))!
-   :undefined;
-  activateRoomBody(s,caster,targetRoomId,{room:target,position:{...target.tiles[0]},...(step.used?{allowUsedSpecial:true}:{})});
+  activateSpellRoom(s,caster,spell,target,step.used);
   return;
  }
  if(step.effect==='ASSIGN_JINX') {

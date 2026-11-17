@@ -12,7 +12,9 @@ function momentConditionText(when: Moment['when']) {
   case 'UPGRADE_DISCARDED':return 'If upgrade discarded · ';
   case 'TARGET_UPGRADED':return 'If target has an upgrade · ';
   case 'TARGET_HAS_3_NIGHTMARES':return 'If target has 3 Nightmares · ';
+  case 'TARGET_JINXED':return 'If target has a jinx · ';
   case 'PAIN_RESOLVED':return 'If you suffer the Pain · ';
+  case 'TARGET_IS_TOTEM':return 'If target is a Totem · ';
   default:return '';
  }
 }
@@ -54,7 +56,7 @@ function MomentChipBody({moment,target}:{moment:Moment;target:Card['target']}) {
   case 'SUMMON':return <span className="summon-effect">✧ {prefix}Summon {moment.kind==='CHOICE'?`an evocation of your choice${moment.maxHealth!==undefined?` (max ${moment.maxHealth} health)`:''}`:moment.kind==='EVENT_MODEL'?'the lost evocation again':moment.kind}</span>;
   case 'REMOVE_EVOCATION':return <span className="summon-effect">✕ {prefix}{moment.chosen?'Remove the target evocation':`May remove one of your ${moment.archetype==='UNDEAD'?'undead evocations':moment.archetype==='CONSTRUCT'?'constructs':'evocations'} in the target room`}</span>;
   case 'ACTIVATE_EVOCATION':return <span className="summon-effect">↝ {prefix}It activates · move / attack in either order</span>;
-  case 'LOSE_VP':return <span>★ {prefix}Lose {moment.amount} VP</span>;
+  case 'LOSE_VP':return <span>★ {prefix}Lose {moment.amount} VP{moment.area?` · each other mage within range ${moment.area.range} of target`:''}</span>;
   case 'ATTACK_BONUS':return <span>⚔ {prefix}Next activation +{moment.amount} attack</span>;
   case 'MOVE_DAMAGED':return <span>→ {prefix}Move a damaged model up to {moment.distance}</span>;
   case 'ACTIVATE_ROOM':return <span>⌖ {prefix}Activate that room</span>;
@@ -63,7 +65,7 @@ function MomentChipBody({moment,target}:{moment:Moment;target:Card['target']}) {
   case 'MOVE_TARGET':return <span>→ {prefix}{moment.scope==='CASTER'||target==='SELF'?'Move yourself':'Move the target'} up to {moment.distance}</span>;
   case 'SEARCH_GRIMOIRE':return <span>☷ {prefix}Draw {moment.keyword==='SUMMON'?'a Summon card':'a card'} from your grimoire</span>;
   case 'ACTIVATE_TARGET':return <span className="summon-effect">↝ {prefix}The target activates under your control</span>;
-  case 'ACTIVATE_CHOICE':return <span className="summon-effect">↝ {prefix}Activate one of your {moment.archetype==='CONSTRUCT'?'constructs':'evocations'}{moment.attackBonus?` · +${moment.attackBonus} attack`:''}{moment.movementBonus?` · +${moment.movementBonus} movement`:''}{moment.near?` · within range ${moment.near.range} of the target`:''}</span>;
+  case 'ACTIVATE_CHOICE':return <span className="summon-effect">↝ {prefix}Activate {moment.anyOwner?'any mage’s':'one of your'} {moment.archetype==='CONSTRUCT'?'constructs':'evocations'}{moment.attackBonus?` · +${moment.attackBonus} attack`:''}{moment.movementBonus?` · +${moment.movementBonus} movement`:''}{moment.near?` · within range ${moment.near.range} of the target`:''}</span>;
   case 'GAIN_VP':return <span>★ {prefix}Gain {amountText(moment)} VP</span>;
   case 'GAIN_VP_PER_ALTAR':return <span>★ {prefix}Gain 1 VP per Altar · max {moment.max}</span>;
   case 'COMPLETE_QUEST':return <span>☾ {prefix}Pay moon level in VP to complete an active quest</span>;
@@ -73,7 +75,12 @@ function MomentChipBody({moment,target}:{moment:Moment;target:Card['target']}) {
   case 'MOVE_MODEL':return <span>→ {prefix}Move any model to a room within range {moment.distance}</span>;
   case 'PLACE_ALTAR_CUBES':return <span>◆ {prefix}Place cubes equal to the Altars in play</span>;
   case 'PREVENT_SPELL':return <span>🛡 {prefix}Ignore that spell effect</span>;
-  case 'BLACK_ROSE_ALTAR_TITHE':return <span>🛡 {prefix}Optionally damage an Altar for 1 BR VP</span>;
+  case 'BLACK_ROSE_ALTAR_TITHE':return <span>🛡 {prefix}{moment.placeCube?`Optionally damage an Altar to place 1 instability within range ${moment.placeCube.range} of it`:'Optionally damage an Altar for 1 BR VP'}</span>;
+  case 'DRAW_QUESTS_KEEP':return <span>☷ {prefix}Draw {moment.draw} quests from the current or next moon · keep {moment.keep}</span>;
+  case 'REMOVE_TOTEMS':return <span className="summon-effect">✕ {prefix}Remove up to {moment.max} Totems{moment.vpIfAll?` · gain ${moment.vpIfAll} VP if all removed`:''}</span>;
+  case 'ACTIVATE_ROOM_NEAR_TARGET':return <span>⌖ {prefix}Activate a room within range {moment.range} of the target</span>;
+  case 'DISCARD_EVENT':return <span>✕ {prefix}Discard 1 event</span>;
+  case 'MOVE_ALTAR':return <span>→ {prefix}Move an Altar up to {moment.distance}</span>;
   case 'REDIRECT_DAMAGE':return <span>🛡 {prefix}One of your evocations may suffer the damage instead</span>;
  }
 }
